@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>LLM Benchmark Agent Configuration</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 960px;
+        padding: 2rem;
+        line-height: 1.5;
+      }
+      h1 {
+        margin-bottom: 1rem;
+      }
+      fieldset {
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        padding: 1rem 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+      legend {
+        font-weight: 600;
+        padding: 0 0.5rem;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 1rem;
+        font-weight: 600;
+      }
+      label span {
+        font-weight: 400;
+      }
+      input,
+      textarea,
+      select {
+        margin-top: 0.35rem;
+        padding: 0.5rem;
+        font-size: 1rem;
+      }
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+      .inline {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 600;
+      }
+      .inline span {
+        font-weight: 400;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem 1.5rem;
+      }
+      pre {
+        background: rgba(0, 0, 0, 0.08);
+        padding: 1rem;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        border-radius: 6px;
+      }
+      button {
+        padding: 0.6rem 1rem;
+        font-size: 1rem;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        background: #3366cc;
+        color: white;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      @media (prefers-color-scheme: dark) {
+        fieldset {
+          border-color: rgba(255, 255, 255, 0.2);
+        }
+        pre {
+          background: rgba(255, 255, 255, 0.08);
+        }
+        button {
+          background: #4977ff;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LLM Linguistic Classification Benchmark Agent</h1>
+    <p>
+      Configure the benchmarking run below. The generated command reflects your selections and can be pasted into a terminal.
+    </p>
+
+    <form id="config-form">
+      <fieldset>
+        <legend>Model Settings</legend>
+        <p>
+          API credentials default to values stored in <code>.env</code>. Override the variable names
+          below only if you need to use a different key or endpoint for this run.
+        </p>
+        <label class="inline">
+          <span>Load .env file</span>
+          <input type="file" id="env-file-input" accept=".env,text/plain" />
+        </label>
+        <div class="grid">
+          <label
+            >Model Name
+            <input type="text" id="model" name="model" placeholder="gpt-4o-mini" required />
+          </label>
+          <label
+            >Provider
+            <select id="provider" name="provider">
+              <option value="openai" selected>OpenAI-Compatible</option>
+              <option value="anthropic">Anthropic (OpenAI proxy)</option>
+              <option value="cohere">Cohere (OpenAI proxy)</option>
+              <option value="google">Google (OpenAI proxy)</option>
+              <option value="huggingface">Hugging Face (OpenAI proxy)</option>
+              <option value="e-infra">E-INFRA (OpenAI proxy)</option>
+            </select>
+          </label>
+          <label
+            >Temperature
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="2"
+              id="temperature"
+              name="temperature"
+              value="0.0"
+            />
+          </label>
+          <label
+            >Top-p
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              id="top_p"
+              name="top_p"
+              value="1.0"
+            />
+          </label>
+          <label
+            >Top-k
+            <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
+          </label>
+          <label
+            >Few-shot Examples
+            <input
+              type="number"
+              min="0"
+              id="few_shot_examples"
+              name="few_shot_examples"
+              value="0"
+            />
+          </label>
+          <label
+            >API Key Environment Variable
+            <span>
+              Leave blank to use the provider default from <code>.env</code>, or specify a custom
+              variable name.
+            </span>
+            <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
+          </label>
+          <label
+            >API Base URL Environment Variable
+            <span>
+              Leave blank to use the provider default from <code>.env</code>, or point to a custom
+              endpoint variable.
+            </span>
+            <input
+              type="text"
+              id="api_base_var"
+              name="api_base_var"
+              placeholder="OPENAI_BASE_URL"
+            />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Prompt Behavior</legend>
+        <label class="inline">
+          <input type="checkbox" id="enable_cot" name="enable_cot" />
+          <span>Enable chain-of-thought reasoning</span>
+        </label>
+        <label class="inline">
+          <input type="checkbox" id="include_explanations" name="include_explanations" checked />
+          <span>Include explanations in model outputs</span>
+        </label>
+        <label
+          >System Prompt
+          <textarea
+            id="system_prompt"
+            name="system_prompt"
+            placeholder="You are a linguistic classifier that excels at semantic disambiguation."
+          ></textarea>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Input &amp; Output</legend>
+        <div class="grid">
+          <label
+            >Input CSV Path
+            <input
+              type="text"
+              id="input_path"
+              name="input_path"
+              placeholder="data/examples.csv"
+              required
+            />
+          </label>
+          <label
+            >Labels CSV Path
+            <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
+          </label>
+          <label
+            >Output CSV Path
+            <input
+              type="text"
+              id="output_path"
+              name="output_path"
+              placeholder="results/output.csv"
+              required
+            />
+          </label>
+        </div>
+        <label class="inline">
+          <input type="checkbox" id="calibration" name="calibration" />
+          <span>Enable calibration plot</span>
+        </label>
+      </fieldset>
+    </form>
+
+    <h2>Generated Command</h2>
+    <pre id="command-output">python benchmark_agent.py --input "" --output "" --model ""</pre>
+    <button type="button" id="copy-button">Copy Command</button>
+
+    <script>
+      let envData = null;
+      let isInitializing = true;
+
+      const STORAGE_KEY = "benchmarkAgentConfig.v1";
+
+      const form = document.getElementById("config-form");
+      const commandOutput = document.getElementById("command-output");
+      const copyButton = document.getElementById("copy-button");
+      const providerSelect = document.getElementById("provider");
+      const apiKeyVarInput = document.getElementById("api_key_var");
+      const apiBaseVarInput = document.getElementById("api_base_var");
+      const envFileInput = document.getElementById("env-file-input");
+
+      const defaultValues = {
+        provider: "openai",
+        temperature: "0.0",
+        top_p: "1.0",
+        few_shot_examples: "0",
+        include_explanations: true,
+        api_key_var: "",
+        api_base_var: "",
+        system_prompt:
+          "You are a linguistic classifier that excels at semantic disambiguation.",
+      };
+
+      const providerDefaults = {
+        openai: { apiKeyVar: "OPENAI_API_KEY", apiBaseVar: "OPENAI_BASE_URL" },
+        anthropic: {
+          apiKeyVar: "ANTHROPIC_API_KEY",
+          apiBaseVar: "ANTHROPIC_BASE_URL",
+        },
+        cohere: { apiKeyVar: "COHERE_API_KEY", apiBaseVar: "COHERE_BASE_URL" },
+        google: { apiKeyVar: "GOOGLE_API_KEY", apiBaseVar: "GOOGLE_BASE_URL" },
+        huggingface: {
+          apiKeyVar: "HF_API_KEY",
+          apiBaseVar: "HF_BASE_URL",
+        },
+        "e-infra": {
+          apiKeyVar: "E-INFRA_API_KEY",
+          apiBaseVar: "E-INFRA_BASE_URL",
+        },
+      };
+
+      function shellQuote(value) {
+        if (value === undefined || value === null) return '""';
+        const stringValue = String(value);
+        if (!stringValue.length) {
+          return '""';
+        }
+        const needsQuotes = /\s|["]/.test(stringValue);
+        const escaped = stringValue.replace(/(["\\])/g, "\\$1");
+        return needsQuotes ? `"${escaped}"` : escaped;
+      }
+
+      function buildCommand() {
+        const data = new FormData(form);
+        const args = ["python", "benchmark_agent.py"];
+
+        const requiredFields = [
+          ["input_path", "--input"],
+          ["output_path", "--output"],
+          ["model", "--model"],
+        ];
+
+        for (const [field, flag] of requiredFields) {
+          const value = data.get(field)?.trim() ?? "";
+          args.push(flag, shellQuote(value));
+        }
+
+        const provider = data.get("provider");
+        if (provider && provider !== defaultValues.provider) {
+          args.push("--provider", provider);
+        }
+
+        const temperature = data.get("temperature")?.trim();
+        if (temperature && temperature !== defaultValues.temperature) {
+          args.push("--temperature", temperature);
+        }
+
+        const topP = data.get("top_p")?.trim();
+        if (topP && topP !== defaultValues.top_p) {
+          args.push("--top_p", topP);
+        }
+
+        const topK = data.get("top_k")?.trim();
+        if (topK) {
+          args.push("--top_k", topK);
+        }
+
+        const fewShot = data.get("few_shot_examples")?.trim();
+        if (fewShot && Number(fewShot) > 0) {
+          args.push("--few_shot_examples", fewShot);
+        }
+
+        const labelsPath = data.get("labels_path")?.trim();
+        if (labelsPath) {
+          args.push("--labels", shellQuote(labelsPath));
+        }
+
+        const systemPrompt = data.get("system_prompt")?.trim();
+        if (systemPrompt && systemPrompt !== defaultValues.system_prompt) {
+          args.push("--system_prompt", shellQuote(systemPrompt));
+        }
+
+        if (data.get("enable_cot")) {
+          args.push("--enable_cot");
+        }
+
+        if (!data.get("include_explanations")) {
+          args.push("--no_explanation");
+        }
+
+        if (data.get("calibration")) {
+          args.push("--calibration");
+        }
+
+        const apiKeyVar = data.get("api_key_var")?.trim();
+        if (apiKeyVar) {
+          args.push("--api_key_var", shellQuote(apiKeyVar));
+        }
+
+        const apiBaseVar = data.get("api_base_var")?.trim();
+        if (apiBaseVar) {
+          args.push("--api_base_var", shellQuote(apiBaseVar));
+        }
+
+        const command = args.join(" ");
+        commandOutput.textContent = command;
+      }
+
+      function ensureProviderRegistered(slug, labelHint) {
+        if (providerDefaults[slug]) {
+          return;
+        }
+        const upper = (labelHint || slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")).toUpperCase();
+        providerDefaults[slug] = {
+          apiKeyVar: `${upper}_API_KEY`,
+          apiBaseVar: `${upper}_BASE_URL`,
+        };
+        if (!Array.from(providerSelect.options).some((opt) => opt.value === slug)) {
+          const option = document.createElement("option");
+          option.value = slug;
+          option.textContent = `${upper.replace(/_/g, " ")} (custom)`;
+          providerSelect.appendChild(option);
+        }
+      }
+
+      function updatePlaceholdersForProvider(provider) {
+        const defaults = providerDefaults[provider] || providerDefaults.openai;
+        if (!apiKeyVarInput.value) {
+          apiKeyVarInput.placeholder = defaults.apiKeyVar;
+        }
+        if (!apiBaseVarInput.value) {
+          apiBaseVarInput.placeholder = defaults.apiBaseVar;
+        }
+      }
+
+      function saveConfig() {
+        const config = {};
+        Array.from(form.elements).forEach((element) => {
+          if (!element.name || element.type === "file") {
+            return;
+          }
+          if (element.type === "checkbox") {
+            config[element.name] = element.checked;
+          } else {
+            config[element.name] = element.value;
+          }
+        });
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+        } catch (error) {
+          console.warn("Unable to persist configuration:", error);
+        }
+      }
+
+      function loadConfig() {
+        try {
+          const stored = localStorage.getItem(STORAGE_KEY);
+          if (!stored) {
+            return;
+          }
+          const config = JSON.parse(stored);
+          for (const [name, value] of Object.entries(config)) {
+            const control = form.elements.namedItem(name);
+            if (!control || control.type === "file") continue;
+            if (name === "provider" && typeof value === "string") {
+              ensureProviderRegistered(value, value);
+            }
+            if (control instanceof RadioNodeList) {
+              continue;
+            }
+            if (control.type === "checkbox") {
+              control.checked = Boolean(value);
+            } else if (control.tagName === "SELECT") {
+              control.value = value;
+            } else {
+              control.value = value;
+            }
+          }
+        } catch (error) {
+          console.warn("Unable to load stored configuration:", error);
+        }
+      }
+
+      function handleFormChange() {
+        buildCommand();
+        if (!isInitializing) {
+          saveConfig();
+        }
+      }
+
+      function copyCommand() {
+        const command = commandOutput.textContent;
+        navigator.clipboard
+          .writeText(command)
+          .then(() => {
+            copyButton.textContent = "Copied!";
+            setTimeout(() => {
+              copyButton.textContent = "Copy Command";
+            }, 1500);
+          })
+          .catch(() => {
+            copyButton.textContent = "Copy failed";
+            setTimeout(() => {
+              copyButton.textContent = "Copy Command";
+            }, 1500);
+          });
+      }
+
+      function parseEnv(text) {
+        const envMap = {};
+        for (const line of text.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+            continue;
+          }
+          const [key, ...rest] = trimmed.split("=");
+          envMap[key.trim()] = rest.join("=").trim();
+        }
+        return envMap;
+      }
+
+      function addProvidersFromEnv(envMap) {
+        const pattern = /^([A-Z0-9][A-Z0-9_-]*)_API_KEY$/;
+        for (const key of Object.keys(envMap)) {
+          const match = key.match(pattern);
+          if (!match) continue;
+          const prefix = match[1];
+          const slug = prefix.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+          ensureProviderRegistered(slug, prefix);
+          providerDefaults[slug] = { apiKeyVar: key, apiBaseVar: `${prefix}_BASE_URL` };
+        }
+      }
+
+      function autoSelectProviderFromEnv() {
+        if (!envData) return;
+
+        let detected = null;
+        for (const [provider, vars] of Object.entries(providerDefaults)) {
+          const candidate = envData[vars.apiKeyVar];
+          if (candidate && candidate.length && !candidate.startsWith("your-")) {
+            detected = provider;
+            break;
+          }
+        }
+
+        if (detected && providerSelect.value !== detected) {
+          providerSelect.value = detected;
+          updatePlaceholdersForProvider(detected);
+          buildCommand();
+        }
+      }
+
+      if (envFileInput) {
+        envFileInput.addEventListener("change", (event) => {
+          const file = event.target.files && event.target.files[0];
+          if (!file) {
+            envData = null;
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = (loadEvent) => {
+            const text = loadEvent.target?.result;
+            if (typeof text === "string") {
+              envData = parseEnv(text);
+              addProvidersFromEnv(envData);
+              autoSelectProviderFromEnv();
+              handleFormChange();
+            }
+          };
+          reader.readAsText(file);
+        });
+      }
+
+      loadConfig();
+      updatePlaceholdersForProvider(providerSelect.value);
+
+      form.addEventListener("input", handleFormChange);
+      copyButton.addEventListener("click", copyCommand);
+      providerSelect.addEventListener("change", () => {
+        updatePlaceholdersForProvider(providerSelect.value);
+        handleFormChange();
+      });
+
+      isInitializing = false;
+      handleFormChange();
+    </script>
+  </body>
+</html>
