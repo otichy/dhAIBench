@@ -2,10 +2,11 @@
 
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible model for each example, and scores the predictions against gold labels. A companion browser-based configurator helps compose the command-line invocation.
 
-- **End-to-end evaluation**: merge datasets with optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
+- **End-to-end evaluation**: process one or many input CSVs, merge optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
 - **Prompt controls**: tune temperature, top-p, top-k, chain-of-thought prompting, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
 - **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
+- **Metadata preservation**: the optional `info` column feeds the model extra guidance, and any additional columns are carried through to the output file.
 - **GUI command builder**: `config_gui.html` generates CLI strings for the Python agent entirely client-side.
 
 ## Repository Layout
@@ -37,20 +38,21 @@ Input files must be semicolon-delimited CSVs with headers:
 | `leftContext` | Text immediately preceding the node token.             |
 | `node`        | Target word to classify.                               |
 | `rightContext`| Text immediately following the node token.             |
+| `info`        | (Optional) supplemental instructions or metadata.      |
 | `truth`       | (Optional) gold label; omit when using `--labels`.     |
 
-When `--labels` is provided, supply a second CSV with `ID;truth` columns. The script merges this file with the examples before scoring.
+When `--labels` is provided, supply a second CSV with `ID;truth` columns. The script merges this file with the examples before scoring. Any extra columns are ignored by the prompt but carried through to the output CSV for convenience.
 
 ## Usage
 
 1. Populate `.env` or export environment variables so the agent can locate your API key. By default it reads `OPENAI_API_KEY` (and `OPENAI_BASE_URL` when targeting non-default endpoints). You can override the variable names with `--api_key_var` and `--api_base_var`.
 2. Prepare an input dataset (see `example_input.csv` for reference).
-3. Run the benchmark:
+3. Run the benchmark (append as many CSVs as you like after `--input`; omit `--output` to use the automatic filenames):
 
 ```bash
 python benchmark_agent.py ^
-  --input data/input.csv ^
-  --output runs/results.csv ^
+  --input data/input.csv data/input_extra.csv ^
+  --output runs/ ^
   --model gpt-4o-mini ^
   --temperature 0.0 ^
   --top_p 1.0 ^
@@ -61,6 +63,8 @@ python benchmark_agent.py ^
 ```
 
 On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
+
+When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
 
 ### Command Builder GUI
 

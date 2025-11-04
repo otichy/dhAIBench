@@ -154,6 +154,14 @@
             <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
           </label>
           <label
+            >Service Tier
+            <select id="service_tier" name="service_tier">
+              <option value="standard" selected>Standard</option>
+              <option value="flex">Flex</option>
+              <option value="priority">Priority</option>
+            </select>
+          </label>
+          <label
             >Few-shot Examples
             <input
               type="number"
@@ -211,27 +219,27 @@
         <legend>Input &amp; Output</legend>
         <div class="grid">
           <label
-            >Input CSV Path
-            <input
-              type="text"
+            >Input CSV Path(s)
+            <span>Provide one path per line.</span>
+            <textarea
               id="input_path"
               name="input_path"
-              placeholder="data/examples.csv"
+              placeholder="data/examples.csv&#10;data/examples_2.csv"
               required
-            />
+            ></textarea>
           </label>
           <label
             >Labels CSV Path
             <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
           </label>
           <label
-            >Output CSV Path
+            >Output CSV Path (optional)
+            <span>Provide a directory when batching multiple files.</span>
             <input
               type="text"
               id="output_path"
               name="output_path"
-              placeholder="results/output.csv"
-              required
+              placeholder="results/"
             />
           </label>
         </div>
@@ -243,7 +251,7 @@
     </form>
 
     <h2>Generated Command</h2>
-    <pre id="command-output">python benchmark_agent.py --input "" --output "" --model ""</pre>
+    <pre id="command-output">python benchmark_agent.py --input "" --model ""</pre>
     <button type="button" id="copy-button">Copy Command</button>
 
     <h2>CLI Help</h2>
@@ -251,9 +259,11 @@
       Full output of <code>python benchmark_agent.py --help</code> for quick reference.
     </p>
     <pre>
-usage: benchmark_agent.py [-h] --input INPUT [--labels LABELS] --output OUTPUT
-                          --model MODEL [--temperature TEMPERATURE]
-                          [--top_p TOP_P] [--top_k TOP_K]
+usage: benchmark_agent.py [-h] --input INPUT [INPUT ...] [--labels LABELS]
+                          [--output OUTPUT] --model MODEL
+                          [--temperature TEMPERATURE] [--top_p TOP_P]
+                          [--top_k TOP_K]
+                          [--service_tier {standard,flex,priority}]
                           [--provider {anthropic,cohere,e-infra,google,huggingface,openai}]
                           [--system_prompt SYSTEM_PROMPT]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
@@ -267,17 +277,22 @@ Benchmark an OpenAI model on a linguistic classification dataset.
 
 options:
   -h, --help            show this help message and exit
-  --input INPUT         Path to input CSV file with examples.
+  --input INPUT [INPUT ...]
+                        Path(s) to input CSV file(s) with examples.
   --labels LABELS       Optional path to CSV file that provides ground-truth
                         labels (ID;truth).
-  --output OUTPUT       Path to write predictions CSV (existing directory will
-                        be reused).
+  --output OUTPUT       Optional output CSV path or directory. When omitted,
+                        defaults to &lt;input&gt;_out_&lt;model&gt;_&lt;timestamp&gt;.csv
+                        alongside each input file.
   --model MODEL         Model name (e.g., gpt-4-turbo).
   --temperature TEMPERATURE
                         Sampling temperature.
   --top_p TOP_P         Nucleus sampling parameter.
   --top_k TOP_K         Top-k sampling (ignored for APIs that do not support
                         it).
+  --service_tier {standard,flex,priority}
+                        Optional service-tier hint for providers that support
+                        differentiated throughput.
   --provider {anthropic,cohere,e-infra,google,huggingface,openai}
                         Model provider identifier used to look up default
                         credentials.
@@ -324,6 +339,7 @@ options:
         temperature: "0.0",
         top_p: "1.0",
         few_shot_examples: "0",
+        service_tier: "standard",
         include_explanations: true,
         api_key_var: "",
         api_base_var: "",
@@ -364,15 +380,26 @@ options:
         const data = new FormData(form);
         const args = ["python", "benchmark_agent.py"];
 
-        const requiredFields = [
-          ["input_path", "--input"],
-          ["output_path", "--output"],
-          ["model", "--model"],
-        ];
+        const inputRaw = (data.get("input_path") ?? "").toString();
+        const inputPaths = inputRaw
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        args.push("--input");
+        if (inputPaths.length === 0) {
+          args.push('""');
+        } else {
+          for (const inputPath of inputPaths) {
+            args.push(shellQuote(inputPath));
+          }
+        }
 
-        for (const [field, flag] of requiredFields) {
-          const value = data.get(field)?.trim() ?? "";
-          args.push(flag, shellQuote(value));
+        const modelValue = data.get("model")?.toString().trim() ?? "";
+        args.push("--model", shellQuote(modelValue));
+
+        const outputValue = data.get("output_path")?.toString().trim();
+        if (outputValue) {
+          args.push("--output", shellQuote(outputValue));
         }
 
         const provider = data.get("provider");
@@ -393,6 +420,11 @@ options:
         const topK = data.get("top_k")?.trim();
         if (topK) {
           args.push("--top_k", topK);
+        }
+
+        const serviceTier = data.get("service_tier");
+        if (serviceTier && serviceTier !== defaultValues.service_tier) {
+          args.push("--service_tier", serviceTier);
         }
 
         const fewShot = data.get("few_shot_examples")?.trim();

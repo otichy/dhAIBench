@@ -20,8 +20,17 @@ import sys
 import time
 import subprocess
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+NODE_MARKER_LEFT = "⟦"
+NODE_MARKER_RIGHT = "⟧"
+MANDATORY_SYSTEM_APPEND = (
+    "Classify ONLY the word inside ⟦ ⟧ (the 'node'). Ignore similar words in LEFT/RIGHT unless needed as evidence. "
+    'If you cannot determine the number for the node, return "undecidable".'
+)
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -81,6 +90,55 @@ def extract_json_object(text: str) -> Dict[str, Any]:
         return json.loads(match.group(0))
 
 
+def sanitize_model_identifier(model: str) -> str:
+    """Return a filesystem-friendly model identifier."""
+    slug = re.sub(r"[^0-9A-Za-z]+", "", model.lower())
+    return slug or "model"
+
+
+def build_default_output_filename(input_path: str, model: str, timestamp_tag: str) -> str:
+    """Construct the default output filename for an input dataset."""
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    model_slug = sanitize_model_identifier(model)
+    return f"{base_name}_out_{model_slug}_{timestamp_tag}.csv"
+
+
+def resolve_output_path(
+    input_path: str,
+    model: str,
+    output_argument: Optional[str],
+    timestamp_tag: str,
+    multiple_inputs: bool,
+) -> str:
+    """Determine the output path for an input file."""
+    filename = build_default_output_filename(input_path, model, timestamp_tag)
+    if output_argument:
+        resolved_argument = os.path.expanduser(output_argument)
+        treat_as_directory = (
+            multiple_inputs
+            or resolved_argument.endswith(os.sep)
+            or os.path.isdir(resolved_argument)
+            or not os.path.splitext(resolved_argument)[1]
+        )
+        if treat_as_directory:
+            os.makedirs(resolved_argument, exist_ok=True)
+            return os.path.join(os.path.abspath(resolved_argument), filename)
+        return resolved_argument
+    return os.path.join(os.path.dirname(os.path.abspath(input_path)), filename)
+
+
+def mark_node_in_context(left: str, node: str, right: str) -> str:
+    """Return the combined context with the node wrapped in markers."""
+    left_part = left.rstrip()
+    right_part = right.lstrip()
+
+    left_sep = "" if not left_part else " " if not left.endswith((" ", "\n")) else ""
+    right_sep = "" if not right_part else " " if not right.startswith((" ", "\n")) else ""
+
+    combined = f"{left_part}{left_sep}{NODE_MARKER_LEFT}{node}{NODE_MARKER_RIGHT}{right_sep}{right_part}"
+    return combined.strip()
+
+
 # --------------------------- Data Loading ---------------------------------- #
 
 
@@ -90,7 +148,9 @@ class Example:
     left_context: str
     node: str
     right_context: str
+    info: str = ""
     truth: Optional[str] = None
+    extras: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,29 +172,45 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
 }
 
 
-def read_examples(path: str) -> List[Example]:
+def read_examples(path: str) -> Tuple[List[Example], List[str]]:
     """Read a semicolon-delimited CSV file into Example records."""
     examples: List[Example] = []
+    extra_field_order: List[str] = []
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=";")
         required_fields = {"ID", "leftContext", "node", "rightContext"}
-        missing = required_fields - set(reader.fieldnames or [])
+        fieldnames = reader.fieldnames or []
+        missing = required_fields - set(fieldnames)
         if missing:
             raise ValueError(f"Missing required columns in {path}: {sorted(missing)}")
 
+        allowed_fields = {"ID", "leftContext", "node", "rightContext", "truth", "info"}
+        extra_field_order = [name for name in fieldnames if name not in allowed_fields]
+
         for row in reader:
+            extras: Dict[str, str] = {}
+            for key, value in row.items():
+                if key not in allowed_fields:
+                    value_str = "" if value is None else str(value).strip()
+                    extras[key] = value_str
+
+            info_value = row.get("info")
+            info_text = "" if info_value is None else str(info_value).strip()
+
             example = Example(
                 example_id=str(row.get("ID", "")).strip(),
                 left_context=row.get("leftContext", "").strip(),
                 node=row.get("node", "").strip(),
                 right_context=row.get("rightContext", "").strip(),
+                info=info_text,
                 truth=str(row.get("truth", "")).strip() or None,
+                extras=extras,
             )
             if not example.example_id:
                 logging.warning("Skipping row with empty ID: %s", row)
                 continue
             examples.append(example)
-    return examples
+    return examples, extra_field_order
 
 
 def read_label_file(path: str) -> Dict[str, str]:
@@ -234,11 +310,28 @@ class OpenAIConnector:
         temperature: float,
         top_p: float,
         top_k: Optional[int],
+        service_tier: Optional[str],
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
+
+        def warn_logprob_retry(exc: Exception) -> None:
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None) or getattr(exc, "status", None)
+            error_message = getattr(exc, "message", None)
+            if error_message is None and hasattr(exc, "error"):
+                error_message = getattr(exc.error, "message", None)  # type: ignore[attr-defined]
+            text = str(error_message or exc)
+            if isinstance(status_code, str) and status_code.isdigit():
+                status_code = int(status_code)
+            if status_code == 403 or "403" in text:
+                logging.warning(
+                    "The API rejected the logprobs request with HTTP 403. This model or service tier likely does not support token log probabilities; retrying without logprobs. Details: %s",
+                    text,
+                )
+            else:
+                logging.debug("Logprobs unavailable for this client (%s); retrying without logprobs.", exc)
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
             entries: List[Dict[str, Any]] = []
@@ -278,22 +371,22 @@ class OpenAIConnector:
 
         if self.client_type == "chat_v1":
             try:
-                response = self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    logprobs=True,
-                    top_logprobs=1,
-                )
+                request_args: Dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "logprobs": True,
+                    "top_logprobs": 1,
+                }
+                if service_tier and service_tier != "standard":
+                    request_args["service_tier"] = service_tier
+                response = self._client.chat.completions.create(**request_args)
             except Exception as exc:  # noqa: BLE001
-                logging.debug("Logprobs unavailable for chat completions (%s); retrying without.", exc)
-                response = self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
+                warn_logprob_retry(exc)
+                request_args.pop("logprobs", None)
+                request_args.pop("top_logprobs", None)
+                response = self._client.chat.completions.create(**request_args)
             message = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
@@ -309,21 +402,20 @@ class OpenAIConnector:
             )
         if self.client_type == "responses_v1":
             try:
-                response = self._client.responses.create(
-                    model=model,
-                    input=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    logprobs=True,
-                )
+                request_args = {
+                    "model": model,
+                    "input": messages,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "logprobs": True,
+                }
+                if service_tier and service_tier != "standard":
+                    request_args["service_tier"] = service_tier
+                response = self._client.responses.create(**request_args)
             except Exception as exc:  # noqa: BLE001
-                logging.debug("Logprobs unavailable for responses API (%s); retrying without.", exc)
-                response = self._client.responses.create(
-                    model=model,
-                    input=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
+                warn_logprob_retry(exc)
+                request_args.pop("logprobs", None)
+                response = self._client.responses.create(**request_args)
             usage = getattr(response, "usage", None)
             # Responses API returns a list of content blocks
             for item in response.output:
@@ -344,22 +436,22 @@ class OpenAIConnector:
             return CompletionResult(text="")
         # Legacy SDK path
         try:
-            response = self._client.ChatCompletion.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                logprobs=True,
-                top_logprobs=1,
-            )
+            request_args = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "top_p": top_p,
+                "logprobs": True,
+                "top_logprobs": 1,
+            }
+            if service_tier and service_tier != "standard":
+                request_args["service_tier"] = service_tier
+            response = self._client.ChatCompletion.create(**request_args)
         except Exception as exc:  # noqa: BLE001
-            logging.debug("Logprobs unavailable for legacy client (%s); retrying without.", exc)
-            response = self._client.ChatCompletion.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-            )
+            warn_logprob_retry(exc)
+            request_args.pop("logprobs", None)
+            request_args.pop("top_logprobs", None)
+            response = self._client.ChatCompletion.create(**request_args)
         content = response["choices"][0]["message"]["content"]
         usage = response.get("usage", {}) if isinstance(response, dict) else {}
         prompt_tokens = usage.get("prompt_tokens")
@@ -397,28 +489,41 @@ def build_messages(
             "You are a meticulous linguistic classifier. "
             "Classify the highlighted node word according to the task instructions."
         )
+    system_msg = f"{system_msg.rstrip()}\n\n{MANDATORY_SYSTEM_APPEND}"
 
     user_instructions = [
-        "You will receive a text excerpt split into left context, node, and right context.",
+        "You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as ⟦node⟧.",
         "Identify the label that best matches the node word according to the task definition.",
     ]
-
-    if include_explanation:
-        user_instructions.append(
-            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1])."
-        )
-    else:
-        user_instructions.append(
-            "Return a JSON object with keys: label (string), confidence (float in [0,1]). Do not include an explanation field."
-        )
-
-    user_instructions.append("Do not include any text outside the JSON object.")
 
     if enable_cot:
         user_instructions.insert(
             2,
             "Think through the linguistic evidence step-by-step before committing to the label.",
         )
+
+    if include_explanation:
+        json_instruction = (
+            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1]), "
+            "node_echo (string), span_source (string)."
+        )
+    else:
+        json_instruction = (
+            "Return a JSON object with keys: label (string), confidence (float in [0,1]), node_echo (string), "
+            'span_source (string). Do not include an explanation field.'
+        )
+
+    user_instructions.append(json_instruction)
+    user_instructions.append(
+        'Set span_source exactly to "node" and ensure node_echo is identical to the word inside ⟦ ⟧.'
+    )
+    user_instructions.append(
+        "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
+    )
+    user_instructions.append(
+        "Contract: if node_echo or span_source fail to meet these requirements, the response will be rejected."
+    )
+    user_instructions.append("Do not include any text outside the JSON object.")
 
     user_content = "\n".join(user_instructions)
 
@@ -430,7 +535,11 @@ def build_messages(
                     "left_context": sample.left_context,
                     "node": sample.node,
                     "right_context": sample.right_context,
+                    "info": sample.info,
                     "label": sample.truth,
+                    "marked_example": mark_node_in_context(
+                        sample.left_context, sample.node, sample.right_context
+                    ),
                 }
             )
         user_content += (
@@ -442,6 +551,10 @@ def build_messages(
         "left_context": example.left_context,
         "node": example.node,
         "right_context": example.right_context,
+        "info": example.info,
+        "marked_example": mark_node_in_context(
+            example.left_context, example.node, example.right_context
+        ),
     }
 
     user_content += "\n\nNow classify this example:\n"
@@ -465,6 +578,8 @@ class Prediction:
     total_tokens: Optional[int] = None
     label_logprob: Optional[float] = None
     label_probability: Optional[float] = None
+    node_echo: Optional[str] = None
+    span_source: Optional[str] = None
 
 
 def compute_metrics(
@@ -693,6 +808,7 @@ def classify_example(
     temperature: float,
     top_p: float,
     top_k: Optional[int],
+    service_tier: Optional[str],
     system_prompt: Optional[str],
     enable_cot: bool,
     include_explanation: bool,
@@ -711,6 +827,7 @@ def classify_example(
     prompt_snapshot = json.dumps(messages, ensure_ascii=False, indent=2)
     logging.info("Prompt for example %s:\n%s", example.example_id, prompt_snapshot)
     last_error: Optional[Exception] = None
+    validation_failures = 0
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -720,6 +837,7 @@ def classify_example(
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
+                service_tier=service_tier,
             )
             raw = result.text
             payload = extract_json_object(raw)
@@ -745,6 +863,30 @@ def classify_example(
             if not math.isfinite(confidence) or not (0.0 <= confidence <= 1.0):
                 logging.debug("Clamping invalid confidence %s to [0,1] range.", confidence)
                 confidence = min(1.0, max(0.0, safe_float(confidence, 0.0)))
+
+            node_echo = str(payload.get("node_echo", "")).strip()
+            span_source = str(payload.get("span_source", "")).strip()
+            expected_node = example.node.strip()
+            span_source_normalized = span_source.lower()
+
+            if node_echo != expected_node or span_source_normalized != "node":
+                validation_failures += 1
+                logging.warning(
+                    "Model referenced an incorrect span for example %s (node_echo=%r, span_source=%r, expected node=%r).",
+                    example.example_id,
+                    node_echo,
+                    span_source,
+                    expected_node,
+                )
+                if validation_failures >= 3 or attempt == max_retries:
+                    logging.error(
+                        "Validation failed %d time(s) for example %s; accepting last response with confidence forced to 0.",
+                        validation_failures,
+                        example.example_id,
+                    )
+                    confidence = 0.0
+                else:
+                    raise ValueError("Model failed node/span contract; retrying.")
 
             total_tokens = result.total_tokens
             if total_tokens is None and result.prompt_tokens is not None and result.completion_tokens is not None:
@@ -781,6 +923,8 @@ def classify_example(
                 total_tokens=total_tokens,
                 label_logprob=label_logprob,
                 label_probability=label_probability,
+                node_echo=node_echo or None,
+                span_source=span_source or None,
             )
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
             last_error = exc
@@ -798,20 +942,196 @@ def classify_example(
     raise RuntimeError(f"Failed to classify example {example.example_id}") from last_error
 
 
+def process_dataset(
+    connector: OpenAIConnector,
+    input_path: str,
+    output_path: str,
+    args: argparse.Namespace,
+    include_explanation: bool,
+    calibration_enabled: bool,
+    label_map: Optional[Dict[str, str]],
+) -> Tuple[int, int, int]:
+    """Run the full evaluation pipeline for a single dataset."""
+    logging.info("Loading dataset from %s", input_path)
+    examples, extra_field_order = read_examples(input_path)
+    logging.info("Loaded %d examples.", len(examples))
+
+    if label_map:
+        merge_labels(examples, label_map)
+
+    missing_truth = [ex.example_id for ex in examples if ex.truth is None]
+    if missing_truth:
+        logging.warning(
+            "Found %d example(s) without ground-truth labels. Metrics will skip them.",
+            len(missing_truth),
+        )
+
+    predictions: Dict[str, Prediction] = {}
+    confidences: List[float] = []
+    correctness: List[bool] = []
+    few_shot_count = max(0, args.few_shot_examples)
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_reported_tokens = 0
+
+    for idx, example in enumerate(examples, start=1):
+        logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
+        few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+        prediction = classify_example(
+            connector=connector,
+            example=example,
+            model=args.model,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            service_tier=args.service_tier,
+            system_prompt=args.system_prompt,
+            enable_cot=args.enable_cot,
+            include_explanation=include_explanation,
+            few_shot_context=few_shot_context,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+        )
+        predictions[example.example_id] = prediction
+        if prediction.prompt_tokens is not None:
+            total_prompt_tokens += prediction.prompt_tokens
+        if prediction.completion_tokens is not None:
+            total_completion_tokens += prediction.completion_tokens
+        if prediction.total_tokens is not None:
+            total_reported_tokens += prediction.total_tokens
+        if example.truth:
+            is_correct = prediction.label == example.truth
+            correctness.append(is_correct)
+            confidences.append(prediction.confidence)
+
+    ensure_directory(output_path)
+    logging.info("Writing predictions to %s", output_path)
+
+    fieldnames = [
+        "ID",
+        "leftContext",
+        "node",
+        "rightContext",
+        "info",
+        "truth",
+    ]
+    if extra_field_order:
+        fieldnames.extend(extra_field_order)
+    fieldnames.extend(
+        [
+            "prediction",
+            "explanation",
+            "confidence",
+            "nodeEcho",
+            "spanSource",
+            "promptTokens",
+            "completionTokens",
+            "totalTokens",
+            "labelLogProb",
+            "labelProbability",
+        ]
+    )
+
+    with open(output_path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
+        writer.writeheader()
+        for example in examples:
+            pred = predictions.get(example.example_id)
+            row = {
+                "ID": example.example_id,
+                "leftContext": example.left_context,
+                "node": example.node,
+                "rightContext": example.right_context,
+                "info": example.info,
+                "truth": example.truth or "",
+                "prediction": pred.label if pred else "",
+                "explanation": pred.explanation if pred else "",
+                "confidence": f"{pred.confidence:.4f}" if pred else "",
+                "nodeEcho": pred.node_echo if pred and pred.node_echo is not None else "",
+                "spanSource": pred.span_source if pred and pred.span_source is not None else "",
+                "promptTokens": pred.prompt_tokens if pred and pred.prompt_tokens is not None else "",
+                "completionTokens": pred.completion_tokens if pred and pred.completion_tokens is not None else "",
+                "totalTokens": pred.total_tokens if pred and pred.total_tokens is not None else "",
+                "labelLogProb": f"{pred.label_logprob:.6f}" if pred and pred.label_logprob is not None else "",
+                "labelProbability": f"{pred.label_probability:.6f}" if pred and pred.label_probability is not None else "",
+            }
+            for field in extra_field_order:
+                row[field] = example.extras.get(field, "")
+            writer.writerow(row)
+
+    metrics_output = os.path.splitext(output_path)[0] + "_metrics.json"
+
+    evaluated_truths = [ex.truth for ex in examples if ex.truth is not None]
+    evaluated_preds = [
+        predictions[ex.example_id].label for ex in examples if ex.truth is not None
+    ]
+
+    metrics: Dict[str, Any] = {}
+    if evaluated_truths:
+        metrics = compute_metrics(evaluated_truths, evaluated_preds)
+        with open(metrics_output, "w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, indent=2, ensure_ascii=False)
+        logging.info("Saved metrics to %s", metrics_output)
+    else:
+        logging.warning("No ground-truth labels available; skipping metric computation.")
+
+    if calibration_enabled and confidences and correctness:
+        calibration_path = os.path.splitext(output_path)[0] + "_calibration.png"
+        generate_calibration_plot(confidences, correctness, calibration_path)
+
+    if metrics:
+        accuracy = metrics.get("accuracy", 0.0)
+        logging.info("Overall accuracy: %.2f%%", accuracy * 100)
+        logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
+        logging.info("Label breakdown:")
+        for label, stats in metrics["per_label"].items():
+            logging.info(
+                "  %s -> precision: %.3f, recall: %.3f, f1: %.3f, support: %d",
+                label,
+                stats["precision"],
+                stats["recall"],
+                stats["f1"],
+                stats["support"],
+            )
+
+    if total_prompt_tokens or total_completion_tokens or total_reported_tokens:
+        total_token_usage = (
+            total_reported_tokens
+            if total_reported_tokens
+            else total_prompt_tokens + total_completion_tokens
+        )
+        logging.info(
+            "Aggregate token usage -> prompt: %s, completion: %s, total: %s",
+            total_prompt_tokens or "N/A",
+            total_completion_tokens or "N/A",
+            total_token_usage,
+        )
+
+    return total_prompt_tokens, total_completion_tokens, total_reported_tokens
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark an OpenAI model on a linguistic classification dataset."
     )
 
-    parser.add_argument("--input", required=True, help="Path to input CSV file with examples.")
+    parser.add_argument(
+        "--input",
+        required=True,
+        nargs="+",
+        help="Path(s) to input CSV file(s) with examples.",
+    )
     parser.add_argument(
         "--labels",
         help="Optional path to CSV file that provides ground-truth labels (ID;truth).",
     )
     parser.add_argument(
         "--output",
-        required=True,
-        help="Path to write predictions CSV (existing directory will be reused).",
+        default=None,
+        help=(
+            "Optional output CSV path or directory. When omitted, defaults to "
+            "<input>_out_<model>_<timestamp>.csv alongside each input file."
+        ),
     )
     parser.add_argument("--model", required=True, help="Model name (e.g., gpt-4-turbo).")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature.")
@@ -820,6 +1140,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--top_k",
         type=int,
         help="Top-k sampling (ignored for APIs that do not support it).",
+    )
+    parser.add_argument(
+        "--service_tier",
+        choices=["standard", "flex", "priority"],
+        default="standard",
+        help="Optional service-tier hint for providers that support differentiated throughput.",
     )
     parser.add_argument(
         "--provider",
@@ -916,23 +1242,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             api_base_url or "default base URL",
         )
 
-    logging.info("Loading dataset from %s", args.input)
-    examples = read_examples(args.input)
-    logging.info("Loaded %d examples.", len(examples))
+    input_paths = [os.path.expanduser(path) for path in args.input]
+    multiple_inputs = len(input_paths) > 1
+    timestamp_tag = datetime.now().strftime("%Y-%m-%d-%H-%M")
 
+    label_map: Optional[Dict[str, str]] = None
     if args.labels:
         logging.info("Loading labels from %s", args.labels)
         label_map = read_label_file(args.labels)
-        merge_labels(examples, label_map)
     else:
-        logging.info("Using truth column embedded in the input file.")
-
-    missing_truth = [ex.example_id for ex in examples if ex.truth is None]
-    if missing_truth:
-        logging.warning(
-            "Found %d example(s) without ground-truth labels. Metrics will skip them.",
-            len(missing_truth),
-        )
+        logging.info("Using truth column embedded in the input files.")
 
     calibration_enabled = args.calibration
     if calibration_enabled and not ensure_calibration_dependencies():
@@ -945,131 +1264,41 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     connector = OpenAIConnector(api_key=api_key, base_url=api_base_url)
 
-    predictions: Dict[str, Prediction] = {}
-    confidences: List[float] = []
-    correctness: List[bool] = []
-    few_shot_count = max(0, args.few_shot_examples)
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_reported_tokens = 0
+    aggregate_prompt_tokens = 0
+    aggregate_completion_tokens = 0
+    aggregate_reported_tokens = 0
 
-    for idx, example in enumerate(examples, start=1):
-        logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
-        few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-        prediction = classify_example(
-            connector=connector,
-            example=example,
-            model=args.model,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
-            system_prompt=args.system_prompt,
-            enable_cot=args.enable_cot,
-            include_explanation=include_explanation,
-            few_shot_context=few_shot_context,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
+    for resolved_input in input_paths:
+        output_path = resolve_output_path(
+            resolved_input,
+            args.model,
+            args.output,
+            timestamp_tag,
+            multiple_inputs,
         )
-        predictions[example.example_id] = prediction
-        if prediction.prompt_tokens is not None:
-            total_prompt_tokens += prediction.prompt_tokens
-        if prediction.completion_tokens is not None:
-            total_completion_tokens += prediction.completion_tokens
-        if prediction.total_tokens is not None:
-            total_reported_tokens += prediction.total_tokens
-        if example.truth:
-            is_correct = prediction.label == example.truth
-            correctness.append(is_correct)
-            confidences.append(prediction.confidence)
+        prompt_tokens, completion_tokens, reported_tokens = process_dataset(
+            connector=connector,
+            input_path=resolved_input,
+            output_path=output_path,
+            args=args,
+            include_explanation=include_explanation,
+            calibration_enabled=calibration_enabled,
+            label_map=label_map,
+        )
+        aggregate_prompt_tokens += prompt_tokens
+        aggregate_completion_tokens += completion_tokens
+        aggregate_reported_tokens += reported_tokens
 
-    ensure_directory(args.output)
-    logging.info("Writing predictions to %s", args.output)
-
-    fieldnames = [
-        "ID",
-        "leftContext",
-        "node",
-        "rightContext",
-        "truth",
-        "prediction",
-        "explanation",
-        "confidence",
-        "promptTokens",
-        "completionTokens",
-        "totalTokens",
-        "labelLogProb",
-        "labelProbability",
-    ]
-
-    with open(args.output, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
-        writer.writeheader()
-        for example in examples:
-            pred = predictions.get(example.example_id)
-            writer.writerow(
-                {
-                    "ID": example.example_id,
-                    "leftContext": example.left_context,
-                    "node": example.node,
-                    "rightContext": example.right_context,
-                    "truth": example.truth or "",
-                    "prediction": pred.label if pred else "",
-                    "explanation": pred.explanation if pred else "",
-                    "confidence": f"{pred.confidence:.4f}" if pred else "",
-                    "promptTokens": pred.prompt_tokens if pred and pred.prompt_tokens is not None else "",
-                    "completionTokens": pred.completion_tokens if pred and pred.completion_tokens is not None else "",
-                    "totalTokens": pred.total_tokens if pred and pred.total_tokens is not None else "",
-                    "labelLogProb": f"{pred.label_logprob:.6f}" if pred and pred.label_logprob is not None else "",
-                    "labelProbability": f"{pred.label_probability:.6f}" if pred and pred.label_probability is not None else "",
-                }
-            )
-
-    metrics_output = os.path.splitext(args.output)[0] + "_metrics.json"
-
-    evaluated_truths = [ex.truth for ex in examples if ex.truth is not None]
-    evaluated_preds = [
-        predictions[ex.example_id].label for ex in examples if ex.truth is not None
-    ]
-
-    metrics: Dict[str, Any] = {}
-    if evaluated_truths:
-        metrics = compute_metrics(evaluated_truths, evaluated_preds)
-        with open(metrics_output, "w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2, ensure_ascii=False)
-        logging.info("Saved metrics to %s", metrics_output)
-    else:
-        logging.warning("No ground-truth labels available; skipping metric computation.")
-
-    if calibration_enabled and confidences and correctness:
-        calibration_path = os.path.splitext(args.output)[0] + "_calibration.png"
-        generate_calibration_plot(confidences, correctness, calibration_path)
-
-    # Print metrics summary to stdout for quick inspection.
-    if metrics:
-        accuracy = metrics.get("accuracy", 0.0)
-        logging.info("Overall accuracy: %.2f%%", accuracy * 100)
-        logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
-        logging.info("Label breakdown:")
-        for label, stats in metrics["per_label"].items():
-            logging.info(
-                "  %s -> precision: %.3f, recall: %.3f, f1: %.3f, support: %d",
-                label,
-                stats["precision"],
-                stats["recall"],
-                stats["f1"],
-                stats["support"],
-            )
-
-    if total_prompt_tokens or total_completion_tokens or total_reported_tokens:
+    if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
         total_token_usage = (
-            total_reported_tokens
-            if total_reported_tokens
-            else total_prompt_tokens + total_completion_tokens
+            aggregate_reported_tokens
+            if aggregate_reported_tokens
+            else aggregate_prompt_tokens + aggregate_completion_tokens
         )
         logging.info(
-            "Aggregate token usage -> prompt: %s, completion: %s, total: %s",
-            total_prompt_tokens or "N/A",
-            total_completion_tokens or "N/A",
+            "Total token usage across all inputs -> prompt: %s, completion: %s, total: %s",
+            aggregate_prompt_tokens or "N/A",
+            aggregate_completion_tokens or "N/A",
             total_token_usage,
         )
 
