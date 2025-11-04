@@ -246,6 +246,65 @@
     <pre id="command-output">python benchmark_agent.py --input "" --output "" --model ""</pre>
     <button type="button" id="copy-button">Copy Command</button>
 
+    <h2>CLI Help</h2>
+    <p>
+      Full output of <code>python benchmark_agent.py --help</code> for quick reference.
+    </p>
+    <pre>
+usage: benchmark_agent.py [-h] --input INPUT [--labels LABELS] --output OUTPUT
+                          --model MODEL [--temperature TEMPERATURE]
+                          [--top_p TOP_P] [--top_k TOP_K]
+                          [--provider {anthropic,cohere,e-infra,google,huggingface,openai}]
+                          [--system_prompt SYSTEM_PROMPT]
+                          [--few_shot_examples FEW_SHOT_EXAMPLES]
+                          [--enable_cot] [--no_explanation] [--calibration]
+                          [--api_key_var API_KEY_VAR]
+                          [--api_base_var API_BASE_VAR]
+                          [--max_retries MAX_RETRIES]
+                          [--retry_delay RETRY_DELAY] [--log_level LOG_LEVEL]
+
+Benchmark an OpenAI model on a linguistic classification dataset.
+
+options:
+  -h, --help            show this help message and exit
+  --input INPUT         Path to input CSV file with examples.
+  --labels LABELS       Optional path to CSV file that provides ground-truth
+                        labels (ID;truth).
+  --output OUTPUT       Path to write predictions CSV (existing directory will
+                        be reused).
+  --model MODEL         Model name (e.g., gpt-4-turbo).
+  --temperature TEMPERATURE
+                        Sampling temperature.
+  --top_p TOP_P         Nucleus sampling parameter.
+  --top_k TOP_K         Top-k sampling (ignored for APIs that do not support
+                        it).
+  --provider {anthropic,cohere,e-infra,google,huggingface,openai}
+                        Model provider identifier used to look up default
+                        credentials.
+  --system_prompt SYSTEM_PROMPT
+                        System prompt injected into the chat completion.
+  --few_shot_examples FEW_SHOT_EXAMPLES
+                        Number of labeled examples to prepend as few-shot
+                        demonstrations.
+  --enable_cot          If set, encourages the model to reason step-by-step
+                        before answering.
+  --no_explanation      Skip requesting explanations to reduce token usage.
+  --calibration         Generate a calibration plot using the model's
+                        confidences.
+  --api_key_var API_KEY_VAR
+                        Environment variable name that stores the API key.
+  --api_base_var API_BASE_VAR
+                        Environment variable name that stores the API base
+                        URL.
+  --max_retries MAX_RETRIES
+                        Maximum number of retry attempts per example on API
+                        errors.
+  --retry_delay RETRY_DELAY
+                        Delay (seconds) between API retries.
+  --log_level LOG_LEVEL
+                        Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    </pre>
+
     <script>
       let envData = null;
       let isInitializing = true;
