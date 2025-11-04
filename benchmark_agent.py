@@ -29,7 +29,7 @@ NODE_MARKER_LEFT = "⟦"
 NODE_MARKER_RIGHT = "⟧"
 MANDATORY_SYSTEM_APPEND = (
     "Classify ONLY the word inside ⟦ ⟧ (the 'node'). Ignore similar words in LEFT/RIGHT unless needed as evidence. "
-    'If you cannot determine the number for the node, return "undecidable".'
+    'If you cannot determine the class/label for the node, return "unclassified".'
 )
 
 
@@ -1214,6 +1214,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+    overall_start = time.perf_counter()
+
     provider = (args.provider or "openai").lower()
     provider_defaults = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["openai"])
     if args.api_key_var is None:
@@ -1301,6 +1303,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             aggregate_completion_tokens or "N/A",
             total_token_usage,
         )
+
+    elapsed_seconds = time.perf_counter() - overall_start
+    logging.info("Total runtime: %.2f seconds", elapsed_seconds)
 
     return 0
 
