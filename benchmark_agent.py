@@ -974,36 +974,6 @@ def process_dataset(
     total_completion_tokens = 0
     total_reported_tokens = 0
 
-    for idx, example in enumerate(examples, start=1):
-        logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
-        few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-        prediction = classify_example(
-            connector=connector,
-            example=example,
-            model=args.model,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
-            service_tier=args.service_tier,
-            system_prompt=args.system_prompt,
-            enable_cot=args.enable_cot,
-            include_explanation=include_explanation,
-            few_shot_context=few_shot_context,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
-        )
-        predictions[example.example_id] = prediction
-        if prediction.prompt_tokens is not None:
-            total_prompt_tokens += prediction.prompt_tokens
-        if prediction.completion_tokens is not None:
-            total_completion_tokens += prediction.completion_tokens
-        if prediction.total_tokens is not None:
-            total_reported_tokens += prediction.total_tokens
-        if example.truth:
-            is_correct = prediction.label == example.truth
-            correctness.append(is_correct)
-            confidences.append(prediction.confidence)
-
     ensure_directory(output_path)
     logging.info("Writing predictions to %s", output_path)
 
@@ -1035,8 +1005,37 @@ def process_dataset(
     with open(output_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
         writer.writeheader()
-        for example in examples:
-            pred = predictions.get(example.example_id)
+
+        for idx, example in enumerate(examples, start=1):
+            logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
+            few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+            prediction = classify_example(
+                connector=connector,
+                example=example,
+                model=args.model,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=args.top_k,
+                service_tier=args.service_tier,
+                system_prompt=args.system_prompt,
+                enable_cot=args.enable_cot,
+                include_explanation=include_explanation,
+                few_shot_context=few_shot_context,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            predictions[example.example_id] = prediction
+            if prediction.prompt_tokens is not None:
+                total_prompt_tokens += prediction.prompt_tokens
+            if prediction.completion_tokens is not None:
+                total_completion_tokens += prediction.completion_tokens
+            if prediction.total_tokens is not None:
+                total_reported_tokens += prediction.total_tokens
+            if example.truth:
+                is_correct = prediction.label == example.truth
+                correctness.append(is_correct)
+                confidences.append(prediction.confidence)
+
             row = {
                 "ID": example.example_id,
                 "leftContext": example.left_context,
@@ -1044,20 +1043,21 @@ def process_dataset(
                 "rightContext": example.right_context,
                 "info": example.info,
                 "truth": example.truth or "",
-                "prediction": pred.label if pred else "",
-                "explanation": pred.explanation if pred else "",
-                "confidence": f"{pred.confidence:.4f}" if pred else "",
-                "nodeEcho": pred.node_echo if pred and pred.node_echo is not None else "",
-                "spanSource": pred.span_source if pred and pred.span_source is not None else "",
-                "promptTokens": pred.prompt_tokens if pred and pred.prompt_tokens is not None else "",
-                "completionTokens": pred.completion_tokens if pred and pred.completion_tokens is not None else "",
-                "totalTokens": pred.total_tokens if pred and pred.total_tokens is not None else "",
-                "labelLogProb": f"{pred.label_logprob:.6f}" if pred and pred.label_logprob is not None else "",
-                "labelProbability": f"{pred.label_probability:.6f}" if pred and pred.label_probability is not None else "",
+                "prediction": prediction.label,
+                "explanation": prediction.explanation,
+                "confidence": f"{prediction.confidence:.4f}",
+                "nodeEcho": prediction.node_echo or "",
+                "spanSource": prediction.span_source or "",
+                "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
+                "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
+                "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
+                "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
+                "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
             }
             for field in extra_field_order:
                 row[field] = example.extras.get(field, "")
             writer.writerow(row)
+            handle.flush()
 
     metrics_output = os.path.splitext(output_path)[0] + "_metrics.json"
 
