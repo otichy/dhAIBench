@@ -825,7 +825,7 @@ def classify_example(
         few_shot_context=few_shot_context,
     )
     prompt_snapshot = json.dumps(messages, ensure_ascii=False, indent=2)
-    logging.info("Prompt for example %s:\n%s", example.example_id, prompt_snapshot)
+    logging.debug("Prompt for example %s:\n%s", example.example_id, prompt_snapshot)
     last_error: Optional[Exception] = None
     validation_failures = 0
 
@@ -857,12 +857,24 @@ def classify_example(
                         example.example_id,
                     )
                 explanation = ""
-            confidence = safe_float(payload.get("confidence"), default=math.nan)
+            confidence_raw = payload.get("confidence")
+            confidence = safe_float(confidence_raw, default=0.0)
             if label == "":
                 raise ValueError("Model returned empty label.")
-            if not math.isfinite(confidence) or not (0.0 <= confidence <= 1.0):
-                logging.debug("Clamping invalid confidence %s to [0,1] range.", confidence)
-                confidence = min(1.0, max(0.0, safe_float(confidence, 0.0)))
+            if not math.isfinite(confidence):
+                logging.debug(
+                    "Invalid confidence %r received for example %s; forcing to 0.0.",
+                    confidence_raw,
+                    example.example_id,
+                )
+                confidence = 0.0
+            elif not (0.0 <= confidence <= 1.0):
+                logging.debug(
+                    "Clamping out-of-range confidence %.4f for example %s to [0,1].",
+                    confidence,
+                    example.example_id,
+                )
+                confidence = min(1.0, max(0.0, confidence))
 
             node_echo = str(payload.get("node_echo", "")).strip()
             span_source = str(payload.get("span_source", "")).strip()
@@ -892,7 +904,7 @@ def classify_example(
             if total_tokens is None and result.prompt_tokens is not None and result.completion_tokens is not None:
                 total_tokens = result.prompt_tokens + result.completion_tokens
 
-            logging.info("Response for example %s:\n%s", example.example_id, raw)
+            logging.debug("Response for example %s:\n%s", example.example_id, raw)
             if any(value is not None for value in (result.prompt_tokens, result.completion_tokens, total_tokens)):
                 logging.info(
                     "Token usage for example %s -> prompt: %s, completion: %s, total: %s",

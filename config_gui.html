@@ -366,14 +366,18 @@ options:
       };
 
       function shellQuote(value) {
-        if (value === undefined || value === null) return '""';
+        if (value === undefined || value === null) {
+          return "''";
+        }
         const stringValue = String(value);
         if (!stringValue.length) {
-          return '""';
+          return "''";
         }
-        const needsQuotes = /\s|["]/.test(stringValue);
-        const escaped = stringValue.replace(/(["\\])/g, "\\$1");
-        return needsQuotes ? `"${escaped}"` : escaped;
+        if (/^[A-Za-z0-9._@%+=:,\\/\\-]+$/.test(stringValue)) {
+          return stringValue;
+        }
+        const escaped = stringValue.replace(/'/g, "'\"'\"'");
+        return "'" + escaped + "'";
       }
 
       function buildCommand() {
@@ -387,7 +391,7 @@ options:
           .filter((entry) => entry.length > 0);
         args.push("--input");
         if (inputPaths.length === 0) {
-          args.push('""');
+          args.push(shellQuote(""));
         } else {
           for (const inputPath of inputPaths) {
             args.push(shellQuote(inputPath));
