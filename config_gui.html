@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -55,6 +55,12 @@
       .inline span {
         font-weight: 400;
       }
+      .hint {
+        display: block;
+        font-size: 0.9rem;
+        color: rgba(0, 0, 0, 0.7);
+        margin-top: 0.35rem;
+      }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -89,6 +95,9 @@
         button {
           background: #4977ff;
         }
+        .hint {
+          color: rgba(255, 255, 255, 0.75);
+        }
       }
     </style>
   </head>
@@ -105,14 +114,30 @@
           API credentials default to values stored in <code>.env</code>. Override the variable names
           below only if you need to use a different key or endpoint for this run.
         </p>
+        <p>
+          Model names per providers in the <code>.env</code> can be refreshed by running <code>benchmark_agent.py --update-models</code>.
+        </p>
         <label class="inline">
-          <span>Load .env file</span>
+          <span>(Edit) and load .env file to refresh the available providers.</span>
           <input type="file" id="env-file-input" accept=".env,text/plain" />
         </label>
         <div class="grid">
           <label
             >Model Name
-            <input type="text" id="model" name="model" placeholder="gpt-4o-mini" required />
+            <input
+              type="text"
+              id="model"
+              name="model"
+              placeholder="gpt-4o-mini"
+              list="model-options"
+              required
+            />
+            <span class="hint">
+              Run <code>python benchmark_agent.py --update-models</code> to refresh model lists of providers from your
+              <code>.env</code> configuration.
+            </span>
+            <datalist id="model-options"></datalist>
+            <span class="hint" id="model-catalog-meta"></span>
           </label>
           <label
             >Provider
@@ -320,6 +345,7 @@ options:
                         Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     </pre>
 
+    <script src="config_models.js"></script>
     <script>
       let envData = null;
       let isInitializing = true;
@@ -333,6 +359,13 @@ options:
       const apiKeyVarInput = document.getElementById("api_key_var");
       const apiBaseVarInput = document.getElementById("api_base_var");
       const envFileInput = document.getElementById("env-file-input");
+      const modelInput = document.getElementById("model");
+      const modelList = document.getElementById("model-options");
+      const modelCatalogMeta = document.getElementById("model-catalog-meta");
+      const modelCatalog =
+        window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
+          ? window.MODEL_CATALOG
+          : {};
 
       const defaultValues = {
         provider: "openai",
@@ -380,6 +413,37 @@ options:
         return "'" + escaped + "'";
       }
 
+      function updateModelOptionsForProvider(provider) {
+        if (!modelList) {
+          return;
+        }
+        modelList.innerHTML = "";
+        const entry = modelCatalog[provider];
+        const models =
+          entry && Array.isArray(entry.models) ? entry.models.filter((value) => typeof value === "string") : [];
+        if (models.length) {
+          models.forEach((modelId) => {
+            const option = document.createElement("option");
+            option.value = modelId;
+            modelList.appendChild(option);
+          });
+        }
+        if (modelCatalogMeta) {
+          let note = "";
+          if (models.length) {
+            note = `Loaded ${models.length} cached model${models.length === 1 ? "" : "s"} for "${provider}".`;
+            if (entry && typeof entry.timestamp === "string") {
+              note += ` Updated ${entry.timestamp}.`;
+            }
+            if (entry && entry.error) {
+              note += ` Last fetch issue: ${entry.error}.`;
+            }
+          } else {
+            note = `No cached models for "${provider}". Run python benchmark_agent.py --update-models to refresh.`;
+          }
+          modelCatalogMeta.textContent = note;
+        }
+      }
       function buildCommand() {
         const data = new FormData(form);
         const args = ["python", "benchmark_agent.py"];
@@ -612,6 +676,7 @@ options:
         if (detected && providerSelect.value !== detected) {
           providerSelect.value = detected;
           updatePlaceholdersForProvider(detected);
+          updateModelOptionsForProvider(detected);
           buildCommand();
         }
       }
@@ -621,6 +686,7 @@ options:
           const file = event.target.files && event.target.files[0];
           if (!file) {
             envData = null;
+            updateModelOptionsForProvider(providerSelect.value);
             return;
           }
           const reader = new FileReader();
@@ -631,6 +697,7 @@ options:
               addProvidersFromEnv(envData);
               autoSelectProviderFromEnv();
               handleFormChange();
+              updateModelOptionsForProvider(providerSelect.value);
             }
           };
           reader.readAsText(file);
@@ -639,11 +706,13 @@ options:
 
       loadConfig();
       updatePlaceholdersForProvider(providerSelect.value);
+      updateModelOptionsForProvider(providerSelect.value);
 
       form.addEventListener("input", handleFormChange);
       copyButton.addEventListener("click", copyCommand);
       providerSelect.addEventListener("change", () => {
         updatePlaceholdersForProvider(providerSelect.value);
+        updateModelOptionsForProvider(providerSelect.value);
         handleFormChange();
       });
 
@@ -652,3 +721,5 @@ options:
     </script>
   </body>
 </html>
+
+

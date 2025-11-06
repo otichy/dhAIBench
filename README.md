@@ -12,9 +12,10 @@ Python tooling for benchmarking large language models on linguistic classificati
 ## Repository Layout
 
 - `benchmark_agent.py`: main benchmarking script and evaluation logic.
-- `config_gui.html`: static GUI for configuring runs and copying the resulting command.
+- `config_gui.html`: static GUI for configuring runs and copying the resulting command. Pulls model lists
+  from the generated `config_models.js`.
+- `config_models.js`: auto-generated model catalog for the GUI (`python benchmark_agent.py --update-models`).
 - `example_input.csv`: sample semicolon-separated dataset with embedded truth labels.
-- `models.txt`: curated list of model identifiers for reference.
 - `.env`: optional environment file (not tracked) for API keys such as `OPENAI_API_KEY`.
 
 ## Requirements
@@ -70,6 +71,16 @@ When `--output` is omitted, each input file produces a sibling result named `<in
 
 Open `config_gui.html` in any modern browser. Adjust the sliders, toggles, and text inputs to match your experiment, then copy the generated CLI command into your terminal. The page runs entirely locally and does not submit data over the network.
 
+Model suggestions in the datalist are populated from `config_models.js`. Regenerate that catalog whenever your
+provider offerings change:
+
+```bash
+python benchmark_agent.py --update-models
+```
+
+The command reads provider credentials from `.env` (or your environment), queries each `/models` endpoint, and writes
+the catalog to `config_models.js`. Use `--models-providers` to update a subset or `--models-output` to control the path.
+
 ## Outputs
 
 Running the agent creates:
@@ -77,6 +88,7 @@ Running the agent creates:
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), confidence, and token usage statistics.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
+- A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.
 
 Logs streamed to stdout include prompt snapshots, raw responses, retries, and aggregate token totals to aid debugging.
 
