@@ -67,6 +67,26 @@ On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
 When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
 
+### System Prompts and Encoding
+
+- `--system_prompt` accepts regular single-line strings or anything that your shell can quote safely.
+- For multi-line prompts, Markdown tables, or text that mixes quotes/backslashes, prefer the base64 form: `--system_prompt_b64 <encoded>`. This avoids quoting issues on both PowerShell and POSIX shells.
+- You can produce the encoded string with a tiny helper script (replace the triple-quoted text with your prompt):
+
+  ```bash
+  python - <<'PY'
+  import base64
+
+  prompt = """You are a meticulous linguistic classifier...
+  (rest of your prompt here)
+  """
+
+  print(base64.b64encode(prompt.encode("utf-8")).decode())
+  PY
+  ```
+
+- The GUI in `config_gui.html` chooses automatically: if your prompt fits on one line it emits `--system_prompt`, otherwise it switches to `--system_prompt_b64`. The Python agent now understands both flags transparently.
+
 ### Command Builder GUI
 
 Open `config_gui.html` in any modern browser. Adjust the sliders, toggles, and text inputs to match your experiment, then copy the generated CLI command into your terminal. The page runs entirely locally and does not submit data over the network.

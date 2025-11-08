@@ -10,6 +10,8 @@ files, calibration plots, and command generation via a companion HTML/JS GUI.
 from __future__ import annotations
 
 import argparse
+import base64
+import codecs
 import copy
 import csv
 import json
@@ -61,6 +63,39 @@ def load_env_file(path: str) -> None:
             value = value.strip().strip('"').strip("'")
             if key:
                 os.environ.setdefault(key, value)
+
+
+def decode_cli_system_prompt(raw_prompt: Optional[str]) -> Optional[str]:
+    """Decode GUI-escaped newline/tab/backslash sequences back into the original text."""
+    if raw_prompt is None or "\\" not in raw_prompt:
+        return raw_prompt
+    try:
+        return codecs.decode(raw_prompt, "unicode_escape")
+    except Exception:
+        logging.debug("Failed to decode system prompt escapes; using raw value.")
+        replacements = (
+            ("\\r\\n", "\n"),
+            ("\\n", "\n"),
+            ("\\r", "\r"),
+            ("\\t", "\t"),
+            ("\\\\", "\\"),
+        )
+        decoded = raw_prompt
+        for pattern, replacement in replacements:
+            decoded = decoded.replace(pattern, replacement)
+        return decoded
+
+
+def decode_system_prompt_b64(encoded_prompt: Optional[str]) -> Optional[str]:
+    """Decode a base64-encoded system prompt produced by the GUI."""
+    if not encoded_prompt:
+        return None
+    try:
+        decoded_bytes = base64.b64decode(encoded_prompt, validate=True)
+        return decoded_bytes.decode("utf-8")
+    except Exception:
+        logging.error("Unable to decode system prompt from base64; using default system prompt instead.")
+        return None
 
 
 def safe_float(value: Any, default: float = float("nan")) -> float:
@@ -131,14 +166,21 @@ def resolve_output_path(
 
 
 def mark_node_in_context(left: str, node: str, right: str) -> str:
-    """Return the combined context with the node wrapped in markers."""
+    """Return the combined context, adding node markers only when needed."""
     left_part = left.rstrip()
     right_part = right.lstrip()
 
     left_sep = "" if not left_part else " " if not left.endswith((" ", "\n")) else ""
     right_sep = "" if not right_part else " " if not right.startswith((" ", "\n")) else ""
 
-    combined = f"{left_part}{left_sep}{NODE_MARKER_LEFT}{node}{NODE_MARKER_RIGHT}{right_sep}{right_part}"
+    # Allow users to pre-mark parts of the node; if the input already contains markers,
+    # keep it as-is instead of adding another pair.
+    if NODE_MARKER_LEFT in node or NODE_MARKER_RIGHT in node:
+        marked_node = node
+    else:
+        marked_node = f"{NODE_MARKER_LEFT}{node}{NODE_MARKER_RIGHT}"
+
+    combined = f"{left_part}{left_sep}{marked_node}{right_sep}{right_part}"
     return combined.strip()
 
 
@@ -1339,10 +1381,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         default="openai",
         help="Model provider identifier used to look up default credentials.",
     )
-    parser.add_argument(
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument(
         "--system_prompt",
         default="You are a linguistic classifier that excels at semantic disambiguation.",
         help="System prompt injected into the chat completion.",
+    )
+    prompt_group.add_argument(
+        "--system_prompt_b64",
+        help="Base64-encoded system prompt (used by the GUI to ensure cross-platform commands).",
     )
     parser.add_argument(
         "--few_shot_examples",
@@ -1411,6 +1458,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    if args.system_prompt_b64:
+        decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)
+        args.system_prompt = decoded_prompt or ""
+    else:
+        args.system_prompt = decode_cli_system_prompt(args.system_prompt)
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),

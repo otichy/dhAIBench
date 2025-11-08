@@ -413,6 +413,31 @@ options:
         return "'" + escaped + "'";
       }
 
+      function encodeSystemPromptForCli(value) {
+        if (typeof value !== "string" || !value.length) {
+          return "";
+        }
+        const normalized = value.replace(/\r\n?/g, "\n");
+        if (window.TextEncoder) {
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(normalized);
+          let binary = "";
+          bytes.forEach((byte) => {
+            binary += String.fromCharCode(byte);
+          });
+          return window.btoa(binary);
+        }
+        // Fallback for older browsers without TextEncoder.
+        return window.btoa(unescape(encodeURIComponent(normalized)));
+      }
+
+      function promptNeedsEncoding(value) {
+        if (typeof value !== "string" || !value.length) {
+          return false;
+        }
+        return /[\r\n]/.test(value);
+      }
+
       function updateModelOptionsForProvider(provider) {
         if (!modelList) {
           return;
@@ -505,9 +530,18 @@ options:
           args.push("--labels", shellQuote(labelsPath));
         }
 
-        const systemPrompt = data.get("system_prompt")?.trim();
-        if (systemPrompt && systemPrompt !== defaultValues.system_prompt) {
-          args.push("--system_prompt", shellQuote(systemPrompt));
+        const rawSystemPrompt = data.get("system_prompt");
+        const trimmedSystemPrompt =
+          typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
+        if (trimmedSystemPrompt && trimmedSystemPrompt !== defaultValues.system_prompt) {
+          if (promptNeedsEncoding(trimmedSystemPrompt)) {
+            const serializedPrompt = encodeSystemPromptForCli(trimmedSystemPrompt);
+            if (serializedPrompt) {
+              args.push("--system_prompt_b64", serializedPrompt);
+            }
+          } else {
+            args.push("--system_prompt", shellQuote(trimmedSystemPrompt));
+          }
         }
 
         if (data.get("enable_cot")) {
@@ -721,5 +755,3 @@ options:
     </script>
   </body>
 </html>
-
-
