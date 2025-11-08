@@ -32,8 +32,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 NODE_MARKER_LEFT = "⟦"
 NODE_MARKER_RIGHT = "⟧"
+SPAN_SOURCE_NODE = "node"
+SPAN_SOURCE_MARKED_SUBSPAN = "marked_subspan"
 MANDATORY_SYSTEM_APPEND = (
-    "Classify ONLY the word inside ⟦ ⟧ (the 'node'). Ignore similar words in LEFT/RIGHT unless needed as evidence. "
+    "Classify ONLY the text that is explicitly wrapped inside ⟦ ⟧ (the 'node' or its marked sub-span). "
+    "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. "
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
 
@@ -182,6 +185,36 @@ def mark_node_in_context(left: str, node: str, right: str) -> str:
 
     combined = f"{left_part}{left_sep}{marked_node}{right_sep}{right_part}"
     return combined.strip()
+
+
+def extract_marked_spans(node: str) -> List[str]:
+    """Return all substrings that have been explicitly wrapped in marker glyphs."""
+    spans: List[str] = []
+    search_start = 0
+    marker_left = NODE_MARKER_LEFT
+    marker_right = NODE_MARKER_RIGHT
+    while True:
+        left_idx = node.find(marker_left, search_start)
+        if left_idx == -1:
+            break
+        span_start = left_idx + len(marker_left)
+        right_idx = node.find(marker_right, span_start)
+        if right_idx == -1:
+            break
+        span = node[span_start:right_idx].strip()
+        if span:
+            spans.append(span)
+        search_start = right_idx + len(marker_right)
+    return spans
+
+
+def resolve_span_contract(node: str) -> Tuple[str, str]:
+    """Derive the node_echo text and expected span_source for validation."""
+    spans = extract_marked_spans(node)
+    if spans:
+        expected = " ".join(spans)
+        return expected, SPAN_SOURCE_MARKED_SUBSPAN
+    return node.strip(), SPAN_SOURCE_NODE
 
 
 # --------------------------- Data Loading ---------------------------------- #
@@ -665,7 +698,9 @@ def build_messages(
 
     user_instructions = [
         "You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as ⟦node⟧.",
-        "Identify the label that best matches the node word according to the task definition.",
+        "When the node itself contains inner ⟦...⟧ spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.",
+        "Identify the label that best matches the required span according to the task definition.",
+        "The payload includes a classification_target helper indicating exactly which text must be classified.",
     ]
 
     if enable_cot:
@@ -687,7 +722,9 @@ def build_messages(
 
     user_instructions.append(json_instruction)
     user_instructions.append(
-        'Set span_source exactly to "node" and ensure node_echo is identical to the word inside ⟦ ⟧.'
+        'Set span_source to "node" when the entire node is being classified. '
+        'If any inner ⟦...⟧ spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text '
+        "(join multiple marked spans with a single space, in order)."
     )
     user_instructions.append(
         "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
@@ -702,6 +739,7 @@ def build_messages(
     if few_shot_context:
         samples = []
         for sample in few_shot_context:
+            sample_target_text, sample_span_focus = resolve_span_contract(sample.node)
             samples.append(
                 {
                     "left_context": sample.left_context,
@@ -712,12 +750,28 @@ def build_messages(
                     "marked_example": mark_node_in_context(
                         sample.left_context, sample.node, sample.right_context
                     ),
+                    "classification_target": {
+                        "focus": sample_span_focus,
+                        "text": sample_target_text,
+                        "note": (
+                            "Classify only the marked sub-span; use the remaining text as context."
+                            if sample_span_focus == SPAN_SOURCE_MARKED_SUBSPAN
+                            else "Classify the entire node with support from the provided context."
+                        ),
+                    },
                 }
             )
         user_content += (
             f"\n\nHere are {len(samples)} labeled example(s) you should mimic when classifying:\n"
             + json.dumps(samples, ensure_ascii=False, indent=2)
         )
+
+    target_span_text, target_span_focus = resolve_span_contract(example.node)
+    classification_note = (
+        "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
+        if target_span_focus == SPAN_SOURCE_MARKED_SUBSPAN
+        else "Classify the entire node; left/right contexts simply provide supporting evidence."
+    )
 
     target_payload = {
         "left_context": example.left_context,
@@ -727,6 +781,11 @@ def build_messages(
         "marked_example": mark_node_in_context(
             example.left_context, example.node, example.right_context
         ),
+        "classification_target": {
+            "focus": target_span_focus,
+            "text": target_span_text,
+            "note": classification_note,
+        },
     }
 
     user_content += "\n\nNow classify this example:\n"
@@ -1063,23 +1122,26 @@ def classify_example(
 
             node_echo = str(payload.get("node_echo", "")).strip()
             span_source = str(payload.get("span_source", "")).strip()
-            expected_node = example.node.strip()
+            expected_node_echo, expected_span_source = resolve_span_contract(example.node)
             span_source_normalized = span_source.lower()
+            expected_span_source_normalized = expected_span_source.lower()
 
-            if node_echo != expected_node or span_source_normalized != "node":
+            if node_echo != expected_node_echo or span_source_normalized != expected_span_source_normalized:
                 validation_failures += 1
                 logging.warning(
-                    "Model referenced an incorrect span for example %s (node_echo=%r, span_source=%r, expected node=%r).",
+                    "Model referenced an incorrect span for example %s (node_echo=%r, span_source=%r, expected node_echo=%r, expected span_source=%r).",
                     example.example_id,
                     node_echo,
                     span_source,
-                    expected_node,
+                    expected_node_echo,
+                    expected_span_source,
                 )
                 log_entry["status"] = "validation_failed"
                 log_entry["validation_error"] = {
                     "node_echo": node_echo,
                     "span_source": span_source,
-                    "expected_node": expected_node,
+                    "expected_node_echo": expected_node_echo,
+                    "expected_span_source": expected_span_source,
                 }
                 if validation_failures >= 3 or attempt == max_retries:
                     logging.error(
