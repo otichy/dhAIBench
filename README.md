@@ -85,7 +85,7 @@ When `--output` is omitted, each input file produces a sibling result named `<in
   PY
   ```
 
-- The GUI in `config_gui.html` chooses automatically: if your prompt fits on one line it emits `--system_prompt`, otherwise it switches to `--system_prompt_b64`. The Python agent now understands both flags transparently.
+- The GUI in `config_gui.html` chooses automatically: if your prompt fits on one line it emits `--system_prompt`, otherwise it switches to `--system_prompt_b64`. A hint below the System Prompt box reminds you that multi-line instructions will be encoded before reaching the CLI. The Python agent now understands both flags transparently.
 
 ### Command Builder GUI
 
