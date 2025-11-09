@@ -107,6 +107,7 @@ Running the agent creates:
 
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), confidence, and token usage statistics.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
+- A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
 - A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.
 

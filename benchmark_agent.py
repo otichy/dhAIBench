@@ -867,6 +867,7 @@ def compute_metrics(
         "macro_f1": f1_sum / label_count,
         "per_label": per_label,
         "confusion_matrix": confusion,
+        "labels": labels,
         "total_examples": total,
     }
     return metrics
@@ -963,6 +964,77 @@ def generate_calibration_plot(
     plt.savefig(output_path)
     plt.close()
     logging.info("Saved calibration plot to %s", output_path)
+
+
+def generate_confusion_heatmap(
+    confusion: Dict[str, Dict[str, int]],
+    labels: List[str],
+    output_path: str,
+) -> None:
+    """Render a dual-panel confusion matrix heatmap (counts + row percentages)."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logging.warning("matplotlib not installed; skipping confusion heatmap.")
+        return
+
+    if not confusion or not labels:
+        logging.warning("Confusion matrix or label list empty; skipping heatmap.")
+        return
+
+    size = len(labels)
+    matrix = [
+        [float(confusion.get(true_label, {}).get(pred_label, 0)) for pred_label in labels]
+        for true_label in labels
+    ]
+    row_totals = [sum(row) for row in matrix]
+    percentage_matrix: List[List[float]] = []
+    for total, row in zip(row_totals, matrix):
+        if total > 0:
+            percentage_row = [(value / total) * 100.0 for value in row]
+        else:
+            percentage_row = [0.0 for _ in row]
+        percentage_matrix.append(percentage_row)
+
+    fig_width = max(8, size * 2.2)
+    fig_height = max(4.5, size * 0.8)
+    fig, axes = plt.subplots(1, 2, figsize=(fig_width, fig_height), constrained_layout=True)
+
+    specs = [
+        ("Confusion Matrix (counts)", matrix, lambda v: f"{int(round(v))}"),
+        ("Confusion Matrix (row %)", percentage_matrix, lambda v: f"{v:.1f}%"),
+    ]
+
+    for ax, (title, data, formatter) in zip(axes, specs):
+        im = ax.imshow(data, cmap="Blues")
+        ax.set_title(title)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        ax.set_xticks(range(size))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.set_yticks(range(size))
+        ax.set_yticklabels(labels)
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        data_max = max((max(row) for row in data), default=0) or 1.0
+        for i in range(size):
+            for j in range(size):
+                value = data[i][j]
+                display = formatter(value)
+                ax.text(
+                    j,
+                    i,
+                    display,
+                    ha="center",
+                    va="center",
+                    color="white" if value > (data_max * 0.6) else "black",
+                    fontsize=9,
+                )
+
+    fig.suptitle("Confusion Matrix Overview", fontsize=14)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    logging.info("Saved confusion heatmap to %s", output_path)
 
 
 # --------------------------- Logprob Utilities ----------------------------- #
@@ -1367,6 +1439,11 @@ def process_dataset(
         with open(metrics_output, "w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
         logging.info("Saved metrics to %s", metrics_output)
+        confusion = metrics.get("confusion_matrix")
+        labels = metrics.get("labels", [])
+        if confusion:
+            heatmap_path = os.path.splitext(output_path)[0] + "_confusion_heatmap.png"
+            generate_confusion_heatmap(confusion, labels, heatmap_path)
     else:
         logging.warning("No ground-truth labels available; skipping metric computation.")
 
