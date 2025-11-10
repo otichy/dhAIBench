@@ -802,7 +802,7 @@ def build_messages(
 class Prediction:
     label: str
     explanation: str
-    confidence: float
+    confidence: Optional[float]
     raw_response: str
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
@@ -1217,11 +1217,11 @@ def classify_example(
                 }
                 if validation_failures >= 3 or attempt == max_retries:
                     logging.error(
-                        "Validation failed %d time(s) for example %s; accepting last response with confidence forced to 0.",
+                        "Validation failed %d time(s) for example %s; accepting last response but withholding confidence.",
                         validation_failures,
                         example.example_id,
                     )
-                    confidence = 0.0
+                    confidence = None
                     log_entry["status"] = "accepted_after_validation"
                 else:
                     raise ValueError("Model failed node/span contract; retrying.")
@@ -1383,8 +1383,9 @@ def process_dataset(
                 total_reported_tokens += prediction.total_tokens
             if example.truth:
                 is_correct = prediction.label == example.truth
-                correctness.append(is_correct)
-                confidences.append(prediction.confidence)
+                if prediction.confidence is not None:
+                    correctness.append(is_correct)
+                    confidences.append(prediction.confidence)
 
             log_records.append(
                 {
@@ -1399,6 +1400,9 @@ def process_dataset(
                 }
             )
 
+            confidence_str = (
+                f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
+            )
             row = {
                 "ID": example.example_id,
                 "leftContext": example.left_context,
@@ -1408,7 +1412,7 @@ def process_dataset(
                 "truth": example.truth or "",
                 "prediction": prediction.label,
                 "explanation": prediction.explanation,
-                "confidence": f"{prediction.confidence:.4f}",
+                "confidence": confidence_str,
                 "nodeEcho": prediction.node_echo or "",
                 "spanSource": prediction.span_source or "",
                 "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",

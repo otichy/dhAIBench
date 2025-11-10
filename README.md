@@ -105,7 +105,7 @@ the catalog to `config_models.js`. Use `--models-providers` to update a subset o
 
 Running the agent creates:
 
-- A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), confidence, and token usage statistics.
+- A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), and token usage statistics. Confidence is included when the model supplies a valid value; entries that violated the span contract omit it.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
