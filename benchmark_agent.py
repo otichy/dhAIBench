@@ -265,31 +265,8 @@ def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
     return trimmed
 
 
-def fetch_provider_models(provider: str, api_key: str, api_base: str) -> Tuple[List[str], Optional[str]]:
-    """Fetch available models for a provider using raw HTTP."""
-    endpoint = f"{api_base}/models"
-    request = urllib.request.Request(
-        endpoint,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
-        message = f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
-        logging.error("Failed to fetch models for provider %s: %s", provider, message)
-        return [], message
-    except urllib.error.URLError as exc:
-        logging.error("Connection error while fetching models for provider %s: %s", provider, exc)
-        return [], str(exc)
-    except json.JSONDecodeError as exc:
-        logging.error("Malformed JSON response from provider %s (%s): %s", provider, endpoint, exc)
-        return [], "Invalid JSON response"
-
+def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) -> Tuple[List[str], Optional[str]]:
+    """Normalize provider model payloads into a list of model IDs."""
     items = payload.get("data")
     if isinstance(items, list):
         models: List[str] = []
@@ -309,6 +286,76 @@ def fetch_provider_models(provider: str, api_key: str, api_base: str) -> Tuple[L
 
     logging.error("Unexpected payload when fetching models for provider %s: %r", provider, payload)
     return [], "Unexpected response schema"
+
+
+def _fetch_models_with_curl(endpoint: str, api_key: str, provider: str) -> Tuple[List[str], Optional[str]]:
+    """Fallback to curl when Python lacks SSL support for HTTPS."""
+    headers = [
+        ("Authorization", f"Bearer {api_key}"),
+        ("Content-Type", "application/json"),
+    ]
+    errors: List[str] = []
+    for binary in ("curl", "curl.exe"):
+        cmd = [binary, "-sS", "--fail", "--max-time", "60"]
+        for name, value in headers:
+            cmd.extend(["-H", f"{name}: {value}"])
+        cmd.append(endpoint)
+        try:
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except FileNotFoundError:
+            errors.append(f"{binary} not found")
+            continue
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            errors.append(f"{binary} exit {exc.returncode}: {detail}")
+            continue
+
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{binary} invalid JSON: {exc}")
+            continue
+
+        return _parse_model_payload(payload, provider, endpoint)
+
+    combined_error = "; ".join(errors) if errors else "curl unavailable"
+    logging.error("Curl fallback failed for provider %s: %s", provider, combined_error)
+    return [], combined_error
+
+
+def fetch_provider_models(provider: str, api_key: str, api_base: str) -> Tuple[List[str], Optional[str]]:
+    """Fetch available models for a provider using raw HTTP."""
+    endpoint = f"{api_base}/models"
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        message = f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+        logging.error("Failed to fetch models for provider %s: %s", provider, message)
+        return [], message
+    except urllib.error.URLError as exc:
+        message = str(exc)
+        logging.error("Connection error while fetching models for provider %s: %s", provider, message)
+        # If Python lacks SSL support, urllib cannot handle HTTPS. Fall back to curl if available.
+        if "unknown url type: https" in message.lower():
+            logging.warning(
+                "Python SSL support appears to be missing; trying curl fallback for provider %s.", provider
+            )
+            return _fetch_models_with_curl(endpoint, api_key, provider)
+        return [], message
+    except json.JSONDecodeError as exc:
+        logging.error("Malformed JSON response from provider %s (%s): %s", provider, endpoint, exc)
+        return [], "Invalid JSON response"
+
+    return _parse_model_payload(payload, provider, endpoint)
 
 
 def write_model_catalog_js(catalog: Dict[str, Dict[str, Any]], output_path: str) -> None:
