@@ -965,6 +965,21 @@ def ensure_calibration_dependencies() -> bool:
     return True
 
 
+def configure_matplotlib_backend() -> bool:
+    """Use a non-interactive backend so plots work in headless/low-memory environments."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        return True
+    except ImportError:
+        logging.warning("matplotlib not installed; skipping plotting.")
+        return False
+    except Exception as exc:  # Defensive: backend selection failed.
+        logging.warning("Unable to configure matplotlib backend: %s; skipping plotting.", exc)
+        return False
+
+
 def generate_calibration_plot(
     confidences: List[float],
     correctness: List[bool],
@@ -972,11 +987,9 @@ def generate_calibration_plot(
     bin_count: int = 10,
 ) -> None:
     """Generate a reliability diagram showing calibration performance."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        logging.warning("matplotlib not installed; skipping calibration plot.")
+    if not configure_matplotlib_backend():
         return
+    import matplotlib.pyplot as plt
 
     if not confidences or not correctness:
         logging.warning("No confidence data available; skipping calibration plot.")
@@ -1019,11 +1032,9 @@ def generate_confusion_heatmap(
     output_path: str,
 ) -> None:
     """Render a dual-panel confusion matrix heatmap (counts + row percentages)."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        logging.warning("matplotlib not installed; skipping confusion heatmap.")
+    if not configure_matplotlib_backend():
         return
+    import matplotlib.pyplot as plt
 
     if not confusion or not labels:
         logging.warning("Confusion matrix or label list empty; skipping heatmap.")
