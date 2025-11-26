@@ -920,8 +920,15 @@ def compute_metrics(
     return metrics
 
 
-def ensure_calibration_dependencies() -> bool:
+PLOTTING_DEPS_AVAILABLE: Optional[bool] = None
+
+
+def ensure_calibration_dependencies(purpose: str = "plotting") -> bool:
     """Verify plotting dependencies are installed, installing if user agrees."""
+    global PLOTTING_DEPS_AVAILABLE
+    if PLOTTING_DEPS_AVAILABLE is not None:
+        return PLOTTING_DEPS_AVAILABLE
+
     required_packages = ["matplotlib"]
     missing: List[str] = []
 
@@ -932,10 +939,11 @@ def ensure_calibration_dependencies() -> bool:
             missing.append(package)
 
     if not missing:
-        return True
+        PLOTTING_DEPS_AVAILABLE = True
+        return PLOTTING_DEPS_AVAILABLE
 
     message = (
-        f"The following packages are required for calibration plots but missing: {', '.join(missing)}.\n"
+        f"The following packages are required for {purpose} but missing: {', '.join(missing)}.\n"
         "Install them now? [y/N]: "
     )
     try:
@@ -959,24 +967,27 @@ def ensure_calibration_dependencies() -> bool:
             __import__(package)
         except ImportError:
             logging.error("Package %s remains unavailable after installation.", package)
+            PLOTTING_DEPS_AVAILABLE = False
             return False
 
-    logging.info("Successfully installed calibration plot dependencies.")
-    return True
+    logging.info("Successfully installed %s dependencies.", purpose)
+    PLOTTING_DEPS_AVAILABLE = True
+    return PLOTTING_DEPS_AVAILABLE
 
 
-def configure_matplotlib_backend() -> bool:
+def configure_matplotlib_backend(purpose: str = "plotting") -> bool:
     """Use a non-interactive backend so plots work in headless/low-memory environments."""
+    if not ensure_calibration_dependencies(purpose):
+        logging.warning("matplotlib not installed; skipping %s.", purpose)
+        return False
+
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         return True
-    except ImportError:
-        logging.warning("matplotlib not installed; skipping plotting.")
-        return False
     except Exception as exc:  # Defensive: backend selection failed.
-        logging.warning("Unable to configure matplotlib backend: %s; skipping plotting.", exc)
+        logging.warning("Unable to configure matplotlib backend for %s: %s; skipping plotting.", purpose, exc)
         return False
 
 
@@ -987,7 +998,7 @@ def generate_calibration_plot(
     bin_count: int = 10,
 ) -> None:
     """Generate a reliability diagram showing calibration performance."""
-    if not configure_matplotlib_backend():
+    if not configure_matplotlib_backend("calibration plots"):
         return
     import matplotlib.pyplot as plt
 
@@ -1032,7 +1043,7 @@ def generate_confusion_heatmap(
     output_path: str,
 ) -> None:
     """Render a dual-panel confusion matrix heatmap (counts + row percentages)."""
-    if not configure_matplotlib_backend():
+    if not configure_matplotlib_backend("confusion heatmap"):
         return
     import matplotlib.pyplot as plt
 

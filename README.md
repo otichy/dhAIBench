@@ -21,13 +21,13 @@ Python tooling for benchmarking large language models on linguistic classificati
 ## Requirements
 
 - Python 3.9+.
-- Packages: [`openai`](https://pypi.org/project/openai/) (required), `matplotlib` (only when generating calibration plots). Install with:
+- Packages: [`openai`](https://pypi.org/project/openai/) (required), `matplotlib` (needed for confusion heatmaps and optional calibration plots). Install with:
 
 ```bash
 python -m pip install openai matplotlib
 ```
 
-The agent can prompt to install `matplotlib` the first time you enable calibration.
+The agent will prompt to install `matplotlib` the first time you request plotting (confusion heatmaps or calibration).
 
 ## Dataset Format
 
