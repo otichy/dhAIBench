@@ -101,6 +101,60 @@ python benchmark_agent.py --update-models
 The command reads provider credentials from `.env` (or your environment), queries each `/models` endpoint, and writes
 the catalog to `config_models.js`. Use `--models-providers` to update a subset or `--models-output` to control the path.
 
+## Validation contract (optional)
+
+Some tasks have a very large label space (e.g., lemmatization across a full lexicon), making it impractical to ship all valid labels in every prompt. The agent can instead delegate post-checks to an external **NDJSON validator** that can:
+
+- accept a prediction (optionally normalizing the label),
+- request a retry and provide a small `allowed_labels` candidate set,
+- abort the run with a clear reason.
+
+### How it works
+
+- The agent starts the validator once and keeps it alive for the whole run.
+- The agent sends one JSON object per attempt to the validator over stdin and expects one JSON object back on stdout.
+- Validators **must write protocol messages to stdout only**; any logs must go to stderr.
+
+### Example: lemmatization validator
+
+This repository includes a reference validator at `validators/lemmatization_validator.py` (lexicon: one lemma per line, UTF-8). Example invocation:
+
+```bash
+python benchmark_agent.py ^
+  --input data/input.csv ^
+  --model gpt-4o-mini ^
+  --validator_cmd validators/lemmatization_validator.py ^
+  --validator_args "--lexicon data/lemmata.txt --max_distance 2 --max_suggestions 30"
+```
+
+#### Using `info` metadata (e.g., part-of-speech)
+
+The agent forwards the dataset `info` column to the validator unchanged. The reference lemmatization validator can optionally use it to restrict candidates by POS:
+
+- Put POS into `info` as e.g. `pos=NOUN` (or `part-of-speech:VERB`).
+- Provide a lexicon with an optional POS in a second column, e.g. `lemma<TAB>POS` (also supports `lemma;POS` or `lemma POS` with `--lexicon_field_sep`).
+
+Example:
+
+```bash
+python benchmark_agent.py ^
+  --input data/input.csv ^
+  --model gpt-4o-mini ^
+  --validator_cmd validators/lemmatization_validator.py ^
+  --validator_args "--lexicon data/lemmata_with_pos.tsv --lexicon_field_sep tab --use_pos"
+```
+
+### Relevant CLI flags
+
+- `--validator_cmd`: enable validation and retries driven by the validator.
+- `--validator_args`: extra validator args as a single quoted string (supports quoting).
+- `--validator_timeout`: per-request validator timeout (seconds).
+- `--validator_prompt_max_candidates`: cap how many candidates are appended to the retry prompt.
+- `--validator_prompt_max_chars`: cap how large the retry instruction can get.
+- `--validator_exhausted_policy`: what to do if the validator keeps requesting retries but `--max_retries` is exhausted (`accept_blank_confidence` / `unclassified` / `error`).
+
+When enabled, the output CSV gains two extra columns: `validatorStatus` and `validatorReason`. Each attempt in the JSON prompt log also includes `validator_request` and `validator_result` fields.
+
 ## Outputs
 
 Running the agent creates:

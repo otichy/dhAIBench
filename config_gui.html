@@ -274,6 +274,84 @@
           <span>Enable calibration plot</span>
         </label>
       </fieldset>
+
+      <fieldset>
+        <legend>Advanced: Validator</legend>
+        <p>
+          Optional post-validation hook for tasks with very large label spaces (e.g., lemmatization). When enabled,
+          the agent will call an external NDJSON validator which can accept, normalize, or request retries with
+          a small candidate list.
+        </p>
+        <label class="inline">
+          <input type="checkbox" id="validator_enable" name="validator_enable" />
+          <span>Enable validator</span>
+        </label>
+        <div class="grid">
+          <label
+            >Validator command
+            <span class="hint">Executable path or a <code>.py</code> script (will run via the current Python).</span>
+            <input
+              type="text"
+              id="validator_cmd"
+              name="validator_cmd"
+              placeholder="validators/lemmatization_validator.py"
+            />
+          </label>
+          <label
+            >Validator args
+            <span class="hint">Single string passed to <code>--validator_args</code> (supports quoting).</span>
+            <input
+              type="text"
+              id="validator_args"
+              name="validator_args"
+              placeholder="--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30"
+            />
+          </label>
+          <label
+            >Validator timeout (s)
+            <input
+              type="number"
+              step="0.1"
+              min="0.1"
+              id="validator_timeout"
+              name="validator_timeout"
+              value="5.0"
+            />
+          </label>
+          <label
+            >Max candidates
+            <input
+              type="number"
+              min="1"
+              id="validator_prompt_max_candidates"
+              name="validator_prompt_max_candidates"
+              value="50"
+            />
+          </label>
+          <label
+            >Max retry prompt chars
+            <input
+              type="number"
+              min="100"
+              id="validator_prompt_max_chars"
+              name="validator_prompt_max_chars"
+              value="8000"
+            />
+          </label>
+          <label
+            >Exhausted policy
+            <select id="validator_exhausted_policy" name="validator_exhausted_policy">
+              <option value="accept_blank_confidence" selected>Accept, blank confidence</option>
+              <option value="unclassified">Force unclassified</option>
+              <option value="error">Abort run</option>
+            </select>
+          </label>
+        </div>
+        <label class="inline">
+          <input type="checkbox" id="validator_debug" name="validator_debug" />
+          <span>Debug validator traffic (requires DEBUG log level)</span>
+        </label>
+      </fieldset>
     </form>
 
     <h2>Generated Command</h2>
@@ -379,6 +457,14 @@ options:
         api_base_var: "",
         system_prompt:
           "You are a linguistic classifier that excels at semantic disambiguation.",
+        validator_enable: false,
+        validator_cmd: "",
+        validator_args: "",
+        validator_timeout: "5.0",
+        validator_prompt_max_candidates: "50",
+        validator_prompt_max_chars: "8000",
+        validator_exhausted_policy: "accept_blank_confidence",
+        validator_debug: false,
       };
 
       const providerDefaults = {
@@ -565,6 +651,42 @@ options:
         const apiBaseVar = data.get("api_base_var")?.trim();
         if (apiBaseVar) {
           args.push("--api_base_var", shellQuote(apiBaseVar));
+        }
+
+        if (data.get("validator_enable")) {
+          const validatorCmd = data.get("validator_cmd")?.toString().trim() ?? "";
+          if (validatorCmd) {
+            args.push("--validator_cmd", shellQuote(validatorCmd));
+
+            const validatorArgs = data.get("validator_args")?.toString().trim() ?? "";
+            if (validatorArgs) {
+              args.push("--validator_args", shellQuote(validatorArgs));
+            }
+
+            const validatorTimeout = data.get("validator_timeout")?.toString().trim() ?? "";
+            if (validatorTimeout && validatorTimeout !== defaultValues.validator_timeout) {
+              args.push("--validator_timeout", validatorTimeout);
+            }
+
+            const maxCandidates = data.get("validator_prompt_max_candidates")?.toString().trim() ?? "";
+            if (maxCandidates && maxCandidates !== defaultValues.validator_prompt_max_candidates) {
+              args.push("--validator_prompt_max_candidates", maxCandidates);
+            }
+
+            const maxChars = data.get("validator_prompt_max_chars")?.toString().trim() ?? "";
+            if (maxChars && maxChars !== defaultValues.validator_prompt_max_chars) {
+              args.push("--validator_prompt_max_chars", maxChars);
+            }
+
+            const exhaustedPolicy = data.get("validator_exhausted_policy");
+            if (exhaustedPolicy && exhaustedPolicy !== defaultValues.validator_exhausted_policy) {
+              args.push("--validator_exhausted_policy", exhaustedPolicy);
+            }
+
+            if (data.get("validator_debug")) {
+              args.push("--validator_debug");
+            }
+          }
         }
 
         const command = args.join(" ");

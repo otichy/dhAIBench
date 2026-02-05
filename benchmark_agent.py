@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import sys
 import time
 import subprocess
@@ -28,6 +29,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
 
 NODE_MARKER_LEFT = "⟦"
@@ -135,6 +138,93 @@ def sanitize_model_identifier(model: str) -> str:
     """Return a filesystem-friendly model identifier."""
     slug = re.sub(r"[^0-9A-Za-z]+", "", model.lower())
     return slug or "model"
+
+
+def split_validator_args(raw_args: Optional[str]) -> List[str]:
+    """Split a validator args string into argv tokens (supports quoting)."""
+    if not raw_args:
+        return []
+    raw = str(raw_args).strip()
+    if not raw:
+        return []
+    try:
+        return shlex.split(raw, posix=(os.name != "nt"))
+    except ValueError as exc:
+        raise ValueError(f"Unable to parse --validator_args: {exc}") from exc
+
+
+def build_validator_command(validator_cmd: str, raw_validator_args: Optional[str]) -> List[str]:
+    """Build argv for the validator process, using sys.executable for .py scripts."""
+    cmd = (validator_cmd or "").strip()
+    if not cmd:
+        raise ValueError("validator_cmd is empty")
+    extra = split_validator_args(raw_validator_args)
+    if cmd.lower().endswith(".py"):
+        return [sys.executable, cmd, *extra]
+    return [cmd, *extra]
+
+
+def render_validator_retry_message(
+    allowed_labels: Iterable[Any],
+    instruction: str,
+    max_candidates: int,
+    max_chars: int,
+) -> str:
+    """Build a deterministic retry instruction appended as an extra user message."""
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for item in allowed_labels or []:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        cleaned.append(value)
+        seen.add(value)
+
+    if max_candidates > 0:
+        cleaned = cleaned[:max_candidates]
+
+    base_instruction = (instruction or "").strip() or "Choose the correct label from allowed_labels."
+
+    def build_text(labels: List[str], truncated_from: Optional[int] = None) -> str:
+        note = ""
+        if truncated_from is not None and truncated_from > len(labels):
+            note = f"\n\n(Note: allowed_labels truncated from {truncated_from} to {len(labels)} item(s) to fit limits.)"
+        serialized = json.dumps(labels, ensure_ascii=False, indent=2)
+        return (
+            "External validator rejected the previous label.\n\n"
+            f"{base_instruction}\n\n"
+            'You MUST set "label" to exactly one item in allowed_labels (case-sensitive). '
+            'If none fit, return "unclassified".\n\n'
+            f"allowed_labels:\n{serialized}{note}"
+        )
+
+    if max_chars <= 0:
+        return build_text(cleaned)
+
+    full = build_text(cleaned)
+    if len(full) <= max_chars:
+        return full
+
+    original_count = len(cleaned)
+    labels = cleaned
+    while len(labels) > 1:
+        labels = labels[: max(1, len(labels) // 2)]
+        candidate = build_text(labels, truncated_from=original_count)
+        if len(candidate) <= max_chars:
+            return candidate
+
+    # Fall back to a compact format (no indentation) if still too large.
+    compact = (
+        "External validator rejected the previous label.\n\n"
+        f"{base_instruction}\n\n"
+        'You MUST set "label" to exactly one item in allowed_labels (case-sensitive). '
+        'If none fit, return "unclassified".\n\n'
+        f"allowed_labels: {json.dumps(labels, ensure_ascii=False)}"
+    )
+    if len(compact) <= max_chars:
+        return compact
+
+    return compact[: max_chars].rstrip()
 
 
 def build_default_output_filename(input_path: str, model: str, timestamp_tag: str) -> str:
@@ -858,6 +948,8 @@ class Prediction:
     label_probability: Optional[float] = None
     node_echo: Optional[str] = None
     span_source: Optional[str] = None
+    validator_status: Optional[str] = None
+    validator_reason: Optional[str] = None
 
 
 def compute_metrics(
@@ -1187,22 +1279,41 @@ def classify_example(
     few_shot_context: Optional[List[Example]],
     max_retries: int,
     retry_delay: float,
+    validator_client: Optional[ValidatorClient] = None,
+    validator_prompt_max_candidates: int = 50,
+    validator_prompt_max_chars: int = 8000,
+    validator_exhausted_policy: str = "accept_blank_confidence",
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
-    messages = build_messages(
+    base_messages = build_messages(
         example,
         system_prompt,
         enable_cot,
         include_explanation,
         few_shot_context=few_shot_context,
     )
-    prompt_snapshot = json.dumps(messages, ensure_ascii=False, indent=2)
-    logging.debug("Prompt for example %s:\n%s", example.example_id, prompt_snapshot)
+    validator_patch_message: Optional[Dict[str, str]] = None
+    validator_status: Optional[str] = None
+    validator_reason: Optional[str] = None
     last_error: Optional[Exception] = None
     validation_failures = 0
     interaction_logs: List[Dict[str, Any]] = []
 
     for attempt in range(1, max_retries + 1):
+        messages = list(base_messages)
+        if validator_patch_message is not None:
+            messages.append(validator_patch_message)
+
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            prompt_snapshot = json.dumps(messages, ensure_ascii=False, indent=2)
+            logging.debug(
+                "Prompt for example %s (attempt %d/%d):\n%s",
+                example.example_id,
+                attempt,
+                max_retries,
+                prompt_snapshot,
+            )
+
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -1295,6 +1406,100 @@ def classify_example(
                 else:
                     raise ValueError("Model failed node/span contract; retrying.")
 
+            if validator_client is not None:
+                request_id = f"{example.example_id}:{attempt}"
+                validator_request: Dict[str, Any] = {
+                    "type": "validate",
+                    "schema_version": 1,
+                    "request_id": request_id,
+                    "attempt": {"index": attempt, "max": max_retries},
+                    "example": {
+                        "id": example.example_id,
+                        "left_context": example.left_context,
+                        "node": example.node,
+                        "right_context": example.right_context,
+                        "info": example.info,
+                        "truth": example.truth,
+                        "classification_target": {
+                            "focus": expected_span_source,
+                            "text": expected_node_echo,
+                        },
+                    },
+                    "prediction": {
+                        "label": label,
+                        "confidence": confidence,
+                        "explanation": explanation,
+                        "node_echo": node_echo,
+                        "span_source": span_source_normalized,
+                        "raw_response": raw,
+                    },
+                }
+                log_entry["validator_request"] = validator_request
+
+                try:
+                    validator_result = validator_client.validate(validator_request)
+                except ValidatorError as exc:
+                    raise RuntimeError(f"Validator failed for example {example.example_id}: {exc}") from exc
+
+                log_entry["validator_result"] = validator_result
+
+                action = str(validator_result.get("action", "")).strip().lower()
+                reason = str(validator_result.get("reason", "")).strip()
+
+                if action == "accept":
+                    normalized = validator_result.get("normalized") or {}
+                    normalized_label = str(normalized.get("label", "")).strip()
+                    if normalized_label:
+                        label = normalized_label
+                    validator_status = "accept"
+                    validator_reason = reason
+                elif action == "abort":
+                    log_entry["parsed_payload"] = payload
+                    log_entry["status"] = "validator_abort"
+                    interaction_logs.append(log_entry)
+                    raise RuntimeError(
+                        f"Validator aborted example {example.example_id}: {reason or 'no reason provided'}"
+                    )
+                elif action == "retry":
+                    retry_payload = validator_result.get("retry") or {}
+                    allowed_labels = retry_payload.get("allowed_labels") or []
+                    retry_instruction = str(retry_payload.get("instruction", "")).strip()
+                    if attempt >= max_retries:
+                        if validator_exhausted_policy == "accept_blank_confidence":
+                            confidence = None
+                            validator_status = "accepted_after_validator"
+                            validator_reason = reason or "validator_retry_exhausted"
+                            log_entry["status"] = "accepted_after_validator"
+                        elif validator_exhausted_policy == "unclassified":
+                            label = "unclassified"
+                            confidence = None
+                            validator_status = "accepted_after_validator"
+                            validator_reason = reason or "validator_retry_exhausted"
+                            log_entry["status"] = "accepted_after_validator"
+                        else:
+                            log_entry["status"] = "validator_abort"
+                            interaction_logs.append(log_entry)
+                            raise RuntimeError(
+                                f"Validator requested retry but attempts exhausted for example {example.example_id}."
+                            )
+                    else:
+                        retry_message = render_validator_retry_message(
+                            allowed_labels=allowed_labels,
+                            instruction=retry_instruction,
+                            max_candidates=validator_prompt_max_candidates,
+                            max_chars=validator_prompt_max_chars,
+                        )
+                        validator_patch_message = {"role": "user", "content": retry_message}
+                        log_entry["parsed_payload"] = payload
+                        log_entry["status"] = "validator_retry"
+                        interaction_logs.append(log_entry)
+                        time.sleep(retry_delay)
+                        continue
+                else:
+                    raise RuntimeError(
+                        f"Validator returned unknown action={action!r} for example {example.example_id}."
+                    )
+
             total_tokens = result.total_tokens
             if total_tokens is None and result.prompt_tokens is not None and result.completion_tokens is not None:
                 total_tokens = result.prompt_tokens + result.completion_tokens
@@ -1335,6 +1540,8 @@ def classify_example(
                 label_probability=label_probability,
                 node_echo=node_echo or None,
                 span_source=span_source or None,
+                validator_status=validator_status,
+                validator_reason=validator_reason,
             ), interaction_logs
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
             last_error = exc
@@ -1364,6 +1571,7 @@ def process_dataset(
     include_explanation: bool,
     calibration_enabled: bool,
     label_map: Optional[Dict[str, str]],
+    validator_client: Optional[ValidatorClient] = None,
 ) -> Tuple[int, int, int]:
     """Run the full evaluation pipeline for a single dataset."""
     logging.info("Loading dataset from %s", input_path)
@@ -1416,6 +1624,8 @@ def process_dataset(
             "totalTokens",
             "labelLogProb",
             "labelProbability",
+            "validatorStatus",
+            "validatorReason",
         ]
     )
 
@@ -1442,6 +1652,10 @@ def process_dataset(
                 few_shot_context=few_shot_context,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
+                validator_client=validator_client,
+                validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                validator_prompt_max_chars=args.validator_prompt_max_chars,
+                validator_exhausted_policy=args.validator_exhausted_policy,
             )
             predictions[example.example_id] = prediction
             if prediction.prompt_tokens is not None:
@@ -1465,6 +1679,8 @@ def process_dataset(
                         "confidence": prediction.confidence,
                         "explanation": prediction.explanation,
                         "truth": example.truth,
+                        "validator_status": prediction.validator_status,
+                        "validator_reason": prediction.validator_reason,
                     },
                 }
             )
@@ -1489,6 +1705,8 @@ def process_dataset(
                 "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
                 "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
                 "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
+                "validatorStatus": prediction.validator_status or "",
+                "validatorReason": prediction.validator_reason or "",
             }
             for field in extra_field_order:
                 row[field] = example.extras.get(field, "")
@@ -1647,6 +1865,56 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Delay (seconds) between API retries.",
     )
     parser.add_argument(
+        "--validator_cmd",
+        default=None,
+        help=(
+            "Optional path to an NDJSON validator executable/script. "
+            "When provided, the agent will validate each prediction and may retry with extra constraints. "
+            "If the path ends with .py it will be run via the current Python interpreter."
+        ),
+    )
+    parser.add_argument(
+        "--validator_args",
+        default="",
+        help=(
+            "Optional extra arguments passed to the validator command as a single string "
+            "(supports quoting). Example: \"--lexicon data/lemmas.txt --max_distance 2\"."
+        ),
+    )
+    parser.add_argument(
+        "--validator_timeout",
+        type=float,
+        default=5.0,
+        help="Timeout (seconds) for each validator request/response roundtrip.",
+    )
+    parser.add_argument(
+        "--validator_prompt_max_candidates",
+        type=int,
+        default=50,
+        help="Maximum number of allowed_labels candidates rendered into a validator retry prompt.",
+    )
+    parser.add_argument(
+        "--validator_prompt_max_chars",
+        type=int,
+        default=8000,
+        help="Maximum character length of the validator retry instruction appended to the prompt.",
+    )
+    parser.add_argument(
+        "--validator_exhausted_policy",
+        choices=["accept_blank_confidence", "unclassified", "error"],
+        default="accept_blank_confidence",
+        help=(
+            "What to do when the validator keeps requesting retry but --max_retries is exhausted. "
+            "accept_blank_confidence keeps the last label but blanks confidence; unclassified forces label to "
+            "\"unclassified\"; error aborts the run."
+        ),
+    )
+    parser.add_argument(
+        "--validator_debug",
+        action="store_true",
+        help="Log validator NDJSON send/receive payloads at DEBUG level.",
+    )
+    parser.add_argument(
         "--log_level",
         default="INFO",
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
@@ -1742,30 +2010,62 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     connector = OpenAIConnector(api_key=api_key, base_url=api_base_url)
 
+    validator_client: Optional[ValidatorClient] = None
+    if args.validator_cmd:
+        try:
+            validator_command = build_validator_command(args.validator_cmd, args.validator_args)
+        except ValueError as exc:
+            logging.error("Unable to build validator command: %s", exc)
+            return 1
+        validator_client = ValidatorClient(
+            command=validator_command,
+            timeout=args.validator_timeout,
+            debug=args.validator_debug,
+        )
+        try:
+            validator_client.start(
+                ValidatorRunInfo(
+                    provider=provider,
+                    model=args.model,
+                    include_explanation=include_explanation,
+                    enable_cot=args.enable_cot,
+                    max_retries=args.max_retries,
+                )
+            )
+            logging.info("Validator enabled: %s", " ".join(validator_client.command))
+        except Exception as exc:  # noqa: BLE001
+            logging.error("Failed to initialize validator: %s", exc)
+            return 1
+
     aggregate_prompt_tokens = 0
     aggregate_completion_tokens = 0
     aggregate_reported_tokens = 0
 
-    for resolved_input in input_paths:
-        output_path = resolve_output_path(
-            resolved_input,
-            args.model,
-            args.output,
-            timestamp_tag,
-            multiple_inputs,
-        )
-        prompt_tokens, completion_tokens, reported_tokens = process_dataset(
-            connector=connector,
-            input_path=resolved_input,
-            output_path=output_path,
-            args=args,
-            include_explanation=include_explanation,
-            calibration_enabled=calibration_enabled,
-            label_map=label_map,
-        )
-        aggregate_prompt_tokens += prompt_tokens
-        aggregate_completion_tokens += completion_tokens
-        aggregate_reported_tokens += reported_tokens
+    try:
+        for resolved_input in input_paths:
+            output_path = resolve_output_path(
+                resolved_input,
+                args.model,
+                args.output,
+                timestamp_tag,
+                multiple_inputs,
+            )
+            prompt_tokens, completion_tokens, reported_tokens = process_dataset(
+                connector=connector,
+                input_path=resolved_input,
+                output_path=output_path,
+                args=args,
+                include_explanation=include_explanation,
+                calibration_enabled=calibration_enabled,
+                label_map=label_map,
+                validator_client=validator_client,
+            )
+            aggregate_prompt_tokens += prompt_tokens
+            aggregate_completion_tokens += completion_tokens
+            aggregate_reported_tokens += reported_tokens
+    finally:
+        if validator_client is not None:
+            validator_client.close()
 
     if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
         total_token_usage = (
