@@ -27,7 +27,7 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
@@ -47,14 +47,15 @@ MANDATORY_SYSTEM_APPEND = (
 # --------------------------- Utilities ------------------------------------- #
 
 
-def load_env_file(path: str) -> None:
-    """Load KEY=VALUE entries from a .env-style file into the environment."""
+def parse_env_file(path: str) -> Dict[str, str]:
+    """Parse KEY=VALUE entries from a .env-style file into a dictionary."""
+    values: Dict[str, str] = {}
     if not path:
-        return
+        return values
 
     if not os.path.exists(path):
         logging.debug("Env file %s does not exist; skipping.", path)
-        return
+        return values
 
     with open(path, "r", encoding="utf-8") as env_file:
         for line in env_file:
@@ -68,7 +69,37 @@ def load_env_file(path: str) -> None:
             key = key.strip()
             value = value.strip().strip('"').strip("'")
             if key:
-                os.environ.setdefault(key, value)
+                values[key] = value
+    return values
+
+
+def resolve_env_value(key: Optional[str], env_map: Dict[str, str]) -> Optional[str]:
+    """Resolve an env var from .env values first, then process environment."""
+    if not key:
+        return None
+    if key in env_map:
+        return env_map[key]
+    return os.environ.get(key)
+
+
+def utc_timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp with a trailing Z."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def is_placeholder_value(value: Optional[str]) -> bool:
+    """Return True if a value looks like an unresolved placeholder token."""
+    if value is None:
+        return True
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return True
+    placeholder_prefixes = ("your-", "replace-", "changeme", "<")
+    if normalized.startswith(placeholder_prefixes):
+        return True
+    if "your-" in normalized and "api-key" in normalized:
+        return True
+    return False
 
 
 def decode_cli_system_prompt(raw_prompt: Optional[str]) -> Optional[str]:
@@ -350,7 +381,13 @@ def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
     if not candidate:
         return None
     trimmed = candidate.rstrip("/")
-    if not re.search(r"/v\d+$", trimmed, re.IGNORECASE):
+    if provider == "google":
+        if re.search(r"/openai$", trimmed, re.IGNORECASE):
+            return trimmed
+        if re.search(r"/v\d+(?:beta\d*)?$", trimmed, re.IGNORECASE):
+            return f"{trimmed}/openai"
+        return f"{trimmed}/v1beta/openai"
+    if not re.search(r"/v\d+(?:beta\d*)?$", trimmed, re.IGNORECASE):
         trimmed = f"{trimmed}/v1"
     return trimmed
 
@@ -467,8 +504,27 @@ def update_model_catalog(
     output_path: str,
 ) -> int:
     """Generate a model catalog JS file using credentials sourced from the environment."""
-    load_env_file(".env")
-    selected = providers or sorted(PROVIDER_DEFAULTS.keys())
+    env_map = parse_env_file(".env")
+    if providers:
+        selected = providers
+    else:
+        selected = []
+        for provider_slug, defaults in sorted(PROVIDER_DEFAULTS.items()):
+            api_key = resolve_env_value(defaults["api_key_var"], env_map)
+            if is_placeholder_value(api_key):
+                continue
+            api_base = normalize_api_base(provider_slug, resolve_env_value(defaults["api_base_var"], env_map))
+            if not api_base:
+                continue
+            selected.append(provider_slug)
+
+    if not selected:
+        logging.error(
+            "No providers are configured for update. Add provider API keys to .env or pass --models-providers explicitly."
+        )
+        return 1
+
+    logging.info("Updating model catalog for providers: %s", ", ".join(selected))
     catalog: Dict[str, Dict[str, Any]] = {}
     errors = 0
 
@@ -480,13 +536,13 @@ def update_model_catalog(
             continue
         api_key_var = defaults["api_key_var"]
         api_base_var = defaults["api_base_var"]
-        api_key = os.environ.get(api_key_var)
-        if not api_key:
-            logging.warning("Skipping provider %s; missing API key in %s.", provider_slug, api_key_var)
+        api_key = resolve_env_value(api_key_var, env_map)
+        if is_placeholder_value(api_key):
+            logging.warning("Skipping provider %s; missing API key in %s (.env first, env fallback).", provider_slug, api_key_var)
             continue
-        api_base = normalize_api_base(provider_slug, os.environ.get(api_base_var))
+        api_base = normalize_api_base(provider_slug, resolve_env_value(api_base_var, env_map))
         if not api_base:
-            logging.warning("Skipping provider %s; missing API base URL in %s.", provider_slug, api_base_var)
+            logging.warning("Skipping provider %s; missing API base URL in %s (.env first, env fallback).", provider_slug, api_base_var)
             continue
         models, error = fetch_provider_models(provider_slug, api_key, api_base)
         catalog[provider_slug] = {
@@ -495,7 +551,7 @@ def update_model_catalog(
             "api_key_var": api_key_var,
             "api_base_var": api_base_var,
             "error": error,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": utc_timestamp(),
         }
         if error or not models:
             errors += 1
@@ -1316,7 +1372,7 @@ def classify_example(
 
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": utc_timestamp(),
             "request": copy.deepcopy(messages),
         }
         try:
@@ -1968,16 +2024,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.api_base_var = provider_defaults["api_base_var"]
     include_explanation = not args.no_explanation
 
-    load_env_file(".env")
-    api_key = os.environ.get(args.api_key_var)
-    if not api_key:
+    env_map = parse_env_file(".env")
+    api_key = resolve_env_value(args.api_key_var, env_map)
+    if is_placeholder_value(api_key):
         logging.error(
-            "API key not found. Ensure %s is defined in the environment or .env.",
+            "API key not found. Ensure %s is defined in .env or the environment.",
             args.api_key_var,
         )
         return 1
 
-    api_base_url = os.environ.get(args.api_base_var) if args.api_base_var else None
+    api_base_url = resolve_env_value(args.api_base_var, env_map) if args.api_base_var else None
     if api_base_url:
         logging.info("Using API base URL from %s: %s", args.api_base_var, api_base_url)
 
