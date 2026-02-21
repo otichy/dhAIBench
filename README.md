@@ -177,3 +177,4 @@ Logs streamed to stdout include prompt snapshots, raw responses, retries, and ag
 - Use `--no_explanation` to reduce token usage when explanations are unnecessary.
 - Few-shot examples are drawn from the start of the dataset; place high-quality labeled instances there to guide the model.
 - When targeting non-OpenAI services, ensure the endpoint is API-compatible and provide the correct base URL via `.env` or `--api_base_var`.
+- `--temperature` and `--top_p` are optional; when omitted, they are not sent and the provider default is used.

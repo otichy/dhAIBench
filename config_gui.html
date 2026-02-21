@@ -164,7 +164,7 @@
               max="2"
               id="temperature"
               name="temperature"
-              value="0.0"
+              placeholder="(optional)"
             />
           </label>
           <label
@@ -176,7 +176,7 @@
               max="1"
               id="top_p"
               name="top_p"
-              value="1.0"
+              placeholder="(optional)"
             />
           </label>
           <label
@@ -471,8 +471,8 @@ options:
 
       const defaultValues = {
         provider: "openai",
-        temperature: "0.0",
-        top_p: "1.0",
+        temperature: "",
+        top_p: "",
         request_interval_ms: "0",
         few_shot_examples: "0",
         service_tier: "standard",

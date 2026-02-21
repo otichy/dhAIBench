@@ -918,8 +918,8 @@ class OpenAIConnector:
         self,
         model: str,
         messages: List[Dict[str, str]],
-        temperature: float,
-        top_p: float,
+        temperature: Optional[float],
+        top_p: Optional[float],
         top_k: Optional[int],
         service_tier: Optional[str],
     ) -> CompletionResult:
@@ -936,6 +936,9 @@ class OpenAIConnector:
             alias_map = {
                 "servicetier": "service_tier",
                 "service_tier": "service_tier",
+                "topp": "top_p",
+                "top_p": "top_p",
+                "temperature": "temperature",
                 "toplogprobs": "top_logprobs",
                 "top_logprobs": "top_logprobs",
                 "logprobs": "logprobs",
@@ -1030,6 +1033,12 @@ class OpenAIConnector:
             if "service_tier" in text or "service tier" in text or "service-tier" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid")):
                     return "service_tier"
+            if "top_p" in text or "top p" in text or "top-p" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "top_p"
+            if "temperature" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "temperature"
             if "top_logprobs" in text or "top logprobs" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid")):
                     return "top_logprobs"
@@ -1096,10 +1105,12 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "input": messages,
-                "temperature": temperature,
-                "top_p": top_p,
                 "logprobs": True,
             }
+            if temperature is not None:
+                request_args["temperature"] = temperature
+            if top_p is not None:
+                request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             for unsupported in self._responses_unsupported_params.get(model_key, set()):
@@ -1196,11 +1207,13 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
-                "top_p": top_p,
                 "logprobs": True,
                 "top_logprobs": 1,
             }
+            if temperature is not None:
+                request_args["temperature"] = temperature
+            if top_p is not None:
+                request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             for unsupported in self._chat_unsupported_params.get(model_key, set()):
@@ -1265,11 +1278,13 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
-                "top_p": top_p,
                 "logprobs": True,
                 "top_logprobs": 1,
             }
+            if temperature is not None:
+                request_args["temperature"] = temperature
+            if top_p is not None:
+                request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             self._throttle_request_if_needed()
@@ -1759,8 +1774,8 @@ def classify_example(
     connector: OpenAIConnector,
     example: Example,
     model: str,
-    temperature: float,
-    top_p: float,
+    temperature: Optional[float],
+    top_p: Optional[float],
     top_k: Optional[int],
     service_tier: Optional[str],
     system_prompt: Optional[str],
@@ -2402,8 +2417,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument("--model", help="Model name (e.g., gpt-4-turbo).")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature.")
-    parser.add_argument("--top_p", type=float, default=1.0, help="Nucleus sampling parameter.")
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Sampling temperature. Omit to let the provider/model use its default.",
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=None,
+        help="Nucleus sampling parameter. Omit to let the provider/model use its default.",
+    )
     parser.add_argument(
         "--top_k",
         type=int,
