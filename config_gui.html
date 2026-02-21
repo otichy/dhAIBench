@@ -508,6 +508,14 @@ options:
           apiBaseVar: "E-INFRA_BASE_URL",
         },
       };
+      const knownProviderLabels = {
+        openai: "OpenAI-Compatible",
+        anthropic: "Anthropic (OpenAI proxy)",
+        cohere: "Cohere (OpenAI proxy)",
+        google: "Google (OpenAI proxy)",
+        huggingface: "Hugging Face (OpenAI proxy)",
+        "e-infra": "E-INFRA (OpenAI proxy)",
+      };
 
       function getWindowModelCatalog() {
         return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
@@ -739,18 +747,17 @@ options:
       }
 
       function ensureProviderRegistered(slug, labelHint) {
-        if (providerDefaults[slug]) {
-          return;
-        }
         const upper = (labelHint || slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")).toUpperCase();
-        providerDefaults[slug] = {
-          apiKeyVar: `${upper}_API_KEY`,
-          apiBaseVar: `${upper}_BASE_URL`,
-        };
+        if (!providerDefaults[slug]) {
+          providerDefaults[slug] = {
+            apiKeyVar: `${upper}_API_KEY`,
+            apiBaseVar: `${upper}_BASE_URL`,
+          };
+        }
         if (!Array.from(providerSelect.options).some((opt) => opt.value === slug)) {
           const option = document.createElement("option");
           option.value = slug;
-          option.textContent = `${upper.replace(/_/g, " ")} (custom)`;
+          option.textContent = knownProviderLabels[slug] || `${upper.replace(/_/g, " ")} (catalog)`;
           providerSelect.appendChild(option);
         }
       }
@@ -767,11 +774,24 @@ options:
         if (!modelCatalog || typeof modelCatalog !== "object") {
           return;
         }
+        const catalogEntries = Object.entries(modelCatalog).filter(
+          ([providerSlug]) => typeof providerSlug === "string" && providerSlug.trim().length > 0
+        );
+        if (!catalogEntries.length) {
+          return;
+        }
+
+        const catalogProviderSet = new Set(catalogEntries.map(([providerSlug]) => providerSlug));
         const selectedBefore = providerSelect.value;
-        for (const [providerSlug, entry] of Object.entries(modelCatalog)) {
-          if (!providerSlug) {
-            continue;
+
+        // Keep the provider dropdown aligned with config_models.js and drop stale entries.
+        for (const option of Array.from(providerSelect.options)) {
+          if (!catalogProviderSet.has(option.value)) {
+            option.remove();
           }
+        }
+
+        for (const [providerSlug, entry] of catalogEntries) {
           ensureProviderRegistered(providerSlug, providerSlug);
           const prefix = providerSlugToEnvPrefix(providerSlug);
           const apiKeyVar =
@@ -783,6 +803,11 @@ options:
               ? entry.api_base_var.trim()
               : `${prefix}_BASE_URL`;
           providerDefaults[providerSlug] = { apiKeyVar, apiBaseVar };
+
+          const option = Array.from(providerSelect.options).find((item) => item.value === providerSlug);
+          if (option) {
+            option.textContent = knownProviderLabels[providerSlug] || `${prefix.replace(/_/g, " ")} (catalog)`;
+          }
         }
 
         if (
@@ -790,6 +815,8 @@ options:
           Array.from(providerSelect.options).some((option) => option.value === selectedBefore)
         ) {
           providerSelect.value = selectedBefore;
+        } else if (providerSelect.options.length > 0) {
+          providerSelect.value = providerSelect.options[0].value;
         }
       }
 
@@ -883,6 +910,11 @@ options:
             const control = form.elements.namedItem(name);
             if (!control || control.type === "file") continue;
             if (name === "provider" && typeof value === "string") {
+              const hasCatalogProviders =
+                modelCatalog && typeof modelCatalog === "object" && Object.keys(modelCatalog).length > 0;
+              if (hasCatalogProviders && !Object.prototype.hasOwnProperty.call(modelCatalog, value)) {
+                continue;
+              }
               ensureProviderRegistered(value, value);
             }
             if (control instanceof RadioNodeList) {
@@ -1006,6 +1038,7 @@ options:
         refreshModelsButton.addEventListener("click", refreshModelCatalogFromScript);
       }
       providerSelect.addEventListener("change", () => {
+        modelInput.value = "";
         updatePlaceholdersForProvider(providerSelect.value);
         updateModelOptionsForProvider(providerSelect.value);
         handleFormChange();
