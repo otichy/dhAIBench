@@ -671,6 +671,8 @@ class OpenAIConnector:
 
     def __init__(self, api_key: str, base_url: Optional[str] = None) -> None:
         self.client_type: str
+        self._chat_incompatible_models: set[str] = set()
+        self._responses_unsupported_params: Dict[str, set[str]] = {}
         try:
             from openai import OpenAI
 
@@ -714,6 +716,7 @@ class OpenAIConnector:
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
+        model_key = model.strip().lower()
 
         def warn_logprob_retry(exc: Exception) -> None:
             status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None) or getattr(exc, "status", None)
@@ -730,6 +733,60 @@ class OpenAIConnector:
                 )
             else:
                 logging.debug("Logprobs unavailable for this client (%s); retrying without logprobs.", exc)
+
+        def should_retry_with_responses(exc: Exception) -> bool:
+            error_message = getattr(exc, "message", None)
+            if error_message is None and hasattr(exc, "error"):
+                error_message = getattr(exc.error, "message", None)  # type: ignore[attr-defined]
+            text = str(error_message or exc).lower()
+            return any(
+                marker in text
+                for marker in (
+                    "not a chat model",
+                    "not supported in the v1/chat/completions endpoint",
+                    "did you mean to use v1/completions",
+                    "use v1/completions",
+                    "use the responses api",
+                )
+            )
+
+        def extract_unsupported_parameter(exc: Exception) -> Optional[str]:
+            param = getattr(exc, "param", None)
+            error_message = getattr(exc, "message", None)
+            body = getattr(exc, "body", None)
+            if isinstance(body, dict):
+                error_payload = body.get("error")
+                if isinstance(error_payload, dict):
+                    if error_message is None:
+                        error_message = error_payload.get("message")
+                    if not param:
+                        param = error_payload.get("param")
+
+            if error_message is None and hasattr(exc, "error"):
+                error_payload = getattr(exc, "error")
+                if isinstance(error_payload, dict):
+                    error_message = error_payload.get("message")
+                    if not param:
+                        param = error_payload.get("param")
+                else:
+                    error_message = getattr(error_payload, "message", None)
+                    if not param:
+                        param = getattr(error_payload, "param", None)
+
+            if isinstance(param, str):
+                normalized = param.strip()
+                if normalized:
+                    return normalized
+
+            text = str(error_message or exc)
+            match = re.search(
+                r"unsupported parameter:\s*['`\"]?([a-zA-Z0-9_]+)['`\"]?",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                return match.group(1)
+            return None
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
             entries: List[Dict[str, Any]] = []
@@ -767,7 +824,123 @@ class OpenAIConnector:
                     return entries
             return None
 
+        def usage_metric(usage_obj: Any, key: str) -> Optional[int]:
+            if not usage_obj:
+                return None
+            candidate_keys = [key]
+            if key == "prompt_tokens":
+                candidate_keys.append("input_tokens")
+            elif key == "completion_tokens":
+                candidate_keys.append("output_tokens")
+
+            for candidate_key in candidate_keys:
+                if isinstance(usage_obj, dict):
+                    value = usage_obj.get(candidate_key)
+                else:
+                    value = getattr(usage_obj, candidate_key, None)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    return int(value)
+            return None
+
+        def complete_with_responses_api() -> CompletionResult:
+            request_args = {
+                "model": model,
+                "input": messages,
+                "temperature": temperature,
+                "top_p": top_p,
+                "logprobs": True,
+            }
+            if service_tier and service_tier != "standard":
+                request_args["service_tier"] = service_tier
+            for unsupported in self._responses_unsupported_params.get(model_key, set()):
+                request_args.pop(unsupported, None)
+
+            while True:
+                try:
+                    response = self._client.responses.create(**request_args)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    unsupported_param = extract_unsupported_parameter(exc)
+                    if unsupported_param in {"model", "input", "messages"}:
+                        raise
+                    if unsupported_param and unsupported_param in request_args:
+                        self._responses_unsupported_params.setdefault(model_key, set()).add(
+                            unsupported_param
+                        )
+                        logging.info(
+                            "Responses API rejected parameter '%s' for model %s; retrying without it.",
+                            unsupported_param,
+                            model,
+                        )
+                        request_args.pop(unsupported_param, None)
+                        continue
+                    if "logprobs" in request_args:
+                        warn_logprob_retry(exc)
+                        request_args.pop("logprobs", None)
+                        continue
+                    raise
+            usage = getattr(response, "usage", None)
+            prompt_tokens = usage_metric(usage, "prompt_tokens")
+            completion_tokens = usage_metric(usage, "completion_tokens")
+            total_tokens = usage_metric(usage, "total_tokens")
+            if total_tokens is None and (
+                prompt_tokens is not None or completion_tokens is not None
+            ):
+                total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+
+            texts: List[str] = []
+            token_logprobs: List[Dict[str, Any]] = []
+            output_items = getattr(response, "output", None) or []
+            if isinstance(output_items, list):
+                for item in output_items:
+                    content_segments = (
+                        item.get("content")
+                        if isinstance(item, dict)
+                        else getattr(item, "content", None)
+                    ) or []
+                    for segment in content_segments:
+                        segment_type = (
+                            segment.get("type")
+                            if isinstance(segment, dict)
+                            else getattr(segment, "type", None)
+                        )
+                        segment_text = (
+                            (segment.get("text") if isinstance(segment, dict) else getattr(segment, "text", None))
+                            or (
+                                segment.get("output_text")
+                                if isinstance(segment, dict)
+                                else getattr(segment, "output_text", None)
+                            )
+                            or ""
+                        )
+                        if segment_type == "output_text" and segment_text:
+                            texts.append(segment_text)
+                            segment_logprobs = collect_logprobs(
+                                segment.get("logprobs")
+                                if isinstance(segment, dict)
+                                else getattr(segment, "logprobs", None)
+                            )
+                            if segment_logprobs:
+                                token_logprobs.extend(segment_logprobs)
+
+            if not texts:
+                fallback_text = getattr(response, "output_text", None)
+                if isinstance(fallback_text, list):
+                    fallback_text = "".join(str(chunk) for chunk in fallback_text if chunk is not None)
+                if isinstance(fallback_text, str) and fallback_text:
+                    texts.append(fallback_text)
+
+            return CompletionResult(
+                text="".join(texts),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                token_logprobs=token_logprobs or None,
+            )
+
         if self.client_type == "chat_v1":
+            if hasattr(self._client, "responses") and model_key in self._chat_incompatible_models:
+                return complete_with_responses_api()
             try:
                 request_args: Dict[str, Any] = {
                     "model": model,
@@ -781,6 +954,13 @@ class OpenAIConnector:
                     request_args["service_tier"] = service_tier
                 response = self._client.chat.completions.create(**request_args)
             except Exception as exc:  # noqa: BLE001
+                if hasattr(self._client, "responses") and should_retry_with_responses(exc):
+                    self._chat_incompatible_models.add(model_key)
+                    logging.info(
+                        "Model %s is not chat-completions compatible; retrying with Responses API.",
+                        model,
+                    )
+                    return complete_with_responses_api()
                 warn_logprob_retry(exc)
                 request_args.pop("logprobs", None)
                 request_args.pop("top_logprobs", None)
@@ -799,39 +979,7 @@ class OpenAIConnector:
                 token_logprobs=token_logprobs,
             )
         if self.client_type == "responses_v1":
-            try:
-                request_args = {
-                    "model": model,
-                    "input": messages,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "logprobs": True,
-                }
-                if service_tier and service_tier != "standard":
-                    request_args["service_tier"] = service_tier
-                response = self._client.responses.create(**request_args)
-            except Exception as exc:  # noqa: BLE001
-                warn_logprob_retry(exc)
-                request_args.pop("logprobs", None)
-                response = self._client.responses.create(**request_args)
-            usage = getattr(response, "usage", None)
-            # Responses API returns a list of content blocks
-            for item in response.output:
-                for segment in getattr(item, "content", []):
-                    if getattr(segment, "type", "") == "output_text":
-                        text = segment.text or ""
-                        segment_logprobs = collect_logprobs(getattr(segment, "logprobs", None))
-                        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
-                        completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
-                        total_tokens = getattr(usage, "total_tokens", None) if usage else None
-                        return CompletionResult(
-                            text=text,
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=total_tokens,
-                            token_logprobs=segment_logprobs,
-                        )
-            return CompletionResult(text="")
+            return complete_with_responses_api()
         # Legacy SDK path
         try:
             request_args = {
@@ -1687,90 +1835,97 @@ def process_dataset(
 
     log_records: List[Dict[str, Any]] = []
 
+    def flush_prompt_log() -> None:
+        with open(log_path, "w", encoding="utf-8") as log_handle:
+            json.dump(log_records, log_handle, ensure_ascii=False, indent=2)
+
+    flush_prompt_log()
+
     with open(output_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
         writer.writeheader()
+        try:
+            for idx, example in enumerate(examples, start=1):
+                logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
+                few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+                prediction, attempt_logs = classify_example(
+                    connector=connector,
+                    example=example,
+                    model=args.model,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    service_tier=args.service_tier,
+                    system_prompt=args.system_prompt,
+                    enable_cot=args.enable_cot,
+                    include_explanation=include_explanation,
+                    few_shot_context=few_shot_context,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                    validator_client=validator_client,
+                    validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                    validator_prompt_max_chars=args.validator_prompt_max_chars,
+                    validator_exhausted_policy=args.validator_exhausted_policy,
+                )
+                predictions[example.example_id] = prediction
+                if prediction.prompt_tokens is not None:
+                    total_prompt_tokens += prediction.prompt_tokens
+                if prediction.completion_tokens is not None:
+                    total_completion_tokens += prediction.completion_tokens
+                if prediction.total_tokens is not None:
+                    total_reported_tokens += prediction.total_tokens
+                if example.truth:
+                    is_correct = prediction.label == example.truth
+                    if prediction.confidence is not None:
+                        correctness.append(is_correct)
+                        confidences.append(prediction.confidence)
 
-        for idx, example in enumerate(examples, start=1):
-            logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
-            few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-            prediction, attempt_logs = classify_example(
-                connector=connector,
-                example=example,
-                model=args.model,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                top_k=args.top_k,
-                service_tier=args.service_tier,
-                system_prompt=args.system_prompt,
-                enable_cot=args.enable_cot,
-                include_explanation=include_explanation,
-                few_shot_context=few_shot_context,
-                max_retries=args.max_retries,
-                retry_delay=args.retry_delay,
-                validator_client=validator_client,
-                validator_prompt_max_candidates=args.validator_prompt_max_candidates,
-                validator_prompt_max_chars=args.validator_prompt_max_chars,
-                validator_exhausted_policy=args.validator_exhausted_policy,
-            )
-            predictions[example.example_id] = prediction
-            if prediction.prompt_tokens is not None:
-                total_prompt_tokens += prediction.prompt_tokens
-            if prediction.completion_tokens is not None:
-                total_completion_tokens += prediction.completion_tokens
-            if prediction.total_tokens is not None:
-                total_reported_tokens += prediction.total_tokens
-            if example.truth:
-                is_correct = prediction.label == example.truth
-                if prediction.confidence is not None:
-                    correctness.append(is_correct)
-                    confidences.append(prediction.confidence)
+                log_records.append(
+                    {
+                        "example_id": example.example_id,
+                        "attempts": attempt_logs,
+                        "final_prediction": {
+                            "label": prediction.label,
+                            "confidence": prediction.confidence,
+                            "explanation": prediction.explanation,
+                            "truth": example.truth,
+                            "validator_status": prediction.validator_status,
+                            "validator_reason": prediction.validator_reason,
+                        },
+                    }
+                )
 
-            log_records.append(
-                {
-                    "example_id": example.example_id,
-                    "attempts": attempt_logs,
-                    "final_prediction": {
-                        "label": prediction.label,
-                        "confidence": prediction.confidence,
-                        "explanation": prediction.explanation,
-                        "truth": example.truth,
-                        "validator_status": prediction.validator_status,
-                        "validator_reason": prediction.validator_reason,
-                    },
+                confidence_str = (
+                    f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
+                )
+                row = {
+                    "ID": example.example_id,
+                    "leftContext": example.left_context,
+                    "node": example.node,
+                    "rightContext": example.right_context,
+                    "info": example.info,
+                    "truth": example.truth or "",
+                    "prediction": prediction.label,
+                    "explanation": prediction.explanation,
+                    "confidence": confidence_str,
+                    "nodeEcho": prediction.node_echo or "",
+                    "spanSource": prediction.span_source or "",
+                    "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
+                    "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
+                    "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
+                    "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
+                    "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
+                    "validatorStatus": prediction.validator_status or "",
+                    "validatorReason": prediction.validator_reason or "",
                 }
-            )
+                for field in extra_field_order:
+                    row[field] = example.extras.get(field, "")
+                writer.writerow(row)
+                handle.flush()
+                flush_prompt_log()
+        finally:
+            flush_prompt_log()
 
-            confidence_str = (
-                f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
-            )
-            row = {
-                "ID": example.example_id,
-                "leftContext": example.left_context,
-                "node": example.node,
-                "rightContext": example.right_context,
-                "info": example.info,
-                "truth": example.truth or "",
-                "prediction": prediction.label,
-                "explanation": prediction.explanation,
-                "confidence": confidence_str,
-                "nodeEcho": prediction.node_echo or "",
-                "spanSource": prediction.span_source or "",
-                "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
-                "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
-                "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
-                "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
-                "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
-                "validatorStatus": prediction.validator_status or "",
-                "validatorReason": prediction.validator_reason or "",
-            }
-            for field in extra_field_order:
-                row[field] = example.extras.get(field, "")
-            writer.writerow(row)
-            handle.flush()
-
-    with open(log_path, "w", encoding="utf-8") as log_handle:
-        json.dump(log_records, log_handle, ensure_ascii=False, indent=2)
     logging.info("Saved prompt log to %s", log_path)
 
     metrics_output = os.path.splitext(output_path)[0] + "_metrics.json"
