@@ -143,6 +143,30 @@ def safe_float(value: Any, default: float = float("nan")) -> float:
         return default
 
 
+def is_quota_or_rate_limit_error(exc: BaseException) -> bool:
+    """Best-effort detection for provider quota/rate-limit failures."""
+    for attr_name in ("status_code", "status", "http_status"):
+        status_value = getattr(exc, attr_name, None)
+        if status_value is None:
+            continue
+        status_text = str(status_value).strip()
+        if status_text == "429":
+            return True
+
+    text = str(exc).strip().lower()
+    indicators = (
+        "429",
+        "too many requests",
+        "rate limit",
+        "resource has been exhausted",
+        "resource exhausted",
+        "insufficient_quota",
+        "exceeded your current quota",
+        "quota",
+    )
+    return any(marker in text for marker in indicators)
+
+
 def ensure_directory(path: str) -> None:
     """Create the directory for path if it does not yet exist."""
     directory = os.path.dirname(os.path.abspath(path))
@@ -881,12 +905,32 @@ class OpenAIConnector:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
         model_key = model.strip().lower()
 
-        def warn_logprob_retry(exc: Exception) -> None:
-            status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None) or getattr(exc, "status", None)
+        def normalize_unsupported_parameter(name: Optional[str]) -> Optional[str]:
+            if not isinstance(name, str):
+                return None
+            normalized = name.strip().lower().replace("-", "_")
+            alias_map = {
+                "servicetier": "service_tier",
+                "service_tier": "service_tier",
+                "toplogprobs": "top_logprobs",
+                "top_logprobs": "top_logprobs",
+                "logprobs": "logprobs",
+            }
+            return alias_map.get(normalized, normalized or None)
+
+        def extract_error_text(exc: Exception) -> str:
             error_message = getattr(exc, "message", None)
             if error_message is None and hasattr(exc, "error"):
-                error_message = getattr(exc.error, "message", None)  # type: ignore[attr-defined]
-            text = str(error_message or exc)
+                error_payload = getattr(exc, "error")
+                if isinstance(error_payload, dict):
+                    error_message = error_payload.get("message")
+                else:
+                    error_message = getattr(error_payload, "message", None)
+            return str(error_message or exc)
+
+        def warn_logprob_retry(exc: Exception) -> None:
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None) or getattr(exc, "status", None)
+            text = extract_error_text(exc)
             if isinstance(status_code, str) and status_code.isdigit():
                 status_code = int(status_code)
             if status_code == 403 or "403" in text:
@@ -898,10 +942,7 @@ class OpenAIConnector:
                 logging.debug("Logprobs unavailable for this client (%s); retrying without logprobs.", exc)
 
         def should_retry_with_responses(exc: Exception) -> bool:
-            error_message = getattr(exc, "message", None)
-            if error_message is None and hasattr(exc, "error"):
-                error_message = getattr(exc.error, "message", None)  # type: ignore[attr-defined]
-            text = str(error_message or exc).lower()
+            text = extract_error_text(exc).lower()
             return any(
                 marker in text
                 for marker in (
@@ -944,7 +985,7 @@ class OpenAIConnector:
                         param = getattr(error_payload, "param", None)
 
             if isinstance(param, str):
-                normalized = param.strip()
+                normalized = normalize_unsupported_parameter(param)
                 if normalized:
                     return normalized
 
@@ -957,7 +998,20 @@ class OpenAIConnector:
             for pattern in patterns:
                 match = re.search(pattern, text, flags=re.IGNORECASE)
                 if match:
-                    return match.group(1)
+                    return normalize_unsupported_parameter(match.group(1))
+            return None
+
+        def infer_known_unsupported_parameter(exc: Exception) -> Optional[str]:
+            text = extract_error_text(exc).lower()
+            if "service_tier" in text or "service tier" in text or "service-tier" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid")):
+                    return "service_tier"
+            if "top_logprobs" in text or "top logprobs" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid")):
+                    return "top_logprobs"
+            if "logprobs" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return "logprobs"
             return None
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
@@ -1032,7 +1086,7 @@ class OpenAIConnector:
                     response = self._client.responses.create(**request_args)
                     break
                 except Exception as exc:  # noqa: BLE001
-                    unsupported_param = extract_unsupported_parameter(exc)
+                    unsupported_param = extract_unsupported_parameter(exc) or infer_known_unsupported_parameter(exc)
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
                     if unsupported_param and unsupported_param in request_args:
@@ -1047,6 +1101,7 @@ class OpenAIConnector:
                         request_args.pop(unsupported_param, None)
                         continue
                     if "logprobs" in request_args:
+                        self._responses_unsupported_params.setdefault(model_key, set()).add("logprobs")
                         warn_logprob_retry(exc)
                         request_args.pop("logprobs", None)
                         continue
@@ -1138,21 +1193,27 @@ class OpenAIConnector:
                             model,
                         )
                         return complete_with_responses_api()
-                    unsupported_param = extract_unsupported_parameter(exc)
+                    unsupported_param = extract_unsupported_parameter(exc) or infer_known_unsupported_parameter(exc)
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
                     if unsupported_param and unsupported_param in request_args:
-                        self._chat_unsupported_params.setdefault(model_key, set()).add(
-                            unsupported_param
-                        )
+                        unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
+                        unsupported_params.add(unsupported_param)
+                        if unsupported_param == "logprobs":
+                            unsupported_params.add("top_logprobs")
                         logging.info(
                             "Chat Completions rejected parameter '%s' for model %s; retrying without it.",
                             unsupported_param,
                             model,
                         )
                         request_args.pop(unsupported_param, None)
+                        if unsupported_param == "logprobs":
+                            request_args.pop("top_logprobs", None)
                         continue
                     if "logprobs" in request_args or "top_logprobs" in request_args:
+                        unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
+                        unsupported_params.add("logprobs")
+                        unsupported_params.add("top_logprobs")
                         warn_logprob_retry(exc)
                         request_args.pop("logprobs", None)
                         request_args.pop("top_logprobs", None)
@@ -1347,6 +1408,10 @@ class Prediction:
     span_source: Optional[str] = None
     validator_status: Optional[str] = None
     validator_reason: Optional[str] = None
+
+
+class ProviderQuotaExceededError(RuntimeError):
+    """Raised when provider quota/rate limit is exhausted after retries."""
 
 
 def compute_metrics(
@@ -1957,6 +2022,11 @@ def classify_example(
                 time.sleep(retry_delay)
 
     assert last_error is not None
+    if is_quota_or_rate_limit_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        raise ProviderQuotaExceededError(
+            f"Provider quota/rate limit exhausted for example {example.example_id}: {detail}"
+        ) from last_error
     raise RuntimeError(f"Failed to classify example {example.example_id}") from last_error
 
 
@@ -1969,7 +2039,7 @@ def process_dataset(
     calibration_enabled: bool,
     label_map: Optional[Dict[str, str]],
     validator_client: Optional[ValidatorClient] = None,
-) -> Tuple[int, int, int]:
+) -> Tuple[int, int, int, bool]:
     """Run the full evaluation pipeline for a single dataset."""
     logging.info("Loading dataset from %s", input_path)
     examples, extra_field_order = read_examples(input_path)
@@ -1986,6 +2056,7 @@ def process_dataset(
         )
 
     predictions: Dict[str, Prediction] = {}
+    halted_by_quota = False
     few_shot_count = max(0, args.few_shot_examples)
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -2111,25 +2182,37 @@ def process_dataset(
                     pending_total,
                 )
                 few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-                prediction, attempt_logs = classify_example(
-                    connector=connector,
-                    example=example,
-                    model=args.model,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    top_k=args.top_k,
-                    service_tier=args.service_tier,
-                    system_prompt=args.system_prompt,
-                    enable_cot=args.enable_cot,
-                    include_explanation=include_explanation,
-                    few_shot_context=few_shot_context,
-                    max_retries=args.max_retries,
-                    retry_delay=args.retry_delay,
-                    validator_client=validator_client,
-                    validator_prompt_max_candidates=args.validator_prompt_max_candidates,
-                    validator_prompt_max_chars=args.validator_prompt_max_chars,
-                    validator_exhausted_policy=args.validator_exhausted_policy,
-                )
+                try:
+                    prediction, attempt_logs = classify_example(
+                        connector=connector,
+                        example=example,
+                        model=args.model,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        top_k=args.top_k,
+                        service_tier=args.service_tier,
+                        system_prompt=args.system_prompt,
+                        enable_cot=args.enable_cot,
+                        include_explanation=include_explanation,
+                        few_shot_context=few_shot_context,
+                        max_retries=args.max_retries,
+                        retry_delay=args.retry_delay,
+                        validator_client=validator_client,
+                        validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                        validator_prompt_max_chars=args.validator_prompt_max_chars,
+                        validator_exhausted_policy=args.validator_exhausted_policy,
+                    )
+                except ProviderQuotaExceededError as exc:
+                    halted_by_quota = True
+                    logging.error(
+                        "%s",
+                        exc,
+                    )
+                    logging.error(
+                        "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                        "Partial outputs were saved and can be resumed later."
+                    )
+                    break
                 predictions[example.example_id] = prediction
                 if prediction.prompt_tokens is not None:
                     total_prompt_tokens += prediction.prompt_tokens
@@ -2194,15 +2277,23 @@ def process_dataset(
         ex.example_id for ex in examples if ex.example_id not in predictions
     ]
     if missing_predictions:
-        raise RuntimeError(
-            f"Missing predictions for {len(missing_predictions)} example(s), "
-            f"including {missing_predictions[:5]}."
-        )
+        if halted_by_quota:
+            logging.warning(
+                "Stopped with %d unprocessed example(s); first pending IDs: %s",
+                len(missing_predictions),
+                missing_predictions[:5],
+            )
+        else:
+            raise RuntimeError(
+                f"Missing predictions for {len(missing_predictions)} example(s), "
+                f"including {missing_predictions[:5]}."
+            )
 
-    evaluated_truths = [ex.truth for ex in examples if ex.truth is not None]
-    evaluated_preds = [
-        predictions[ex.example_id].label for ex in examples if ex.truth is not None
+    evaluated_examples = [
+        ex for ex in examples if ex.truth is not None and ex.example_id in predictions
     ]
+    evaluated_truths = [ex.truth for ex in evaluated_examples]
+    evaluated_preds = [predictions[ex.example_id].label for ex in evaluated_examples]
 
     confidences: List[float] = []
     correctness: List[bool] = []
@@ -2259,7 +2350,7 @@ def process_dataset(
             total_token_usage,
         )
 
-    return total_prompt_tokens, total_completion_tokens, total_reported_tokens
+    return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -2539,6 +2630,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     aggregate_prompt_tokens = 0
     aggregate_completion_tokens = 0
     aggregate_reported_tokens = 0
+    stopped_by_quota = False
 
     try:
         for resolved_input in input_paths:
@@ -2549,7 +2641,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 timestamp_tag,
                 multiple_inputs,
             )
-            prompt_tokens, completion_tokens, reported_tokens = process_dataset(
+            prompt_tokens, completion_tokens, reported_tokens, halted_by_quota = process_dataset(
                 connector=connector,
                 input_path=resolved_input,
                 output_path=output_path,
@@ -2562,6 +2654,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             aggregate_prompt_tokens += prompt_tokens
             aggregate_completion_tokens += completion_tokens
             aggregate_reported_tokens += reported_tokens
+            if halted_by_quota:
+                stopped_by_quota = True
+                logging.error(
+                    "Stopping remaining input datasets because provider quota/rate limit was exhausted."
+                )
+                break
     finally:
         if validator_client is not None:
             validator_client.close()
@@ -2581,6 +2679,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     elapsed_seconds = time.perf_counter() - overall_start
     logging.info("Total runtime: %.2f seconds", elapsed_seconds)
+
+    if stopped_by_quota:
+        logging.error(
+            "Run ended early due to provider quota/rate-limit exhaustion. "
+            "Re-run later with the same --output path to resume."
+        )
+        return 2
 
     return 0
 
