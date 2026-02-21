@@ -1706,21 +1706,17 @@ def generate_confusion_heatmap(
 # --------------------------- Logprob Utilities ----------------------------- #
 
 
-def extract_label_logprob(
+def _extract_target_logprob(
     response_text: str,
-    label: str,
+    target: str,
     token_logprobs: Optional[List[Dict[str, Any]]],
 ) -> Tuple[Optional[float], Optional[float]]:
-    """Estimate the log probability and probability for the label token sequence."""
-    if not token_logprobs or not label:
+    """Estimate log probability/probability for a target substring in response text."""
+    if not token_logprobs or not target:
         return None, None
 
-    target = f'"label": "{label}"'
     if response_text.find(target) == -1:
-        # Fallback to matching the label string alone (including surrounding quotes).
-        target = f'"{label}"'
-        if response_text.find(target) == -1:
-            return None, None
+        return None, None
 
     combined = "".join(str(entry.get("token", "")) for entry in token_logprobs)
     substring_index = combined.find(target)
@@ -1731,9 +1727,9 @@ def extract_label_logprob(
         substring_index = normalized_combined.find(normalized_target)
         if substring_index == -1:
             return None, None
-        # Unable to map back accurately; fall back to tokens containing the label.
+        # Unable to map back accurately; fall back to tokens containing pieces of target.
         matching_tokens = [
-            entry for entry in token_logprobs if label in str(entry.get("token", ""))
+            entry for entry in token_logprobs if str(entry.get("token", "")) and str(entry.get("token", "")) in target
         ]
     else:
         end_index = substring_index + len(target)
@@ -1765,6 +1761,36 @@ def extract_label_logprob(
 
     probability = math.exp(logprob_sum)
     return logprob_sum, probability
+
+
+def extract_label_logprob(
+    response_text: str,
+    label: str,
+    token_logprobs: Optional[List[Dict[str, Any]]],
+) -> Tuple[Optional[float], Optional[float]]:
+    """Estimate the log probability and probability for the label token sequence."""
+    if not token_logprobs or not label:
+        return None, None
+
+    target = f'"label": "{label}"'
+    logprob, probability = _extract_target_logprob(response_text, target, token_logprobs)
+    if logprob is not None and probability is not None:
+        return logprob, probability
+    # Fallback to matching the label string alone (including surrounding quotes).
+    fallback_target = f'"{label}"'
+    return _extract_target_logprob(response_text, fallback_target, token_logprobs)
+
+
+def extract_node_echo_logprob(
+    response_text: str,
+    node_echo: str,
+    token_logprobs: Optional[List[Dict[str, Any]]],
+) -> Tuple[Optional[float], Optional[float]]:
+    """Estimate the log probability/probability for node_echo value in model JSON output."""
+    if not token_logprobs or not node_echo:
+        return None, None
+    target = f'"node_echo": "{node_echo}"'
+    return _extract_target_logprob(response_text, target, token_logprobs)
 
 
 # --------------------------- Main Benchmarking ----------------------------- #
@@ -1801,6 +1827,10 @@ def classify_example(
     validator_status: Optional[str] = None
     validator_reason: Optional[str] = None
     last_error: Optional[Exception] = None
+    latest_raw_response = ""
+    latest_prompt_tokens: Optional[int] = None
+    latest_completion_tokens: Optional[int] = None
+    latest_total_tokens: Optional[int] = None
     validation_failures = 0
     interaction_logs: List[Dict[str, Any]] = []
 
@@ -1834,12 +1864,15 @@ def classify_example(
                 service_tier=service_tier,
             )
             raw = result.text
+            latest_raw_response = raw
+            latest_prompt_tokens = result.prompt_tokens
+            latest_completion_tokens = result.completion_tokens
+            latest_total_tokens = result.total_tokens
             log_entry["response"] = {
                 "text": raw,
                 "prompt_tokens": result.prompt_tokens,
                 "completion_tokens": result.completion_tokens,
                 "total_tokens": result.total_tokens,
-                "token_logprobs": result.token_logprobs,
             }
             payload = extract_json_object(raw)
             label = str(payload.get("label", "")).strip()
@@ -2029,6 +2062,24 @@ def classify_example(
                     label_logprob,
                     label_probability,
                 )
+            node_echo_logprob, node_echo_probability = extract_node_echo_logprob(
+                raw, node_echo, result.token_logprobs
+            )
+            if node_echo_logprob is not None and node_echo_probability is not None:
+                logging.info(
+                    "Node probability for example %s -> logprob: %.4f, probability: %.4f",
+                    example.example_id,
+                    node_echo_logprob,
+                    node_echo_probability,
+                )
+            response_log = log_entry.get("response")
+            if isinstance(response_log, dict):
+                response_log["node_echo_logprob"] = (
+                    f"{node_echo_logprob:.6f}" if node_echo_logprob is not None else None
+                )
+                response_log["node_echo_probability"] = (
+                    f"{node_echo_probability:.6f}" if node_echo_probability is not None else None
+                )
 
             log_entry["status"] = log_entry.get("status", "success")
             log_entry["parsed_payload"] = payload
@@ -2050,6 +2101,17 @@ def classify_example(
             ), interaction_logs
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
             last_error = exc
+            if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
+                # Give the model deterministic feedback about why the previous output was rejected.
+                validator_patch_message = {
+                    "role": "user",
+                    "content": (
+                        "Your previous response was not valid JSON and could not be parsed "
+                        f"({exc}).\n"
+                        "Return ONLY one syntactically valid JSON object, with properly escaped "
+                        'strings and no trailing commas. Do not include Markdown/code fences.'
+                    ),
+                }
             if "status" not in log_entry:
                 log_entry["status"] = "error"
             log_entry["error"] = str(exc)
@@ -2065,6 +2127,28 @@ def classify_example(
                 time.sleep(retry_delay)
 
     assert last_error is not None
+    if isinstance(last_error, json.JSONDecodeError):
+        logging.error(
+            "Unable to parse model output as JSON for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence.",
+            example.example_id,
+            max_retries,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_parse_error",
+            validator_reason=str(last_error),
+        ), interaction_logs
     if is_quota_or_rate_limit_error(last_error):
         detail = str(last_error).strip() or last_error.__class__.__name__
         raise ProviderQuotaExceededError(
