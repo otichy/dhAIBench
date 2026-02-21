@@ -672,6 +672,7 @@ class OpenAIConnector:
     def __init__(self, api_key: str, base_url: Optional[str] = None) -> None:
         self.client_type: str
         self._chat_incompatible_models: set[str] = set()
+        self._chat_unsupported_params: Dict[str, set[str]] = {}
         self._responses_unsupported_params: Dict[str, set[str]] = {}
         try:
             from openai import OpenAI
@@ -754,8 +755,15 @@ class OpenAIConnector:
             param = getattr(exc, "param", None)
             error_message = getattr(exc, "message", None)
             body = getattr(exc, "body", None)
+
+            payload_items: List[Dict[str, Any]] = []
             if isinstance(body, dict):
-                error_payload = body.get("error")
+                payload_items.append(body)
+            elif isinstance(body, list):
+                payload_items.extend(item for item in body if isinstance(item, dict))
+
+            for payload_item in payload_items:
+                error_payload = payload_item.get("error")
                 if isinstance(error_payload, dict):
                     if error_message is None:
                         error_message = error_payload.get("message")
@@ -779,13 +787,15 @@ class OpenAIConnector:
                     return normalized
 
             text = str(error_message or exc)
-            match = re.search(
+            patterns = (
                 r"unsupported parameter:\s*['`\"]?([a-zA-Z0-9_]+)['`\"]?",
-                text,
-                flags=re.IGNORECASE,
+                r"unknown name\s*['`\"]([a-zA-Z0-9_]+)['`\"]\s*:\s*cannot find field",
+                r"unrecognized request argument supplied:\s*['`\"]?([a-zA-Z0-9_]+)['`\"]?",
             )
-            if match:
-                return match.group(1)
+            for pattern in patterns:
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    return match.group(1)
             return None
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
@@ -941,30 +951,51 @@ class OpenAIConnector:
         if self.client_type == "chat_v1":
             if hasattr(self._client, "responses") and model_key in self._chat_incompatible_models:
                 return complete_with_responses_api()
-            try:
-                request_args: Dict[str, Any] = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "logprobs": True,
-                    "top_logprobs": 1,
-                }
-                if service_tier and service_tier != "standard":
-                    request_args["service_tier"] = service_tier
-                response = self._client.chat.completions.create(**request_args)
-            except Exception as exc:  # noqa: BLE001
-                if hasattr(self._client, "responses") and should_retry_with_responses(exc):
-                    self._chat_incompatible_models.add(model_key)
-                    logging.info(
-                        "Model %s is not chat-completions compatible; retrying with Responses API.",
-                        model,
-                    )
-                    return complete_with_responses_api()
-                warn_logprob_retry(exc)
-                request_args.pop("logprobs", None)
-                request_args.pop("top_logprobs", None)
-                response = self._client.chat.completions.create(**request_args)
+            request_args = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "top_p": top_p,
+                "logprobs": True,
+                "top_logprobs": 1,
+            }
+            if service_tier and service_tier != "standard":
+                request_args["service_tier"] = service_tier
+            for unsupported in self._chat_unsupported_params.get(model_key, set()):
+                request_args.pop(unsupported, None)
+
+            while True:
+                try:
+                    response = self._client.chat.completions.create(**request_args)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if hasattr(self._client, "responses") and should_retry_with_responses(exc):
+                        self._chat_incompatible_models.add(model_key)
+                        logging.info(
+                            "Model %s is not chat-completions compatible; retrying with Responses API.",
+                            model,
+                        )
+                        return complete_with_responses_api()
+                    unsupported_param = extract_unsupported_parameter(exc)
+                    if unsupported_param in {"model", "input", "messages"}:
+                        raise
+                    if unsupported_param and unsupported_param in request_args:
+                        self._chat_unsupported_params.setdefault(model_key, set()).add(
+                            unsupported_param
+                        )
+                        logging.info(
+                            "Chat Completions rejected parameter '%s' for model %s; retrying without it.",
+                            unsupported_param,
+                            model,
+                        )
+                        request_args.pop(unsupported_param, None)
+                        continue
+                    if "logprobs" in request_args or "top_logprobs" in request_args:
+                        warn_logprob_retry(exc)
+                        request_args.pop("logprobs", None)
+                        request_args.pop("top_logprobs", None)
+                        continue
+                    raise
             message = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
@@ -2188,7 +2219,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 1
 
-    api_base_url = resolve_env_value(args.api_base_var, env_map) if args.api_base_var else None
+    raw_api_base = resolve_env_value(args.api_base_var, env_map) if args.api_base_var else None
+    api_base_url = normalize_api_base(provider, raw_api_base)
     if api_base_url:
         logging.info("Using API base URL from %s: %s", args.api_base_var, api_base_url)
 
