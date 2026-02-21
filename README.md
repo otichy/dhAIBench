@@ -46,7 +46,7 @@ When `--labels` is provided, supply a second CSV with `ID;truth` columns. The sc
 
 ## Usage
 
-1. Populate `.env` or export environment variables so the agent can locate your API key. By default it reads `OPENAI_API_KEY` (and `OPENAI_BASE_URL` when targeting non-default endpoints). You can override the variable names with `--api_key_var` and `--api_base_var`.
+1. Populate `.env` or export environment variables so the agent can locate your API key. By default it reads `OPENAI_API_KEY` (and `OPENAI_BASE_URL` when targeting non-default endpoints). For custom providers, the agent also detects `<PROVIDER>_API_KEY` and `<PROVIDER>_BASE_URL` automatically (for example `REQUESTY_API_KEY` / `REQUESTY_BASE_URL`). You can always override the variable names with `--api_key_var` and `--api_base_var`.
 2. Prepare an input dataset (see `example_input.csv` for reference).
 3. Run the benchmark (append as many CSVs as you like after `--input`; omit `--output` to use the automatic filenames):
 
@@ -66,6 +66,7 @@ python benchmark_agent.py ^
 On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
 When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
+When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
 
 ### System Prompts and Encoding
 

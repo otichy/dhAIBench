@@ -150,6 +150,37 @@ def ensure_directory(path: str) -> None:
         os.makedirs(directory, exist_ok=True)
 
 
+def parse_optional_int(value: Any) -> Optional[int]:
+    """Parse an optional integer-like CSV value."""
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+        if math.isfinite(number) and number.is_integer():
+            return int(number)
+    return None
+
+
+def parse_optional_float(value: Any) -> Optional[float]:
+    """Parse an optional floating-point CSV value."""
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
 def extract_json_object(text: str) -> Dict[str, Any]:
     """Extract and parse the first JSON object from a string."""
     text = text.strip()
@@ -375,6 +406,46 @@ PROVIDER_BASE_FALLBACKS: Dict[str, str] = {
 }
 
 
+def provider_slug_to_env_prefix(provider_slug: str) -> str:
+    """Convert provider slug to an env-var prefix."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (provider_slug or "").strip()).strip("_")
+    upper = cleaned.upper()
+    return upper or "PROVIDER"
+
+
+def infer_provider_defaults(provider_slug: str) -> Dict[str, str]:
+    """Infer API key/base env-var names from provider slug."""
+    prefix = provider_slug_to_env_prefix(provider_slug)
+    return {
+        "api_key_var": f"{prefix}_API_KEY",
+        "api_base_var": f"{prefix}_BASE_URL",
+    }
+
+
+def discover_provider_defaults(env_map: Dict[str, str]) -> Dict[str, Dict[str, str]]:
+    """Discover provider env-var mappings from known defaults plus *_API_KEY keys."""
+    discovered: Dict[str, Dict[str, str]] = {
+        slug: dict(defaults) for slug, defaults in PROVIDER_DEFAULTS.items()
+    }
+
+    key_pattern = re.compile(r"^([A-Z0-9][A-Z0-9_-]*)_API_KEY$")
+    candidate_keys = set(env_map.keys()) | set(os.environ.keys())
+    for key in candidate_keys:
+        match = key_pattern.match(str(key))
+        if not match:
+            continue
+        prefix = match.group(1)
+        slug = re.sub(r"[^a-z0-9]+", "-", prefix.lower()).strip("-")
+        if not slug:
+            continue
+        discovered.setdefault(
+            slug,
+            {"api_key_var": key, "api_base_var": f"{prefix}_BASE_URL"},
+        )
+
+    return discovered
+
+
 def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
     """Ensure the API base ends with a version segment."""
     candidate = (api_base or PROVIDER_BASE_FALLBACKS.get(provider, "")).strip()
@@ -505,11 +576,12 @@ def update_model_catalog(
 ) -> int:
     """Generate a model catalog JS file using credentials sourced from the environment."""
     env_map = parse_env_file(".env")
+    available_provider_defaults = discover_provider_defaults(env_map)
     if providers:
         selected = providers
     else:
         selected = []
-        for provider_slug, defaults in sorted(PROVIDER_DEFAULTS.items()):
+        for provider_slug, defaults in sorted(available_provider_defaults.items()):
             api_key = resolve_env_value(defaults["api_key_var"], env_map)
             if is_placeholder_value(api_key):
                 continue
@@ -530,10 +602,15 @@ def update_model_catalog(
 
     for provider in selected:
         provider_slug = provider.lower()
-        defaults = PROVIDER_DEFAULTS.get(provider_slug)
+        defaults = available_provider_defaults.get(provider_slug)
         if not defaults:
-            logging.warning("Skipping unknown provider %s.", provider)
-            continue
+            defaults = infer_provider_defaults(provider_slug)
+            logging.info(
+                "Provider %s not in known/discovered defaults; trying inferred env vars %s and %s.",
+                provider_slug,
+                defaults["api_key_var"],
+                defaults["api_base_var"],
+            )
         api_key_var = defaults["api_key_var"]
         api_base_var = defaults["api_base_var"]
         api_key = resolve_env_value(api_key_var, env_map)
@@ -609,6 +686,91 @@ def read_examples(path: str) -> Tuple[List[Example], List[str]]:
                 continue
             examples.append(example)
     return examples, extra_field_order
+
+
+def load_existing_prompt_log(path: str) -> List[Dict[str, Any]]:
+    """Load existing prompt log entries for resume mode."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Unable to parse existing prompt log %s; starting fresh log: %s", path, exc)
+        return []
+    if isinstance(payload, list):
+        return payload
+    logging.warning("Prompt log %s is not a JSON list; starting fresh log.", path)
+    return []
+
+
+def load_existing_output_predictions(
+    output_path: str,
+) -> Tuple[List[str], Dict[str, Prediction], int, int, int]:
+    """Load predictions from an existing output CSV to support resume mode."""
+    predictions: Dict[str, Prediction] = {}
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_reported_tokens = 0
+
+    with open(output_path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter=";")
+        existing_fieldnames = [name for name in (reader.fieldnames or []) if name]
+        if not existing_fieldnames:
+            return [], predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
+
+        required_fields = {"ID", "prediction"}
+        missing = required_fields - set(existing_fieldnames)
+        if missing:
+            raise ValueError(
+                f"Cannot resume from {output_path}: missing required output columns {sorted(missing)}."
+            )
+
+        for row_index, row in enumerate(reader, start=2):
+            example_id = str(row.get("ID", "")).strip()
+            if not example_id:
+                logging.warning("Ignoring resume row %d in %s because ID is empty.", row_index, output_path)
+                continue
+
+            label = str(row.get("prediction", "")).strip()
+            confidence = parse_optional_float(row.get("confidence"))
+            prompt_tokens = parse_optional_int(row.get("promptTokens"))
+            completion_tokens = parse_optional_int(row.get("completionTokens"))
+            total_tokens = parse_optional_int(row.get("totalTokens"))
+            label_logprob = parse_optional_float(row.get("labelLogProb"))
+            label_probability = parse_optional_float(row.get("labelProbability"))
+
+            if prompt_tokens is not None:
+                total_prompt_tokens += prompt_tokens
+            if completion_tokens is not None:
+                total_completion_tokens += completion_tokens
+            if total_tokens is not None:
+                total_reported_tokens += total_tokens
+
+            if example_id in predictions:
+                logging.warning(
+                    "Duplicate ID %s in existing output %s; keeping last occurrence.",
+                    example_id,
+                    output_path,
+                )
+
+            predictions[example_id] = Prediction(
+                label=label,
+                explanation=str(row.get("explanation", "") or ""),
+                confidence=confidence,
+                raw_response="",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                label_logprob=label_logprob,
+                label_probability=label_probability,
+                node_echo=str(row.get("nodeEcho", "") or "") or None,
+                span_source=str(row.get("spanSource", "") or "") or None,
+                validator_status=str(row.get("validatorStatus", "") or "") or None,
+                validator_reason=str(row.get("validatorReason", "") or "") or None,
+            )
+
+    return existing_fieldnames, predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
 
 def read_label_file(path: str) -> Dict[str, str]:
@@ -1824,8 +1986,6 @@ def process_dataset(
         )
 
     predictions: Dict[str, Prediction] = {}
-    confidences: List[float] = []
-    correctness: List[bool] = []
     few_shot_count = max(0, args.few_shot_examples)
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -1834,9 +1994,6 @@ def process_dataset(
     ensure_directory(output_path)
     log_path = os.path.splitext(output_path)[0] + ".log"
     ensure_directory(log_path)
-    logging.info("Writing predictions to %s", output_path)
-    logging.info("Saving prompt/response log to %s", log_path)
-
     fieldnames = [
         "ID",
         "leftContext",
@@ -1864,7 +2021,71 @@ def process_dataset(
         ]
     )
 
-    log_records: List[Dict[str, Any]] = []
+    resume_mode = os.path.isfile(output_path) and os.path.getsize(output_path) > 0
+    writer_fieldnames = list(fieldnames)
+    if resume_mode:
+        (
+            existing_fieldnames,
+            existing_predictions,
+            existing_prompt_tokens,
+            existing_completion_tokens,
+            existing_reported_tokens,
+        ) = load_existing_output_predictions(output_path)
+        if not existing_fieldnames:
+            logging.warning(
+                "Existing output file %s has no CSV header; starting a fresh output file.",
+                output_path,
+            )
+            resume_mode = False
+        else:
+            writer_fieldnames = existing_fieldnames
+            predictions.update(existing_predictions)
+            total_prompt_tokens += existing_prompt_tokens
+            total_completion_tokens += existing_completion_tokens
+            total_reported_tokens += existing_reported_tokens
+
+            missing_writer_fields = {"ID", "prediction"} - set(writer_fieldnames)
+            if missing_writer_fields:
+                raise ValueError(
+                    f"Cannot resume writing to {output_path}: missing required columns {sorted(missing_writer_fields)}."
+                )
+
+            missing_columns = [name for name in fieldnames if name not in writer_fieldnames]
+            if missing_columns:
+                logging.warning(
+                    "Resuming into an older output schema; new rows cannot populate columns: %s",
+                    ", ".join(missing_columns),
+                )
+
+    processed_ids = set(predictions.keys())
+    processed_in_input = sum(1 for ex in examples if ex.example_id in processed_ids)
+    pending_total = len(examples) - processed_in_input
+    if resume_mode:
+        if pending_total <= 0:
+            logging.info(
+                "Output already contains all %d input IDs; no new examples to classify.",
+                len(examples),
+            )
+        else:
+            first_pending = next((ex for ex in examples if ex.example_id not in processed_ids), None)
+            if first_pending is not None:
+                logging.info(
+                    "Resuming from first unprocessed record ID=%s (%d already processed, %d remaining).",
+                    first_pending.example_id,
+                    processed_in_input,
+                    pending_total,
+                )
+
+    if resume_mode:
+        logging.info("Resuming predictions in %s", output_path)
+    else:
+        logging.info("Writing predictions to %s", output_path)
+    logging.info("Saving prompt/response log to %s", log_path)
+
+    if resume_mode:
+        log_records = load_existing_prompt_log(log_path)
+    else:
+        log_records = []
 
     def flush_prompt_log() -> None:
         with open(log_path, "w", encoding="utf-8") as log_handle:
@@ -1872,12 +2093,23 @@ def process_dataset(
 
     flush_prompt_log()
 
-    with open(output_path, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
-        writer.writeheader()
+    file_mode = "a" if resume_mode else "w"
+    with open(output_path, file_mode, encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=writer_fieldnames, delimiter=";")
+        if not resume_mode:
+            writer.writeheader()
+        processed_this_run = 0
         try:
-            for idx, example in enumerate(examples, start=1):
-                logging.info("Classifying example %s (%d/%d)", example.example_id, idx, len(examples))
+            for example in examples:
+                if example.example_id in processed_ids:
+                    continue
+                processed_this_run += 1
+                logging.info(
+                    "Classifying example %s (%d/%d)",
+                    example.example_id,
+                    processed_this_run,
+                    pending_total,
+                )
                 few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
                 prediction, attempt_logs = classify_example(
                     connector=connector,
@@ -1905,11 +2137,6 @@ def process_dataset(
                     total_completion_tokens += prediction.completion_tokens
                 if prediction.total_tokens is not None:
                     total_reported_tokens += prediction.total_tokens
-                if example.truth:
-                    is_correct = prediction.label == example.truth
-                    if prediction.confidence is not None:
-                        correctness.append(is_correct)
-                        confidences.append(prediction.confidence)
 
                 log_records.append(
                     {
@@ -1951,9 +2178,11 @@ def process_dataset(
                 }
                 for field in extra_field_order:
                     row[field] = example.extras.get(field, "")
-                writer.writerow(row)
+                row_to_write = {field: row.get(field, "") for field in writer_fieldnames}
+                writer.writerow(row_to_write)
                 handle.flush()
                 flush_prompt_log()
+                processed_ids.add(example.example_id)
         finally:
             flush_prompt_log()
 
@@ -1961,10 +2190,28 @@ def process_dataset(
 
     metrics_output = os.path.splitext(output_path)[0] + "_metrics.json"
 
+    missing_predictions = [
+        ex.example_id for ex in examples if ex.example_id not in predictions
+    ]
+    if missing_predictions:
+        raise RuntimeError(
+            f"Missing predictions for {len(missing_predictions)} example(s), "
+            f"including {missing_predictions[:5]}."
+        )
+
     evaluated_truths = [ex.truth for ex in examples if ex.truth is not None]
     evaluated_preds = [
         predictions[ex.example_id].label for ex in examples if ex.truth is not None
     ]
+
+    confidences: List[float] = []
+    correctness: List[bool] = []
+    for example in examples:
+        prediction = predictions.get(example.example_id)
+        if prediction is None or example.truth is None or prediction.confidence is None:
+            continue
+        correctness.append(prediction.label == example.truth)
+        confidences.append(prediction.confidence)
 
     metrics: Dict[str, Any] = {}
     if evaluated_truths:
@@ -2030,7 +2277,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional output CSV path or directory. When omitted, defaults to "
-            "<input>_out_<model>_<timestamp>.csv alongside each input file."
+            "<input>_out_<model>_<timestamp>.csv alongside each input file. "
+            "If the resolved output CSV already exists, the run resumes from the first ID "
+            "not present in that file."
         ),
     )
     parser.add_argument("--model", help="Model name (e.g., gpt-4-turbo).")
@@ -2049,9 +2298,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--provider",
-        choices=sorted(PROVIDER_DEFAULTS.keys()),
         default="openai",
-        help="Model provider identifier used to look up default credentials.",
+        help=(
+            "Model provider identifier used to look up default credentials. "
+            "Known providers are preconfigured; custom providers are inferred from "
+            "<PROVIDER>_API_KEY and <PROVIDER>_BASE_URL."
+        ),
     )
     prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument(
@@ -2176,7 +2428,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--models-providers",
         nargs="+",
-        help="Optional list of provider slugs to update when --update-models is specified.",
+        help=(
+            "Optional list of provider slugs to update when --update-models is specified. "
+            "Custom slugs are allowed; env vars are inferred as <SLUG>_API_KEY and <SLUG>_BASE_URL."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -2201,16 +2456,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--model is required unless --update-models is specified.")
 
     overall_start = time.perf_counter()
+    env_map = parse_env_file(".env")
 
     provider = (args.provider or "openai").lower()
-    provider_defaults = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["openai"])
+    discovered_provider_defaults = discover_provider_defaults(env_map)
+    provider_defaults = discovered_provider_defaults.get(provider) or infer_provider_defaults(provider)
     if args.api_key_var is None:
         args.api_key_var = provider_defaults["api_key_var"]
     if args.api_base_var is None:
         args.api_base_var = provider_defaults["api_base_var"]
     include_explanation = not args.no_explanation
 
-    env_map = parse_env_file(".env")
     api_key = resolve_env_value(args.api_key_var, env_map)
     if is_placeholder_value(api_key):
         logging.error(

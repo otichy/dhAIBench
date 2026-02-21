@@ -115,11 +115,16 @@
           below only if you need to use a different key or endpoint for this run.
         </p>
         <p>
-          Model names per providers in the <code>.env</code> can be refreshed by running <code>benchmark_agent.py --update-models</code>.
+          Refresh models/providers by first running <code>benchmark_agent.py --update-models</code>, then clicking
+          <strong>Refresh Model List</strong> below.
         </p>
         <label class="inline">
-          <span>(Edit) and load .env file to refresh the available providers.</span>
+          <span>(Optional) load .env to auto-detect provider credential variable names.</span>
           <input type="file" id="env-file-input" accept=".env,text/plain" />
+        </label>
+        <label class="inline">
+          <button type="button" id="refresh-models-button">Refresh Model List</button>
+          <span id="refresh-models-status" class="hint"></span>
         </label>
         <div class="grid">
           <label
@@ -438,10 +443,12 @@ options:
       const apiKeyVarInput = document.getElementById("api_key_var");
       const apiBaseVarInput = document.getElementById("api_base_var");
       const envFileInput = document.getElementById("env-file-input");
+      const refreshModelsButton = document.getElementById("refresh-models-button");
+      const refreshModelsStatus = document.getElementById("refresh-models-status");
       const modelInput = document.getElementById("model");
       const modelList = document.getElementById("model-options");
       const modelCatalogMeta = document.getElementById("model-catalog-meta");
-      const modelCatalog =
+      let modelCatalog =
         window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
           ? window.MODEL_CATALOG
           : {};
@@ -484,6 +491,22 @@ options:
           apiBaseVar: "E-INFRA_BASE_URL",
         },
       };
+
+      function getWindowModelCatalog() {
+        return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
+          ? window.MODEL_CATALOG
+          : {};
+      }
+
+      function providerSlugToEnvPrefix(slug) {
+        const safe = (slug || "")
+          .toString()
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "");
+        return safe || "PROVIDER";
+      }
 
       function shellQuote(value) {
         if (value === undefined || value === null) {
@@ -710,6 +733,94 @@ options:
         }
       }
 
+      function setRefreshStatus(message, isError = false) {
+        if (!refreshModelsStatus) {
+          return;
+        }
+        refreshModelsStatus.textContent = message || "";
+        refreshModelsStatus.style.color = isError ? "#b00020" : "";
+      }
+
+      function syncProvidersFromCatalog() {
+        if (!modelCatalog || typeof modelCatalog !== "object") {
+          return;
+        }
+        const selectedBefore = providerSelect.value;
+        for (const [providerSlug, entry] of Object.entries(modelCatalog)) {
+          if (!providerSlug) {
+            continue;
+          }
+          ensureProviderRegistered(providerSlug, providerSlug);
+          const prefix = providerSlugToEnvPrefix(providerSlug);
+          const apiKeyVar =
+            entry && typeof entry.api_key_var === "string" && entry.api_key_var.trim()
+              ? entry.api_key_var.trim()
+              : `${prefix}_API_KEY`;
+          const apiBaseVar =
+            entry && typeof entry.api_base_var === "string" && entry.api_base_var.trim()
+              ? entry.api_base_var.trim()
+              : `${prefix}_BASE_URL`;
+          providerDefaults[providerSlug] = { apiKeyVar, apiBaseVar };
+        }
+
+        if (
+          selectedBefore &&
+          Array.from(providerSelect.options).some((option) => option.value === selectedBefore)
+        ) {
+          providerSelect.value = selectedBefore;
+        }
+      }
+
+      function loadModelCatalogScript() {
+        const cacheBustedSrc = `config_models.js?ts=${Date.now()}`;
+        return new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = cacheBustedSrc;
+          script.async = true;
+          script.onload = () => {
+            script.remove();
+            resolve();
+          };
+          script.onerror = () => {
+            script.remove();
+            reject(new Error(`Unable to load ${cacheBustedSrc}`));
+          };
+          document.head.appendChild(script);
+        });
+      }
+
+      async function refreshModelCatalogFromScript() {
+        if (refreshModelsButton) {
+          refreshModelsButton.disabled = true;
+          refreshModelsButton.textContent = "Refreshing...";
+        }
+        setRefreshStatus("Refreshing provider and model list from config_models.js...");
+        try {
+          await loadModelCatalogScript();
+          modelCatalog = getWindowModelCatalog();
+          syncProvidersFromCatalog();
+          updatePlaceholdersForProvider(providerSelect.value);
+          updateModelOptionsForProvider(providerSelect.value);
+          handleFormChange();
+          setRefreshStatus("Provider and model list refreshed.");
+        } catch (error) {
+          console.warn(error);
+          modelCatalog = getWindowModelCatalog();
+          syncProvidersFromCatalog();
+          updatePlaceholdersForProvider(providerSelect.value);
+          updateModelOptionsForProvider(providerSelect.value);
+          setRefreshStatus(
+            "Could not reload config_models.js; showing the currently loaded catalog.",
+            true
+          );
+        } finally {
+          if (refreshModelsButton) {
+            refreshModelsButton.disabled = false;
+            refreshModelsButton.textContent = "Refresh Model List";
+          }
+        }
+      }
+
       function updatePlaceholdersForProvider(provider) {
         const defaults = providerDefaults[provider] || providerDefaults.openai;
         if (!apiKeyVarInput.value) {
@@ -861,12 +972,17 @@ options:
         });
       }
 
+      modelCatalog = getWindowModelCatalog();
+      syncProvidersFromCatalog();
       loadConfig();
       updatePlaceholdersForProvider(providerSelect.value);
       updateModelOptionsForProvider(providerSelect.value);
 
       form.addEventListener("input", handleFormChange);
       copyButton.addEventListener("click", copyCommand);
+      if (refreshModelsButton) {
+        refreshModelsButton.addEventListener("click", refreshModelCatalogFromScript);
+      }
       providerSelect.addEventListener("change", () => {
         updatePlaceholdersForProvider(providerSelect.value);
         updateModelOptionsForProvider(providerSelect.value);
