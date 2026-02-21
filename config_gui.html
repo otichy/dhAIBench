@@ -5,26 +5,88 @@
     <title>LLM Benchmark Agent Configuration</title>
     <style>
       :root {
-        color-scheme: light dark;
-        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        color-scheme: light;
+        font-family: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", sans-serif;
+        --bg: #f3f7fc;
+        --card: #ffffff;
+        --ink: #16253a;
+        --muted: #4c5f78;
+        --line: #cfdceb;
+        --accent: #1f66b1;
+        --accent-soft: #e6f1fb;
+        --control-height: 2.35rem;
+        --required: #b54708;
+        --required-soft: #fff2e8;
+        --flag: #0050a4;
+        --value: #1f7a1f;
+        --script: #7a1f7a;
+        --binary: #8f4a00;
       }
       body {
-        margin: 0 auto;
-        max-width: 960px;
-        padding: 2rem;
-        line-height: 1.5;
+        margin: 0;
+        padding: 1.5rem;
+        line-height: 1.45;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top right, #d9ecff 0%, rgba(217, 236, 255, 0) 50%),
+          radial-gradient(circle at bottom left, #e8f6e8 0%, rgba(232, 246, 232, 0) 55%),
+          var(--bg);
       }
-      h1 {
+      .page {
+        max-width: 1320px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 370px;
+        gap: 1.25rem;
+        align-items: start;
+      }
+      .main-column {
+        min-width: 0;
+      }
+      .page-header {
         margin-bottom: 1rem;
       }
+      h1 {
+        margin: 0 0 0.5rem;
+        letter-spacing: 0.01em;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+      }
       fieldset {
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        padding: 1rem 1.5rem;
-        margin-bottom: 1.5rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        border-radius: 12px;
+        padding: 0.95rem 1.35rem;
+        margin: 0 0 1rem;
+        box-shadow: 0 6px 16px rgba(22, 37, 58, 0.045);
       }
       legend {
-        font-weight: 600;
+        font-weight: 700;
         padding: 0 0.5rem;
+        color: var(--ink);
+      }
+      .section-lead {
+        margin-top: 0;
+        color: var(--muted);
+      }
+      .required-card {
+        border-color: #f0b487;
+        background: linear-gradient(180deg, #fffefc 0%, #ffffff 100%);
+      }
+      .required-field input,
+      .required-field textarea,
+      .required-field select {
+        border: 1.5px solid #f0c5a2;
+        background: #fffaf5;
+      }
+      .required-field input:focus,
+      .required-field textarea:focus,
+      .required-field select:focus {
+        outline: none;
+        border-color: #d97706;
+        box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
       }
       label {
         display: flex;
@@ -39,353 +101,461 @@
       textarea,
       select {
         margin-top: 0.35rem;
-        padding: 0.5rem;
-        font-size: 1rem;
+        padding: 0.38rem 0.58rem;
+        font-size: 0.98rem;
+        font-family: inherit;
+        border: 1px solid #b8cadd;
+        border-radius: 8px;
+        box-sizing: border-box;
+        transition:
+          border-color 140ms ease,
+          box-shadow 140ms ease,
+          background-color 140ms ease;
+      }
+      input:not([type="checkbox"]),
+      select {
+        height: var(--control-height);
+        width: 100%;
+      }
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: #5f8fc1;
+        box-shadow: 0 0 0 2px rgba(95, 143, 193, 0.15);
+      }
+      input[type="checkbox"] {
+        min-height: initial;
+        width: 1rem;
+        height: 1rem;
+        flex: 0 0 1rem;
+        border-radius: 4px;
+        accent-color: #2f7abf;
+        vertical-align: middle;
+        position: relative;
+        top: 0;
+        margin: 0;
       }
       textarea {
-        min-height: 120px;
+        width: 100%;
+        min-height: 7rem;
         resize: vertical;
+        line-height: 1.4;
+      }
+      #input_path {
+        min-height: 6.4rem;
+      }
+      #system_prompt {
+        min-height: 6.8rem;
+      }
+      input[type="number"] {
+        padding-right: 0.45rem;
+      }
+      select {
+        appearance: auto;
+        background-color: #fff;
+      }
+      label {
+        gap: 0.06rem;
       }
       .inline {
         display: flex;
+        flex-direction: row;
         align-items: center;
         gap: 0.5rem;
         font-weight: 600;
+        min-height: var(--control-height);
       }
       .inline span {
         font-weight: 400;
       }
+      .inline input[type="checkbox"] {
+        width: 1.05rem;
+        height: 1.05rem;
+      }
       .hint {
         display: block;
-        font-size: 0.9rem;
-        color: rgba(0, 0, 0, 0.7);
-        margin-top: 0.35rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+        margin-top: 0.28rem;
+        line-height: 1.35;
+      }
+      .tool-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem 1rem;
+        margin-bottom: 1rem;
+        align-items: center;
+      }
+      .catalog-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+      }
+      .catalog-controls .hint {
+        margin-top: 0;
       }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1rem 1.5rem;
+        gap: 0.85rem 1.35rem;
+        align-items: start;
+      }
+      .grid.compact {
+        gap: 0.55rem 1rem;
+      }
+      details.optional-group {
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        padding: 0.7rem 0.85rem 0.15rem;
+        margin: 0.75rem 0;
+        background: #fcfdff;
+      }
+      details.optional-group > summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: #1c4f82;
+        margin-bottom: 0.55rem;
+      }
+      details.optional-group[open] > summary {
+        margin-bottom: 0.8rem;
       }
       pre {
-        background: rgba(0, 0, 0, 0.08);
+        background: #f5f8fc;
         padding: 1rem;
         overflow-x: auto;
         white-space: pre-wrap;
-        border-radius: 6px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
       }
       button {
-        padding: 0.6rem 1rem;
-        font-size: 1rem;
+        min-height: var(--control-height);
+        padding: 0.35rem 0.95rem;
+        font-size: 0.98rem;
+        font-weight: 600;
         cursor: pointer;
         border: none;
-        border-radius: 4px;
-        background: #3366cc;
+        border-radius: 8px;
+        background: var(--accent);
         color: white;
       }
       button:active {
         transform: translateY(1px);
       }
-      @media (prefers-color-scheme: dark) {
-        fieldset {
-          border-color: rgba(255, 255, 255, 0.2);
+      .input-with-action {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin-top: 0.35rem;
+      }
+      .input-with-action input {
+        margin-top: 0;
+        flex: 1;
+      }
+      .clear-model-button {
+        flex: 0 0 auto;
+        width: var(--control-height);
+        height: var(--control-height);
+        margin-top: 0;
+        padding: 0;
+        font-weight: 700;
+        font-size: 1.05rem;
+        line-height: 1;
+        border-radius: 8px;
+        background: #2b6cb5;
+      }
+      input[list]::-webkit-calendar-picker-indicator {
+        display: none;
+      }
+      .command-panel {
+        position: sticky;
+        top: 1rem;
+        border: 1px solid #bdd4ec;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 12px 24px rgba(31, 102, 177, 0.12);
+      }
+      .command-panel h2 {
+        margin: 0 0 0.35rem;
+      }
+      .panel-note {
+        margin: 0 0 0.8rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      code {
+        font-weight: bolder;
+      }
+      .command-preview {
+        min-height: 160px;
+      }
+      .cmd-token {
+        word-break: break-word;
+      }
+      .cmd-space {
+        white-space: pre;
+      }
+      .cmd-bin {
+        color: var(--binary);
+        font-weight: 700;
+      }
+      .cmd-script {
+        color: var(--script);
+        font-weight: 600;
+      }
+      .cmd-flag {
+        color: var(--flag);
+        font-weight: 700;
+      }
+      .cmd-value {
+        color: var(--value);
+      }
+      .cmd-plain {
+        color: var(--ink);
+      }
+      .command-actions {
+        display: flex;
+        gap: 0.6rem;
+      }
+      .cli-help {
+        margin-top: 1rem;
+      }
+      .cli-help summary {
+        cursor: pointer;
+        font-weight: 700;
+      }
+      @media (max-width: 1060px) {
+        .page {
+          grid-template-columns: 1fr;
         }
-        pre {
-          background: rgba(255, 255, 255, 0.08);
-        }
-        button {
-          background: #4977ff;
-        }
-        .hint {
-          color: rgba(255, 255, 255, 0.75);
+        .command-panel {
+          position: static;
+          order: -1;
         }
       }
     </style>
   </head>
   <body>
-    <h1>LLM Linguistic Classification Benchmark Agent</h1>
-    <p>
-      Configure the benchmarking run below. The generated command reflects your selections and can be pasted into a terminal.
-    </p>
+    <div class="page">
+      <main class="main-column">
+        <header class="page-header">
+          <h1>LLM Linguistic Classification Benchmark Agent</h1>
+          <p class="subtitle">
+            Required inputs are highlighted first. Optional and advanced controls are collapsed to reduce visual clutter.
+          </p>
+        </header>
 
-    <form id="config-form">
-      <fieldset>
-        <legend>Model Settings</legend>
-        <p>
-          API credentials default to values stored in <code>.env</code>. Override the variable names
-          below only if you need to use a different key or endpoint for this run.
-        </p>
-        <p>
-          Refresh models/providers by first running <code>benchmark_agent.py --update-models</code>, then clicking
-          <strong>Refresh Model List</strong> below.
-        </p>
-        <label class="inline">
-          <span>(Optional) load .env to auto-detect provider credential variable names.</span>
-          <input type="file" id="env-file-input" accept=".env,text/plain" />
-        </label>
-        <label class="inline">
-          <button type="button" id="refresh-models-button">Refresh Model List</button>
-          <span id="refresh-models-status" class="hint"></span>
-        </label>
-        <div class="grid">
-          <label
-            >Model Name
-            <input
-              type="text"
-              id="model"
-              name="model"
-              placeholder="gpt-4o-mini"
-              list="model-options"
-              required
-            />
-            <span class="hint">
-              Run <code>python benchmark_agent.py --update-models</code> to refresh model lists of providers from your
-              <code>.env</code> configuration.
-            </span>
-            <datalist id="model-options"></datalist>
-            <span class="hint" id="model-catalog-meta"></span>
-          </label>
-          <label
-            >Provider
-            <select id="provider" name="provider">
-              <option value="openai" selected>OpenAI-Compatible</option>
-              <option value="anthropic">Anthropic (OpenAI proxy)</option>
-              <option value="cohere">Cohere (OpenAI proxy)</option>
-              <option value="google">Google (OpenAI proxy)</option>
-              <option value="huggingface">Hugging Face (OpenAI proxy)</option>
-              <option value="e-infra">E-INFRA (OpenAI proxy)</option>
-            </select>
-          </label>
-          <label
-            >Temperature
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="2"
-              id="temperature"
-              name="temperature"
-              placeholder="(optional)"
-            />
-          </label>
-          <label
-            >Top-p
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              id="top_p"
-              name="top_p"
-              placeholder="(optional)"
-            />
-          </label>
-          <label
-            >Top-k
-            <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
-          </label>
-          <label
-            >Request Interval (ms)
-            <input
-              type="number"
-              min="0"
-              step="1"
-              id="request_interval_ms"
-              name="request_interval_ms"
-              value="0"
-            />
-          </label>
-          <label
-            >Service Tier
-            <select id="service_tier" name="service_tier">
-              <option value="standard" selected>Standard</option>
-              <option value="flex">Flex</option>
-              <option value="priority">Priority</option>
-            </select>
-          </label>
-          <label
-            >Few-shot Examples
-            <input
-              type="number"
-              min="0"
-              id="few_shot_examples"
-              name="few_shot_examples"
-              value="0"
-            />
-          </label>
-          <label
-            >API Key Environment Variable
-            <span>
-              Leave blank to use the provider default from <code>.env</code>, or specify a custom
-              variable name.
-            </span>
-            <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
-          </label>
-          <label
-            >API Base URL Environment Variable
-            <span>
-              Leave blank to use the provider default from <code>.env</code>, or point to a custom
-              endpoint variable.
-            </span>
-            <input
-              type="text"
-              id="api_base_var"
-              name="api_base_var"
-              placeholder="OPENAI_BASE_URL"
-            />
-          </label>
-        </div>
-      </fieldset>
+        <form id="config-form">
+          <fieldset class="required-card">
+            <legend>Core Setup</legend>
+            <p class="section-lead">Set these first to build a runnable command.</p>
+            <div class="tool-row">
+              <div class="catalog-controls">
+                <button type="button" id="refresh-models-button">Refresh Model List</button>
+                <span class="hint">Run <code>python benchmark_agent.py --update-models</code> first, then refresh here.</span>
+                <span class="hint" id="model-catalog-meta"></span>
+                <span id="refresh-models-status" class="hint"></span>
+              </div>
+            </div>
+            <div class="grid">
+              <label class="required-field"
+                >Input CSV Path(s)
+                <textarea
+                  id="input_path"
+                  name="input_path"
+                  placeholder="data/examples.csv&#10;data/examples_2.csv"
+                  required
+                ></textarea>
+                <span class="hint">Provide one path per line.</span>
+              </label>
+              <label class="required-field"
+                >Model Name
+                <div class="input-with-action">
+                  <input
+                    type="text"
+                    id="model"
+                    name="model"
+                    placeholder="gpt-4o-mini"
+                    list="model-options"
+                    required
+                  />
+                  <button type="button" id="model-clear-button" class="clear-model-button">x</button>
+                </div>
+                <datalist id="model-options"></datalist>
+              </label>
+              <label class="required-field"
+                >Provider
+                <select id="provider" name="provider">
+                  <option value="openai" selected>OpenAI-Compatible</option>
+                  <option value="anthropic">Anthropic (OpenAI proxy)</option>
+                  <option value="cohere">Cohere (OpenAI proxy)</option>
+                  <option value="google">Google (OpenAI proxy)</option>
+                  <option value="huggingface">Hugging Face (OpenAI proxy)</option>
+                  <option value="e-infra">E-INFRA (OpenAI proxy)</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
 
-      <fieldset>
-        <legend>Prompt Behavior</legend>
-        <label class="inline">
-          <input type="checkbox" id="enable_cot" name="enable_cot" />
-          <span>Enable chain-of-thought reasoning</span>
-        </label>
-        <label class="inline">
-          <input type="checkbox" id="include_explanations" name="include_explanations" checked />
-          <span>Include explanations in model outputs</span>
-        </label>
-        <label
-          >System Prompt
-          <span class="hint">Instructions containing newlines are auto-encoded (base64) in the generated command.</span>
-          <textarea
-            id="system_prompt"
-            name="system_prompt"
-            placeholder="You are a linguistic classifier that excels at semantic disambiguation."
-          ></textarea>
-        </label>
-      </fieldset>
+          <fieldset>
+            <legend>Prompt Behavior</legend>
+            <label
+              >System Prompt
+              <span class="hint">Only this field may be base64-encoded in the generated command when multi-line text is used.</span>
+              <textarea
+                id="system_prompt"
+                name="system_prompt"
+                placeholder="You are a linguistic classifier that excels at semantic disambiguation."
+              ></textarea>
+            </label>
+            <div class="grid compact">
+              <label class="inline">
+                <input type="checkbox" id="enable_cot" name="enable_cot" />
+                <span>Enable chain-of-thought reasoning</span>
+              </label>
+              <label class="inline">
+                <input type="checkbox" id="include_explanations" name="include_explanations" checked />
+                <span>Include explanations in model outputs</span>
+              </label>
+            </div>
+          </fieldset>
 
-      <fieldset>
-        <legend>Input &amp; Output</legend>
-        <div class="grid">
-          <label
-            >Input CSV Path(s)
-            <span>Provide one path per line.</span>
-            <textarea
-              id="input_path"
-              name="input_path"
-              placeholder="data/examples.csv&#10;data/examples_2.csv"
-              required
-            ></textarea>
-          </label>
-          <label
-            >Labels CSV Path
-            <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
-          </label>
-          <label
-            >Output CSV Path (optional)
-            <span>Provide a directory when batching multiple files.</span>
-            <input
-              type="text"
-              id="output_path"
-              name="output_path"
-              placeholder="results/"
-            />
-          </label>
-        </div>
-        <label class="inline">
-          <input type="checkbox" id="calibration" name="calibration" />
-          <span>Enable calibration plot</span>
-        </label>
-      </fieldset>
+          <fieldset>
+            <legend>Optional Runtime Controls</legend>
+            <details class="optional-group">
+              <summary>Sampling, pacing, and service options</summary>
+              <div class="grid">
+                <label
+                  >Temperature
+                  <input type="number" step="0.01" min="0" max="2" id="temperature" name="temperature" placeholder="(optional)" />
+                </label>
+                <label
+                  >Top-p
+                  <input type="number" step="0.01" min="0" max="1" id="top_p" name="top_p" placeholder="(optional)" />
+                </label>
+                <label
+                  >Top-k
+                  <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
+                </label>
+                <label
+                  >Request Interval (ms)
+                  <input type="number" min="0" step="1" id="request_interval_ms" name="request_interval_ms" value="0" />
+                </label>
+                <label
+                  >OpenAI Service Tier
+                  <select id="service_tier" name="service_tier">
+                    <option value="standard" selected>Standard</option>
+                    <option value="flex">Flex</option>
+                    <option value="priority">Priority</option>
+                  </select>
+                </label>
+                <label
+                  >Few-shot Examples
+                  <input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" />
+                </label>
+              </div>
+            </details>
 
-      <fieldset>
-        <legend>Advanced: Validator</legend>
-        <p>
-          Optional post-validation hook for tasks with very large label spaces (e.g., lemmatization). When enabled,
-          the agent will call an external NDJSON validator which can accept, normalize, or request retries with
-          a small candidate list.
-        </p>
-        <label class="inline">
-          <input type="checkbox" id="validator_enable" name="validator_enable" />
-          <span>Enable validator</span>
-        </label>
-        <div class="grid">
-          <label
-            >Validator command
-            <span class="hint">Executable path or a <code>.py</code> script (will run via the current Python).</span>
-            <input
-              type="text"
-              id="validator_cmd"
-              name="validator_cmd"
-              placeholder="validators/lemmatization_validator.py"
-            />
-          </label>
-          <label
-            >Validator args
-            <span class="hint">Single string passed to <code>--validator_args</code> (supports quoting).</span>
-            <input
-              type="text"
-              id="validator_args"
-              name="validator_args"
-              placeholder="--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30"
-            />
-          </label>
-          <label
-            >Validator timeout (s)
-            <input
-              type="number"
-              step="0.1"
-              min="0.1"
-              id="validator_timeout"
-              name="validator_timeout"
-              value="5.0"
-            />
-          </label>
-          <label
-            >Max candidates
-            <input
-              type="number"
-              min="1"
-              id="validator_prompt_max_candidates"
-              name="validator_prompt_max_candidates"
-              value="50"
-            />
-          </label>
-          <label
-            >Max retry prompt chars
-            <input
-              type="number"
-              min="100"
-              id="validator_prompt_max_chars"
-              name="validator_prompt_max_chars"
-              value="8000"
-            />
-          </label>
-          <label
-            >Exhausted policy
-            <select id="validator_exhausted_policy" name="validator_exhausted_policy">
-              <option value="accept_blank_confidence" selected>Accept, blank confidence</option>
-              <option value="unclassified">Force unclassified</option>
-              <option value="error">Abort run</option>
-            </select>
-          </label>
-        </div>
-        <label class="inline">
-          <input type="checkbox" id="validator_debug" name="validator_debug" />
-          <span>Debug validator traffic (requires DEBUG log level)</span>
-        </label>
-      </fieldset>
-    </form>
+            <details class="optional-group">
+              <summary>Input/output extras and credentials</summary>
+              <div class="grid">
+                <label
+                  >Labels CSV Path
+                  <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
+                </label>
+                <label
+                  >Output CSV Path
+                  <input type="text" id="output_path" name="output_path" placeholder="results/" />
+                  <span class="hint">Provide a directory when batching multiple files.</span>
+                </label>
+                <label
+                  >API Key Environment Variable
+                  <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
+                  <span class="hint">Leave blank to use the provider default.</span>
+                </label>
+                <label
+                  >API Base URL Environment Variable
+                  <input type="text" id="api_base_var" name="api_base_var" placeholder="OPENAI_BASE_URL" />
+                  <span class="hint">Leave blank to use the provider default endpoint variable.</span>
+                </label>
+              </div>
+              <label class="inline">
+                <input type="checkbox" id="calibration" name="calibration" />
+                <span>Enable calibration plot</span>
+              </label>
+            </details>
+          </fieldset>
 
-    <h2>Generated Command</h2>
-    <pre id="command-output">python benchmark_agent.py --input "" --model ""</pre>
-    <button type="button" id="copy-button">Copy Command</button>
+          <fieldset>
+            <legend>Advanced Validator (Optional)</legend>
+            <details class="optional-group">
+              <summary>Configure external validator and retry behavior</summary>
+              <p class="section-lead">
+                Useful for very large label spaces. The validator can accept, normalize, or request retries with a smaller candidate set.
+              </p>
+              <label class="inline">
+                <input type="checkbox" id="validator_enable" name="validator_enable" />
+                <span>Enable validator</span>
+              </label>
+              <div class="grid">
+                <label
+                  >Validator command
+                  <span class="hint">Executable path or a <code>.py</code> script (runs via current Python).</span>
+                  <input type="text" id="validator_cmd" name="validator_cmd" placeholder="validators/lemmatization_validator.py" />
+                </label>
+                <label
+                  >Validator args
+                  <span class="hint">Single string passed to <code>--validator_args</code> (supports quoting).</span>
+                  <input
+                    type="text"
+                    id="validator_args"
+                    name="validator_args"
+                    placeholder="--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30"
+                  />
+                </label>
+                <label
+                  >Validator timeout (s)
+                  <input type="number" step="0.1" min="0.1" id="validator_timeout" name="validator_timeout" value="5.0" />
+                </label>
+                <label
+                  >Max candidates
+                  <input type="number" min="1" id="validator_prompt_max_candidates" name="validator_prompt_max_candidates" value="50" />
+                </label>
+                <label
+                  >Max retry prompt chars
+                  <input type="number" min="100" id="validator_prompt_max_chars" name="validator_prompt_max_chars" value="8000" />
+                </label>
+                <label
+                  >Exhausted policy
+                  <select id="validator_exhausted_policy" name="validator_exhausted_policy">
+                    <option value="accept_blank_confidence" selected>Accept, blank confidence</option>
+                    <option value="unclassified">Force unclassified</option>
+                    <option value="error">Abort run</option>
+                  </select>
+                </label>
+              </div>
+              <label class="inline">
+                <input type="checkbox" id="validator_debug" name="validator_debug" />
+                <span>Debug validator traffic (requires DEBUG log level)</span>
+              </label>
+            </details>
+          </fieldset>
+        </form>
 
-    <h2>CLI Help</h2>
-    <p>
-      Full output of <code>python benchmark_agent.py --help</code> for quick reference.
-    </p>
-    <pre>
-usage: benchmark_agent.py [-h] --input INPUT [INPUT ...] [--labels LABELS]
-                          [--output OUTPUT] --model MODEL
+        <details class="cli-help">
+          <summary>CLI Help Reference</summary>
+          <p class="hint">
+            For the full current reference, run <code>python benchmark_agent.py --help</code> in your terminal.
+          </p>
+          <pre>usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
+                          [--output OUTPUT] [--model MODEL]
                           [--temperature TEMPERATURE] [--top_p TOP_P]
                           [--top_k TOP_K]
                           [--service_tier {standard,flex,priority}]
-                          [--provider {anthropic,cohere,e-infra,google,huggingface,openai}]
-                          [--system_prompt SYSTEM_PROMPT]
+                          [--provider PROVIDER]
+                          [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
                           [--enable_cot] [--no_explanation] [--calibration]
                           [--api_key_var API_KEY_VAR]
@@ -393,7 +563,15 @@ usage: benchmark_agent.py [-h] --input INPUT [INPUT ...] [--labels LABELS]
                           [--max_retries MAX_RETRIES]
                           [--retry_delay RETRY_DELAY]
                           [--request_interval_ms REQUEST_INTERVAL_MS]
-                          [--log_level LOG_LEVEL]
+                          [--validator_cmd VALIDATOR_CMD]
+                          [--validator_args VALIDATOR_ARGS]
+                          [--validator_timeout VALIDATOR_TIMEOUT]
+                          [--validator_prompt_max_candidates VALIDATOR_PROMPT_MAX_CANDIDATES]
+                          [--validator_prompt_max_chars VALIDATOR_PROMPT_MAX_CHARS]
+                          [--validator_exhausted_policy {accept_blank_confidence,unclassified,error}]
+                          [--validator_debug] [--log_level LOG_LEVEL]
+                          [--update-models] [--models-output MODELS_OUTPUT]
+                          [--models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]]
 
 Benchmark an OpenAI model on a linguistic classification dataset.
 
@@ -405,21 +583,29 @@ options:
                         labels (ID;truth).
   --output OUTPUT       Optional output CSV path or directory. When omitted,
                         defaults to &lt;input&gt;_out_&lt;model&gt;_&lt;timestamp&gt;.csv
-                        alongside each input file.
+                        alongside each input file. If the resolved output CSV
+                        already exists, the run resumes from the first ID not
+                        present in that file.
   --model MODEL         Model name (e.g., gpt-4-turbo).
   --temperature TEMPERATURE
-                        Sampling temperature.
-  --top_p TOP_P         Nucleus sampling parameter.
+                        Sampling temperature. Omit to let the provider/model
+                        use its default.
+  --top_p TOP_P         Nucleus sampling parameter. Omit to let the
+                        provider/model use its default.
   --top_k TOP_K         Top-k sampling (ignored for APIs that do not support
                         it).
   --service_tier {standard,flex,priority}
                         Optional service-tier hint for providers that support
                         differentiated throughput.
-  --provider {anthropic,cohere,e-infra,google,huggingface,openai}
-                        Model provider identifier used to look up default
-                        credentials.
+  --provider PROVIDER   Model provider identifier used to look up default
+                        credentials. Known providers are preconfigured; custom
+                        providers are inferred from &lt;PROVIDER&gt;_API_KEY and
+                        &lt;PROVIDER&gt;_BASE_URL.
   --system_prompt SYSTEM_PROMPT
                         System prompt injected into the chat completion.
+  --system_prompt_b64 SYSTEM_PROMPT_B64
+                        Base64-encoded system prompt (used by the GUI to
+                        ensure cross-platform commands).
   --few_shot_examples FEW_SHOT_EXAMPLES
                         Number of labeled examples to prepend as few-shot
                         demonstrations.
@@ -440,15 +626,66 @@ options:
                         Delay (seconds) between API retries.
   --request_interval_ms REQUEST_INTERVAL_MS
                         Minimum delay in milliseconds between outgoing API
-                        requests.
+                        requests. Use 0 to disable request pacing.
+  --validator_cmd VALIDATOR_CMD
+                        Optional path to an NDJSON validator
+                        executable/script. When provided, the agent will
+                        validate each prediction and may retry with extra
+                        constraints. If the path ends with .py it will be run
+                        via the current Python interpreter.
+  --validator_args VALIDATOR_ARGS
+                        Optional extra arguments passed to the validator
+                        command as a single string (supports quoting).
+                        Example: "--lexicon data/lemmas.txt --max_distance 2".
+  --validator_timeout VALIDATOR_TIMEOUT
+                        Timeout (seconds) for each validator request/response
+                        roundtrip.
+  --validator_prompt_max_candidates VALIDATOR_PROMPT_MAX_CANDIDATES
+                        Maximum number of allowed_labels candidates rendered
+                        into a validator retry prompt.
+  --validator_prompt_max_chars VALIDATOR_PROMPT_MAX_CHARS
+                        Maximum character length of the validator retry
+                        instruction appended to the prompt.
+  --validator_exhausted_policy {accept_blank_confidence,unclassified,error}
+                        What to do when the validator keeps requesting retry
+                        but --max_retries is exhausted.
+                        accept_blank_confidence keeps the last label but
+                        blanks confidence; unclassified forces label to
+                        "unclassified"; error aborts the run.
+  --validator_debug     Log validator NDJSON send/receive payloads at DEBUG
+                        level.
   --log_level LOG_LEVEL
                         Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-    </pre>
+  --update-models, -updatemodels
+                        If set, fetch available models for configured
+                        providers and update config_models.js.
+  --models-output MODELS_OUTPUT
+                        Output path for generated model catalog JS when
+                        --update-models is used.
+  --models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]
+                        Optional list of provider slugs to update when
+                        --update-models is specified. Custom slugs are
+                        allowed; env vars are inferred as &lt;SLUG&gt;_API_KEY and
+                        &lt;SLUG&gt;_BASE_URL.
+
+Tip: this GUI is a command builder. You can still edit any generated CLI flag manually before running.</pre>
+        </details>
+      </main>
+
+      <aside class="command-panel">
+        <h2>Live Command</h2>
+        <p class="panel-note">Updates as you edit fields. Flags and values are color-coded for quick scanning.</p>
+        <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
+        <div class="command-actions">
+          <button type="button" id="copy-button">Copy Command</button>
+        </div>
+      </aside>
+    </div>
 
     <script src="config_models.js"></script>
     <script>
-      let envData = null;
       let isInitializing = true;
+      let latestCommandText = 'python benchmark_agent.py --input "" --model ""';
 
       const STORAGE_KEY = "benchmarkAgentConfig.v1";
 
@@ -458,10 +695,10 @@ options:
       const providerSelect = document.getElementById("provider");
       const apiKeyVarInput = document.getElementById("api_key_var");
       const apiBaseVarInput = document.getElementById("api_base_var");
-      const envFileInput = document.getElementById("env-file-input");
       const refreshModelsButton = document.getElementById("refresh-models-button");
       const refreshModelsStatus = document.getElementById("refresh-models-status");
       const modelInput = document.getElementById("model");
+      const modelClearButton = document.getElementById("model-clear-button");
       const modelList = document.getElementById("model-options");
       const modelCatalogMeta = document.getElementById("model-catalog-meta");
       let modelCatalog =
@@ -516,6 +753,33 @@ options:
         huggingface: "Hugging Face (OpenAI proxy)",
         "e-infra": "E-INFRA (OpenAI proxy)",
       };
+      const inputHelpTextById = {
+        input_path: "One or more CSV input files. Use one path per line.",
+        model: "Model identifier. Click and pick from cached models or type your own model id.",
+        provider: "Provider slug used by --provider. Refresh updates this list from config_models.js.",
+        system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
+        enable_cot: "Adds chain-of-thought style prompt instructions.",
+        include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
+        temperature: "Optional temperature sampling value. Leave blank to omit this parameter.",
+        top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
+        top_k: "Optional top-k sampling parameter, if your provider supports it.",
+        request_interval_ms: "Minimum delay in milliseconds between API requests.",
+        service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
+        few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
+        labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
+        output_path: "Output CSV file path, or output directory when running multiple inputs.",
+        api_key_var: "Environment variable that stores the API key used for this run.",
+        api_base_var: "Environment variable containing the provider base URL.",
+        calibration: "Generate calibration outputs in addition to regular metrics.",
+        validator_enable: "Enable external validator roundtrip and retry logic.",
+        validator_cmd: "Executable or .py script path used for label validation.",
+        validator_args: "Raw argument string passed to validator via --validator_args.",
+        validator_timeout: "Timeout in seconds for each validator invocation.",
+        validator_prompt_max_candidates: "Max candidate labels shown in validator retry prompts.",
+        validator_prompt_max_chars: "Hard cap for validator retry prompt character length.",
+        validator_exhausted_policy: "Action when validator retries are exhausted.",
+        validator_debug: "Emit verbose validator payload logging (DEBUG mode).",
+      };
 
       function getWindowModelCatalog() {
         return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
@@ -546,6 +810,31 @@ options:
         }
         const escaped = stringValue.replace(/'/g, "'\"'\"'");
         return "'" + escaped + "'";
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function classifyCommandToken(token, index, tokens) {
+        if (index === 0) return "cmd-bin";
+        if (index === 1) return "cmd-script";
+        if (token.startsWith("--")) return "cmd-flag";
+        const prev = tokens[index - 1] || "";
+        if (prev.startsWith("--")) return "cmd-value";
+        return "cmd-plain";
+      }
+
+      function renderCommandTokens(tokens) {
+        return tokens
+          .map((token, index) => {
+            const cls = classifyCommandToken(token, index, tokens);
+            return `<span class="cmd-token ${cls}">${escapeHtml(token)}</span>`;
+          })
+          .join('<span class="cmd-space"> </span>');
       }
 
       function encodeSystemPromptForCli(value) {
@@ -742,8 +1031,8 @@ options:
           }
         }
 
-        const command = args.join(" ");
-        commandOutput.textContent = command;
+        latestCommandText = args.join(" ");
+        commandOutput.innerHTML = renderCommandTokens(args);
       }
 
       function ensureProviderRegistered(slug, labelHint) {
@@ -880,6 +1169,34 @@ options:
         }
       }
 
+      function applyInputHoverHelp() {
+        Array.from(form.elements).forEach((element) => {
+          if (!element || !(element instanceof HTMLElement)) {
+            return;
+          }
+          if (element.type === "file") {
+            return;
+          }
+          const mapped =
+            (element.id && inputHelpTextById[element.id]) ||
+            (element.name && inputHelpTextById[element.name]) ||
+            "";
+          if (mapped) {
+            element.title = mapped;
+          }
+        });
+        if (refreshModelsButton) {
+          refreshModelsButton.title =
+            "Reload providers and model lists directly from config_models.js without reloading the page.";
+        }
+        if (copyButton) {
+          copyButton.title = "Copy the currently generated command line to clipboard.";
+        }
+        if (modelClearButton) {
+          modelClearButton.title = "Clear the model input field.";
+        }
+      }
+
       function saveConfig() {
         const config = {};
         Array.from(form.elements).forEach((element) => {
@@ -941,7 +1258,7 @@ options:
       }
 
       function copyCommand() {
-        const command = commandOutput.textContent;
+        const command = latestCommandText;
         navigator.clipboard
           .writeText(command)
           .then(() => {
@@ -958,77 +1275,10 @@ options:
           });
       }
 
-      function parseEnv(text) {
-        const envMap = {};
-        for (const line of text.split(/\r?\n/)) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
-            continue;
-          }
-          const [key, ...rest] = trimmed.split("=");
-          envMap[key.trim()] = rest.join("=").trim();
-        }
-        return envMap;
-      }
-
-      function addProvidersFromEnv(envMap) {
-        const pattern = /^([A-Z0-9][A-Z0-9_-]*)_API_KEY$/;
-        for (const key of Object.keys(envMap)) {
-          const match = key.match(pattern);
-          if (!match) continue;
-          const prefix = match[1];
-          const slug = prefix.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-          ensureProviderRegistered(slug, prefix);
-          providerDefaults[slug] = { apiKeyVar: key, apiBaseVar: `${prefix}_BASE_URL` };
-        }
-      }
-
-      function autoSelectProviderFromEnv() {
-        if (!envData) return;
-
-        let detected = null;
-        for (const [provider, vars] of Object.entries(providerDefaults)) {
-          const candidate = envData[vars.apiKeyVar];
-          if (candidate && candidate.length && !candidate.startsWith("your-")) {
-            detected = provider;
-            break;
-          }
-        }
-
-        if (detected && providerSelect.value !== detected) {
-          providerSelect.value = detected;
-          updatePlaceholdersForProvider(detected);
-          updateModelOptionsForProvider(detected);
-          buildCommand();
-        }
-      }
-
-      if (envFileInput) {
-        envFileInput.addEventListener("change", (event) => {
-          const file = event.target.files && event.target.files[0];
-          if (!file) {
-            envData = null;
-            updateModelOptionsForProvider(providerSelect.value);
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = (loadEvent) => {
-            const text = loadEvent.target?.result;
-            if (typeof text === "string") {
-              envData = parseEnv(text);
-              addProvidersFromEnv(envData);
-              autoSelectProviderFromEnv();
-              handleFormChange();
-              updateModelOptionsForProvider(providerSelect.value);
-            }
-          };
-          reader.readAsText(file);
-        });
-      }
-
       modelCatalog = getWindowModelCatalog();
       syncProvidersFromCatalog();
       loadConfig();
+      applyInputHoverHelp();
       updatePlaceholdersForProvider(providerSelect.value);
       updateModelOptionsForProvider(providerSelect.value);
 
@@ -1043,6 +1293,13 @@ options:
         updateModelOptionsForProvider(providerSelect.value);
         handleFormChange();
       });
+      if (modelClearButton) {
+        modelClearButton.addEventListener("click", () => {
+          modelInput.value = "";
+          modelInput.focus();
+          handleFormChange();
+        });
+      }
 
       isInitializing = false;
       handleFormChange();
