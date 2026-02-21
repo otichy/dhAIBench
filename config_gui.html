@@ -184,6 +184,17 @@
             <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
           </label>
           <label
+            >Request Interval (ms)
+            <input
+              type="number"
+              min="0"
+              step="1"
+              id="request_interval_ms"
+              name="request_interval_ms"
+              value="0"
+            />
+          </label>
+          <label
             >Service Tier
             <select id="service_tier" name="service_tier">
               <option value="standard" selected>Standard</option>
@@ -380,7 +391,9 @@ usage: benchmark_agent.py [-h] --input INPUT [INPUT ...] [--labels LABELS]
                           [--api_key_var API_KEY_VAR]
                           [--api_base_var API_BASE_VAR]
                           [--max_retries MAX_RETRIES]
-                          [--retry_delay RETRY_DELAY] [--log_level LOG_LEVEL]
+                          [--retry_delay RETRY_DELAY]
+                          [--request_interval_ms REQUEST_INTERVAL_MS]
+                          [--log_level LOG_LEVEL]
 
 Benchmark an OpenAI model on a linguistic classification dataset.
 
@@ -425,6 +438,9 @@ options:
                         errors.
   --retry_delay RETRY_DELAY
                         Delay (seconds) between API retries.
+  --request_interval_ms REQUEST_INTERVAL_MS
+                        Minimum delay in milliseconds between outgoing API
+                        requests.
   --log_level LOG_LEVEL
                         Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     </pre>
@@ -457,6 +473,7 @@ options:
         provider: "openai",
         temperature: "0.0",
         top_p: "1.0",
+        request_interval_ms: "0",
         few_shot_examples: "0",
         service_tier: "standard",
         include_explanations: true,
@@ -623,6 +640,11 @@ options:
         const topK = data.get("top_k")?.trim();
         if (topK) {
           args.push("--top_k", topK);
+        }
+
+        const requestIntervalMs = data.get("request_interval_ms")?.trim();
+        if (requestIntervalMs && requestIntervalMs !== defaultValues.request_interval_ms) {
+          args.push("--request_interval_ms", requestIntervalMs);
         }
 
         const serviceTier = data.get("service_tier");

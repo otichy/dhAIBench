@@ -855,11 +855,18 @@ def select_few_shot_examples(
 class OpenAIConnector:
     """Thin wrapper supporting both legacy and modern OpenAI Python SDKs."""
 
-    def __init__(self, api_key: str, base_url: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: Optional[str] = None,
+        request_interval_ms: int = 0,
+    ) -> None:
         self.client_type: str
         self._chat_incompatible_models: set[str] = set()
         self._chat_unsupported_params: Dict[str, set[str]] = {}
         self._responses_unsupported_params: Dict[str, set[str]] = {}
+        self._min_request_interval_seconds = max(0, request_interval_ms) / 1000.0
+        self._last_request_started_at: Optional[float] = None
         try:
             from openai import OpenAI
 
@@ -889,6 +896,23 @@ class OpenAIConnector:
                 raise RuntimeError(
                     "OpenAI Python SDK not installed. Install `openai` package."
                 ) from exc
+
+    def _throttle_request_if_needed(self) -> None:
+        """Sleep if needed to maintain minimum spacing between outgoing API requests."""
+        if self._min_request_interval_seconds <= 0:
+            return
+
+        now = time.perf_counter()
+        if self._last_request_started_at is not None:
+            elapsed = now - self._last_request_started_at
+            remaining = self._min_request_interval_seconds - elapsed
+            if remaining > 0:
+                logging.debug(
+                    "Rate limit pacing active; sleeping %.3fs before next API request.",
+                    remaining,
+                )
+                time.sleep(remaining)
+        self._last_request_started_at = time.perf_counter()
 
     def complete(
         self,
@@ -1083,6 +1107,7 @@ class OpenAIConnector:
 
             while True:
                 try:
+                    self._throttle_request_if_needed()
                     response = self._client.responses.create(**request_args)
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -1183,6 +1208,7 @@ class OpenAIConnector:
 
             while True:
                 try:
+                    self._throttle_request_if_needed()
                     response = self._client.chat.completions.create(**request_args)
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -1246,11 +1272,13 @@ class OpenAIConnector:
             }
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            self._throttle_request_if_needed()
             response = self._client.ChatCompletion.create(**request_args)
         except Exception as exc:  # noqa: BLE001
             warn_logprob_retry(exc)
             request_args.pop("logprobs", None)
             request_args.pop("top_logprobs", None)
+            self._throttle_request_if_needed()
             response = self._client.ChatCompletion.create(**request_args)
         content = response["choices"][0]["message"]["content"]
         usage = response.get("usage", {}) if isinstance(response, dict) else {}
@@ -2450,6 +2478,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Delay (seconds) between API retries.",
     )
     parser.add_argument(
+        "--request_interval_ms",
+        type=int,
+        default=0,
+        help=(
+            "Minimum delay in milliseconds between outgoing API requests. "
+            "Use 0 to disable request pacing."
+        ),
+    )
+    parser.add_argument(
         "--validator_cmd",
         default=None,
         help=(
@@ -2598,7 +2635,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not include_explanation:
         logging.info("Explanations disabled; model will only return labels and confidences.")
 
-    connector = OpenAIConnector(api_key=api_key, base_url=api_base_url)
+    connector = OpenAIConnector(
+        api_key=api_key,
+        base_url=api_base_url,
+        request_interval_ms=max(0, args.request_interval_ms),
+    )
 
     validator_client: Optional[ValidatorClient] = None
     if args.validator_cmd:

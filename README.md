@@ -57,6 +57,7 @@ python benchmark_agent.py ^
   --model gpt-4o-mini ^
   --temperature 0.0 ^
   --top_p 1.0 ^
+  --request_interval_ms 250 ^
   --system_prompt "You are a linguistic classifier..." ^
   --enable_cot ^
   --few_shot_examples 5 ^
@@ -147,6 +148,7 @@ python benchmark_agent.py ^
 
 ### Relevant CLI flags
 
+- `--request_interval_ms`: minimum delay between outgoing API requests in milliseconds (0 disables pacing).
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
 - `--validator_timeout`: per-request validator timeout (seconds).
@@ -171,6 +173,7 @@ Logs streamed to stdout include prompt snapshots, raw responses, retries, and ag
 ## Tips
 
 - Increase `--max_retries` or `--retry_delay` if your provider rate-limits requests.
+- Use `--request_interval_ms` (for example `200` to `1000`) to proactively pace requests and reduce 429 bursts.
 - Use `--no_explanation` to reduce token usage when explanations are unnecessary.
 - Few-shot examples are drawn from the start of the dataset; place high-quality labeled instances there to guide the model.
 - When targeting non-OpenAI services, ensure the endpoint is API-compatible and provide the correct base URL via `.env` or `--api_base_var`.
