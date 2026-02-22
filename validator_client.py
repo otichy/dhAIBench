@@ -29,6 +29,7 @@ class ValidatorRunInfo:
     reasoning_effort: Optional[str]
     thinking_level: Optional[str]
     effort: Optional[str]
+    verbosity: Optional[str]
     max_retries: int
 
 
@@ -102,6 +103,7 @@ class ValidatorClient:
                 "reasoning_effort": run_info.reasoning_effort,
                 "thinking_level": run_info.thinking_level,
                 "effort": run_info.effort,
+                "verbosity": run_info.verbosity,
                 "max_retries": run_info.max_retries,
             },
         }

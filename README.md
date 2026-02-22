@@ -3,7 +3,7 @@
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible model for each example, and scores the predictions against gold labels. A companion browser-based configurator helps compose the command-line invocation.
 
 - **End-to-end evaluation**: process one or many input CSVs, merge optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
-- **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, provider-specific reasoning/thinking effort levels, few-shot demonstrations, and custom system prompts.
+- **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, provider-specific reasoning/thinking effort and verbosity levels, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
 - **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
 - **Metadata preservation**: the optional `info` column feeds the model extra guidance, and any additional columns are carried through to the output file.
@@ -94,7 +94,8 @@ When `--output` points to an existing CSV file, the run resumes: rows whose `ID`
 
 Use provider-specific controls when you need tighter control over model "thinking" token budgets:
 
-- `--reasoning_effort {low,medium,high}` for GPT/OpenAI-style reasoning (`reasoning.effort` in the request payload).
+- `--reasoning_effort {low,medium,high,xhigh}` for GPT/OpenAI-style reasoning (`reasoning.effort` in the request payload).
+- `--verbosity {low,medium,high}` for GPT output detail (`verbosity` in Chat Completions, `text.verbosity` in Responses API).
 - `--thinking_level {low,medium,high}` for Gemini-style thinking (mapped to `reasoning_effort` on Gemini OpenAI-compatible targets).
 - `--effort {low,medium,high,max}` for Claude-style effort (`effort` in the request payload).
 
@@ -176,7 +177,7 @@ Running the agent creates:
 
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), and token usage statistics. Confidence is included when the model supplies a valid value; entries that violated the span contract omit it.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
-  The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, and `effort` controls when used.
+  The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, and `verbosity` controls when used.
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
 - A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.

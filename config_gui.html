@@ -458,6 +458,16 @@
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
+                    <option value="xhigh">XHigh</option>
+                  </select>
+                </label>
+                <label
+                  >GPT Verbosity
+                  <select id="verbosity" name="verbosity">
+                    <option value="" selected>(omit)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
                   </select>
                 </label>
                 <label
@@ -495,7 +505,7 @@
                 </label>
                 <label
                   >Output CSV Path
-                  <input type="text" id="output_path" name="output_path" placeholder="results/" />
+                  <input type="text" id="output_path" name="output_path" placeholder="data/output.csv" />
                   <span class="hint">Provide a directory when batching multiple files.</span>
                 </label>
                 <label
@@ -523,7 +533,7 @@
                   id="strict_control_acceptance"
                   name="strict_control_acceptance"
                 />
-                <span>Fail if thinking controls are rejected</span>
+                <span>Fail if request controls are rejected</span>
               </label>
             </details>
           </fieldset>
@@ -594,7 +604,8 @@
                           [--temperature TEMPERATURE] [--top_p TOP_P]
                           [--top_k TOP_K]
                           [--service_tier {standard,flex,priority}]
-                          [--reasoning_effort {low,medium,high}]
+                          [--verbosity {low,medium,high}]
+                          [--reasoning_effort {low,medium,high,xhigh}]
                           [--thinking_level {low,medium,high}]
                           [--effort {low,medium,high,max}]
                           [--strict_control_acceptance]
@@ -642,7 +653,11 @@ options:
   --service_tier {standard,flex,priority}
                         Optional service-tier hint for providers that support
                         differentiated throughput.
-  --reasoning_effort {low,medium,high}
+  --verbosity {low,medium,high}
+                        Optional output verbosity control for GPT models. Sent
+                        as verbosity (Chat Completions) or text.verbosity
+                        (Responses API).
+  --reasoning_effort {low,medium,high,xhigh}
                         Optional reasoning effort level. Sent as
                         reasoning.effort for OpenAI-style models and as
                         reasoning_effort for Gemini targets.
@@ -654,9 +669,8 @@ options:
                         Optional Claude effort level. Sent as effort when
                         provided.
   --strict_control_acceptance
-                        Fail an example when requested reasoning/thinking
-                        controls are rejected or not present in the final
-                        successful request payload.
+                        Fail an example when requested controls are rejected or
+                        not present in the final successful request payload.
   --provider PROVIDER   Model provider identifier used to look up default
                         credentials. Known providers are preconfigured; custom
                         providers are inferred from &lt;PROVIDER&gt;_API_KEY and
@@ -773,6 +787,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         provider: "openai",
         temperature: "",
         top_p: "",
+        verbosity: "",
         reasoning_effort: "",
         thinking_level: "",
         effort: "",
@@ -835,12 +850,14 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
         reasoning_effort:
-          "Reasoning effort level (low, medium, high). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
+          "Reasoning effort level (low, medium, high, xhigh). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
+        verbosity:
+          "GPT output verbosity level (low, medium, high). Maps to verbosity in Chat Completions and text.verbosity in Responses API.",
         thinking_level:
           "Gemini thinking level (low, medium, high). For Gemini targets this maps to reasoning_effort.",
         effort: "Claude effort control (low, medium, high, max). Adds --effort.",
         strict_control_acceptance:
-          "Abort examples where requested thinking controls are rejected or omitted from the final successful request.",
+          "Abort examples where requested controls are rejected or omitted from the final successful request.",
         few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
@@ -1028,6 +1045,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const reasoningEffort = data.get("reasoning_effort");
         if (reasoningEffort && reasoningEffort !== defaultValues.reasoning_effort) {
           args.push("--reasoning_effort", reasoningEffort);
+        }
+
+        const verbosity = data.get("verbosity");
+        if (verbosity && verbosity !== defaultValues.verbosity) {
+          args.push("--verbosity", verbosity);
         }
 
         const thinkingLevel = data.get("thinking_level");

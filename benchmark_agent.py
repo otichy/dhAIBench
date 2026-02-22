@@ -42,6 +42,7 @@ MANDATORY_SYSTEM_APPEND = (
     "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. "
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
+EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -162,8 +163,8 @@ def compute_request_control_summary(
     log_records: Iterable[Dict[str, Any]],
     configured_controls: Dict[str, Optional[str]],
 ) -> Dict[str, Any]:
-    """Aggregate reasoning/thinking control acceptance telemetry from prompt logs."""
-    control_keys = ("reasoning_effort", "thinking_level", "effort")
+    """Aggregate request-control acceptance telemetry from prompt logs."""
+    control_keys = ("reasoning_effort", "thinking_level", "effort", "verbosity")
     per_control: Dict[str, Dict[str, Any]] = {
         key: {
             "configured_value": configured_controls.get(key),
@@ -333,6 +334,20 @@ def is_quota_or_rate_limit_error(exc: BaseException) -> bool:
         "quota",
     )
     return any(marker in text for marker in indicators)
+
+
+def is_empty_model_response_error(exc: BaseException) -> bool:
+    """Best-effort detection for empty textual model responses."""
+    text = str(exc).strip().lower()
+    if not text:
+        return False
+    markers = (
+        "empty model response",
+        "empty response",
+        "response was empty",
+        "no output text",
+    )
+    return any(marker in text for marker in markers)
 
 
 def ensure_directory(path: str) -> None:
@@ -1094,6 +1109,7 @@ class OpenAIConnector:
         temperature: Optional[float],
         top_p: Optional[float],
         top_k: Optional[int],
+        verbosity: Optional[str],
         service_tier: Optional[str],
         include_logprobs: bool,
         reasoning_effort: Optional[str],
@@ -1116,6 +1132,8 @@ class OpenAIConnector:
             requested_controls["thinking_level"] = thinking_level
         if effort:
             requested_controls["effort"] = effort
+        if verbosity:
+            requested_controls["verbosity"] = verbosity
 
         def control_key_for_param(param_name: str) -> Optional[str]:
             if (
@@ -1131,6 +1149,8 @@ class OpenAIConnector:
                 "thinkingLevel": "thinking_level",
                 "thinking_level": "thinking_level",
                 "effort": "effort",
+                "verbosity": "verbosity",
+                "text_verbosity": "verbosity",
             }
             return mapping.get(param_name)
 
@@ -1151,6 +1171,8 @@ class OpenAIConnector:
                 "topp": "top_p",
                 "top_p": "top_p",
                 "temperature": "temperature",
+                "verbosity": "verbosity",
+                "text_verbosity": "verbosity",
                 "reasoning": "reasoning",
                 "reasoning_effort": "reasoning_effort",
                 "thinkinglevel": "thinkingLevel",
@@ -1263,6 +1285,9 @@ class OpenAIConnector:
             if "temperature" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "temperature"
+            if "verbosity" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "verbosity"
             if "reasoning_effort" in text or "reasoning effort" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "reasoning_effort"
@@ -1321,6 +1346,10 @@ class OpenAIConnector:
                 if "reasoning" in request_args:
                     request_args.pop("reasoning", None)
                     removed = True
+            if param_name == "verbosity":
+                if "verbosity" in request_args:
+                    request_args.pop("verbosity", None)
+                    removed = True
             if param_name in request_args:
                 request_args.pop(param_name, None)
                 removed = True
@@ -1346,6 +1375,17 @@ class OpenAIConnector:
                         removed = True
                 if not extra_body:
                     request_args.pop("extra_body", None)
+            text_payload = request_args.get("text")
+            if isinstance(text_payload, dict):
+                if param_name in {"verbosity", "text", "text_verbosity"}:
+                    if "verbosity" in text_payload:
+                        text_payload.pop("verbosity", None)
+                        removed = True
+                    if not text_payload:
+                        request_args.pop("text", None)
+            elif param_name == "text" and "text" in request_args:
+                request_args.pop("text", None)
+                removed = True
             return removed
 
         def collect_sent_controls(request_args: Dict[str, Any]) -> Dict[str, str]:
@@ -1370,6 +1410,9 @@ class OpenAIConnector:
             if request_args.get("effort") is not None:
                 sent["effort"] = str(request_args["effort"])
 
+            if request_args.get("verbosity") is not None:
+                sent["verbosity"] = str(request_args["verbosity"])
+
             extra_body = request_args.get("extra_body")
             if isinstance(extra_body, dict):
                 extra_reasoning = extra_body.get("reasoning")
@@ -1391,6 +1434,11 @@ class OpenAIConnector:
 
                 if extra_body.get("effort") is not None:
                     sent["effort"] = str(extra_body["effort"])
+
+            text_payload = request_args.get("text")
+            if isinstance(text_payload, dict):
+                if text_payload.get("verbosity") is not None:
+                    sent["verbosity"] = str(text_payload["verbosity"])
 
             return sent
 
@@ -1459,6 +1507,12 @@ class OpenAIConnector:
                 request_args["temperature"] = temperature
             if top_p is not None:
                 request_args["top_p"] = top_p
+            if verbosity:
+                text_payload = request_args.get("text")
+                if not isinstance(text_payload, dict):
+                    text_payload = {}
+                text_payload["verbosity"] = verbosity
+                request_args["text"] = text_payload
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             apply_reasoning_controls(request_args)
@@ -1568,6 +1622,8 @@ class OpenAIConnector:
                 request_args["temperature"] = temperature
             if top_p is not None:
                 request_args["top_p"] = top_p
+            if verbosity:
+                request_args["verbosity"] = verbosity
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             apply_reasoning_controls(request_args)
@@ -1645,6 +1701,9 @@ class OpenAIConnector:
                 request_args["temperature"] = temperature
             if top_p is not None:
                 request_args["top_p"] = top_p
+            if verbosity:
+                mark_control_rejected("verbosity", "legacy_sdk_ignored")
+                logging.debug("Verbosity control is ignored in legacy OpenAI SDK mode.")
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             if reasoning_effort or thinking_level or effort:
@@ -1832,8 +1891,12 @@ class ProviderQuotaExceededError(RuntimeError):
     """Raised when provider quota/rate limit is exhausted after retries."""
 
 
+class ProviderEmptyResponseError(RuntimeError):
+    """Raised when provider repeatedly returns empty model responses."""
+
+
 class RequestedControlRejectedError(RuntimeError):
-    """Raised when requested reasoning/thinking controls are rejected by the endpoint."""
+    """Raised when requested controls are rejected by the endpoint."""
 
 
 def compute_metrics(
@@ -2182,6 +2245,7 @@ def classify_example(
     temperature: Optional[float],
     top_p: Optional[float],
     top_k: Optional[int],
+    verbosity: Optional[str],
     service_tier: Optional[str],
     include_logprobs: bool,
     reasoning_effort: Optional[str],
@@ -2245,6 +2309,7 @@ def classify_example(
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
+                verbosity=verbosity,
                 service_tier=service_tier,
                 include_logprobs=include_logprobs,
                 reasoning_effort=reasoning_effort,
@@ -2264,7 +2329,7 @@ def classify_example(
             if result.request_controls_rejected:
                 rejection_reasons = set(result.request_controls_rejected.values())
                 log_message = (
-                    "Reasoning/thinking controls were rejected for example %s: %s "
+                    "Request controls were rejected for example %s: %s "
                     "(sent=%s)."
                 )
                 if rejection_reasons <= {"previously_rejected"}:
@@ -2288,7 +2353,7 @@ def classify_example(
                 missing_keys = sorted((requested_keys - sent_keys) | rejected_keys)
                 if missing_keys:
                     raise RequestedControlRejectedError(
-                        "Requested reasoning/thinking controls were not accepted: "
+                        "Requested controls were not accepted: "
                         f"{missing_keys}; rejected={result.request_controls_rejected}; "
                         f"sent={result.request_controls_sent}."
                     )
@@ -2528,6 +2593,7 @@ def classify_example(
             strict_control_error = (
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
             )
+            empty_response_error = is_empty_model_response_error(exc)
             if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
                 # Give the model deterministic feedback about why the previous output was rejected.
                 validator_patch_message = {
@@ -2553,7 +2619,15 @@ def classify_example(
             if strict_control_error:
                 break
             if attempt < max_retries:
-                time.sleep(retry_delay)
+                if empty_response_error:
+                    logging.warning(
+                        "Empty model response detected for example %s; waiting %.0f seconds before retry.",
+                        example.example_id,
+                        EMPTY_RESPONSE_RETRY_DELAY_SECONDS,
+                    )
+                    time.sleep(EMPTY_RESPONSE_RETRY_DELAY_SECONDS)
+                else:
+                    time.sleep(retry_delay)
 
     assert last_error is not None
     if isinstance(last_error, json.JSONDecodeError):
@@ -2582,6 +2656,12 @@ def classify_example(
         detail = str(last_error).strip() or last_error.__class__.__name__
         raise ProviderQuotaExceededError(
             f"Provider quota/rate limit exhausted for example {example.example_id}: {detail}"
+        ) from last_error
+    if is_empty_model_response_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        raise ProviderEmptyResponseError(
+            "Provider returned empty model responses after retries for "
+            f"example {example.example_id}: {detail}"
         ) from last_error
     if isinstance(last_error, RequestedControlRejectedError):
         raise last_error
@@ -2748,6 +2828,7 @@ def process_dataset(
                         temperature=args.temperature,
                         top_p=args.top_p,
                         top_k=args.top_k,
+                        verbosity=args.verbosity,
                         service_tier=args.service_tier,
                         include_logprobs=args.logprobs,
                         reasoning_effort=args.reasoning_effort,
@@ -2773,6 +2854,17 @@ def process_dataset(
                     )
                     logging.error(
                         "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                        "Partial outputs were saved and can be resumed later."
+                    )
+                    break
+                except ProviderEmptyResponseError as exc:
+                    halted_by_quota = True
+                    logging.error(
+                        "%s",
+                        exc,
+                    )
+                    logging.error(
+                        "Stopping dataset early due to repeated empty model responses. "
                         "Partial outputs were saved and can be resumed later."
                     )
                     break
@@ -2872,6 +2964,7 @@ def process_dataset(
         "reasoning_effort": args.reasoning_effort,
         "thinking_level": args.thinking_level,
         "effort": args.effort,
+        "verbosity": args.verbosity,
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
 
@@ -2992,8 +3085,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional service-tier hint for providers that support differentiated throughput.",
     )
     parser.add_argument(
-        "--reasoning_effort",
+        "--verbosity",
         choices=["low", "medium", "high"],
+        default=None,
+        help=(
+            "Optional output verbosity control for GPT models. "
+            "Sent as verbosity (Chat Completions) or text.verbosity (Responses API)."
+        ),
+    )
+    parser.add_argument(
+        "--reasoning_effort",
+        choices=["low", "medium", "high", "xhigh"],
         default=None,
         help=(
             "Optional reasoning effort level. "
@@ -3022,7 +3124,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--strict_control_acceptance",
         action="store_true",
         help=(
-            "Fail an example when requested reasoning/thinking controls are rejected "
+            "Fail an example when requested controls are rejected "
             "or not present in the final successful request payload."
         ),
     )
@@ -3219,12 +3321,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         "reasoning_effort": args.reasoning_effort,
         "thinking_level": args.thinking_level,
         "effort": args.effort,
+        "verbosity": args.verbosity,
     }
     active_requested_controls = {
         key: value for key, value in requested_control_flags.items() if value is not None
     }
     if active_requested_controls:
-        logging.info("Requested reasoning/thinking controls: %s", active_requested_controls)
+        logging.info("Requested controls: %s", active_requested_controls)
         if args.strict_control_acceptance:
             logging.info(
                 "Strict control acceptance is enabled; runs will fail if requested controls are rejected."
@@ -3237,6 +3340,24 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Use only one because these controls overlap for Gemini APIs."
         )
         return 1
+    if provider == "openai" and args.reasoning_effort:
+        model_lower = str(args.model or "").strip().lower()
+        allowed_reasoning_for_model: Optional[set[str]] = None
+        if model_lower.startswith("gpt-5.2-pro"):
+            allowed_reasoning_for_model = {"medium", "high", "xhigh"}
+        elif model_lower.startswith("gpt-5-pro"):
+            allowed_reasoning_for_model = {"high"}
+        if (
+            allowed_reasoning_for_model is not None
+            and args.reasoning_effort not in allowed_reasoning_for_model
+        ):
+            logging.error(
+                "Model %s does not support --reasoning_effort=%s. Allowed values are: %s.",
+                args.model,
+                args.reasoning_effort,
+                ", ".join(sorted(allowed_reasoning_for_model)),
+            )
+            return 1
 
     api_key = resolve_env_value(args.api_key_var, env_map)
     if is_placeholder_value(api_key):
@@ -3309,6 +3430,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     reasoning_effort=args.reasoning_effort,
                     thinking_level=args.thinking_level,
                     effort=args.effort,
+                    verbosity=args.verbosity,
                     max_retries=args.max_retries,
                 )
             )
@@ -3347,13 +3469,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             if halted_by_quota:
                 stopped_by_quota = True
                 logging.error(
-                    "Stopping remaining input datasets because provider quota/rate limit was exhausted."
+                    "Stopping remaining input datasets because the provider reported a retry-exhausted failure."
                 )
                 break
     except RequestedControlRejectedError as exc:
         logging.error("%s", exc)
         logging.error(
-            "Run stopped because requested reasoning/thinking controls were rejected by the model endpoint."
+            "Run stopped because requested controls were rejected by the model endpoint."
         )
         return 2
     finally:
@@ -3378,7 +3500,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if stopped_by_quota:
         logging.error(
-            "Run ended early due to provider quota/rate-limit exhaustion. "
+            "Run ended early due to a provider-side retry-exhausted failure. "
             "Re-run later with the same --output path to resume."
         )
         return 2
