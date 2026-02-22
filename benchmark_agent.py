@@ -87,6 +87,77 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def parse_utc_timestamp(value: Any) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp into a timezone-aware UTC datetime."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def format_duration_human(total_seconds: float) -> str:
+    """Format duration in a compact human-readable form like '2h 03m 04s'."""
+    seconds_int = int(round(max(0.0, total_seconds)))
+    days, remainder = divmod(seconds_int, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s"
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
+
+
+def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute first/last prompt timestamps and elapsed seconds across prompt attempts."""
+    first_prompt: Optional[datetime] = None
+    last_prompt: Optional[datetime] = None
+
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        attempts = record.get("attempts")
+        if not isinstance(attempts, list):
+            continue
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempt_time = parse_utc_timestamp(attempt.get("timestamp"))
+            if attempt_time is None:
+                continue
+            if first_prompt is None or attempt_time < first_prompt:
+                first_prompt = attempt_time
+            if last_prompt is None or attempt_time > last_prompt:
+                last_prompt = attempt_time
+
+    if first_prompt is None or last_prompt is None:
+        return {
+            "first_prompt_timestamp": None,
+            "last_prompt_timestamp": None,
+            "overall_time_seconds": None,
+            "overall_time_human": None,
+        }
+
+    elapsed_seconds = max(0.0, (last_prompt - first_prompt).total_seconds())
+    return {
+        "first_prompt_timestamp": first_prompt.isoformat().replace("+00:00", "Z"),
+        "last_prompt_timestamp": last_prompt.isoformat().replace("+00:00", "Z"),
+        "overall_time_seconds": elapsed_seconds,
+        "overall_time_human": format_duration_human(elapsed_seconds),
+    }
+
+
 def is_placeholder_value(value: Optional[str]) -> bool:
     """Return True if a value looks like an unresolved placeholder token."""
     if value is None:
@@ -2431,12 +2502,22 @@ def process_dataset(
         correctness.append(prediction.label == example.truth)
         confidences.append(prediction.confidence)
 
+    prompt_time_window = compute_prompt_time_window(log_records)
+
     metrics: Dict[str, Any] = {}
     if evaluated_truths:
         metrics = compute_metrics(evaluated_truths, evaluated_preds)
+        metrics.update(prompt_time_window)
         with open(metrics_output, "w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
         logging.info("Saved metrics to %s", metrics_output)
+        if metrics.get("overall_time_seconds") is not None:
+            logging.info(
+                "Prompt window runtime: %.2f seconds (%s -> %s)",
+                metrics["overall_time_seconds"],
+                metrics["first_prompt_timestamp"],
+                metrics["last_prompt_timestamp"],
+            )
         confusion = metrics.get("confusion_matrix")
         labels = metrics.get("labels", [])
         if confusion:
