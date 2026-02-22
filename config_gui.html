@@ -446,7 +446,7 @@
                 <label
                   >OpenAI Service Tier
                   <select id="service_tier" name="service_tier">
-                    <option value="standard" selected>Standard</option>
+                    <option value="standard" selected>Standard (omit)</option>
                     <option value="flex">Flex</option>
                     <option value="priority">Priority</option>
                   </select>
@@ -512,6 +512,18 @@
               <label class="inline">
                 <input type="checkbox" id="calibration" name="calibration" />
                 <span>Enable calibration plot</span>
+              </label>
+              <label class="inline">
+                <input type="checkbox" id="logprobs" name="logprobs" checked />
+                <span>Request token logprobs</span>
+              </label>
+              <label class="inline">
+                <input
+                  type="checkbox"
+                  id="strict_control_acceptance"
+                  name="strict_control_acceptance"
+                />
+                <span>Fail if thinking controls are rejected</span>
               </label>
             </details>
           </fieldset>
@@ -585,10 +597,12 @@
                           [--reasoning_effort {low,medium,high}]
                           [--thinking_level {low,medium,high}]
                           [--effort {low,medium,high,max}]
+                          [--strict_control_acceptance]
                           [--provider PROVIDER]
                           [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
-                          [--enable_cot] [--no_explanation] [--calibration]
+                          [--enable_cot] [--no_explanation]
+                          [--logprobs | --no-logprobs] [--calibration]
                           [--api_key_var API_KEY_VAR]
                           [--api_base_var API_BASE_VAR]
                           [--max_retries MAX_RETRIES]
@@ -629,14 +643,20 @@ options:
                         Optional service-tier hint for providers that support
                         differentiated throughput.
   --reasoning_effort {low,medium,high}
-                        Optional GPT/OpenAI reasoning effort level. Sent as
-                        reasoning.effort when provided.
+                        Optional reasoning effort level. Sent as
+                        reasoning.effort for OpenAI-style models and as
+                        reasoning_effort for Gemini targets.
   --thinking_level {low,medium,high}
-                        Optional Gemini thinking level. Sent as thinkingLevel
-                        when provided.
+                        Optional Gemini thinking level. Sent as
+                        reasoning_effort for Gemini OpenAI-compatible
+                        targets.
   --effort {low,medium,high,max}
                         Optional Claude effort level. Sent as effort when
                         provided.
+  --strict_control_acceptance
+                        Fail an example when requested reasoning/thinking
+                        controls are rejected or not present in the final
+                        successful request payload.
   --provider PROVIDER   Model provider identifier used to look up default
                         credentials. Known providers are preconfigured; custom
                         providers are inferred from &lt;PROVIDER&gt;_API_KEY and
@@ -652,6 +672,9 @@ options:
   --enable_cot          If set, encourages the model to reason step-by-step
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
+  --logprobs, --no-logprobs
+                        Enable token log probabilities when supported. Use
+                        --no-logprobs to skip requesting logprobs.
   --calibration         Generate a calibration plot using the model's
                         confidences.
   --api_key_var API_KEY_VAR
@@ -753,6 +776,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         reasoning_effort: "",
         thinking_level: "",
         effort: "",
+        logprobs: true,
+        strict_control_acceptance: false,
         request_interval_ms: "0",
         few_shot_examples: "0",
         service_tier: "standard",
@@ -803,14 +828,19 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
         enable_cot: "Encourage model to 'Think ... step-by-step' to elicit chain-of-thought behaviour.",
         include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
+        logprobs: "If unchecked, adds --no-logprobs to skip token log probability requests.",
         temperature: "Optional temperature sampling value. Leave blank to omit this parameter.",
         top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
         top_k: "Optional top-k sampling parameter, if your provider supports it.",
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
-        reasoning_effort: "GPT/OpenAI reasoning effort level (low, medium, high). Adds --reasoning_effort.",
-        thinking_level: "Gemini thinking level (low, medium, high). Adds --thinking_level.",
+        reasoning_effort:
+          "Reasoning effort level (low, medium, high). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
+        thinking_level:
+          "Gemini thinking level (low, medium, high). For Gemini targets this maps to reasoning_effort.",
         effort: "Claude effort control (low, medium, high, max). Adds --effort.",
+        strict_control_acceptance:
+          "Abort examples where requested thinking controls are rejected or omitted from the final successful request.",
         few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
@@ -1010,6 +1040,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           args.push("--effort", effort);
         }
 
+        if (data.get("strict_control_acceptance")) {
+          args.push("--strict_control_acceptance");
+        }
+
         const fewShot = data.get("few_shot_examples")?.trim();
         if (fewShot && Number(fewShot) > 0) {
           args.push("--few_shot_examples", fewShot);
@@ -1040,6 +1074,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
         if (!data.get("include_explanations")) {
           args.push("--no_explanation");
+        }
+
+        if (!data.get("logprobs")) {
+          args.push("--no-logprobs");
         }
 
         if (data.get("calibration")) {

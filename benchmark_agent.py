@@ -158,6 +158,103 @@ def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[st
     }
 
 
+def compute_request_control_summary(
+    log_records: Iterable[Dict[str, Any]],
+    configured_controls: Dict[str, Optional[str]],
+) -> Dict[str, Any]:
+    """Aggregate reasoning/thinking control acceptance telemetry from prompt logs."""
+    control_keys = ("reasoning_effort", "thinking_level", "effort")
+    per_control: Dict[str, Dict[str, Any]] = {
+        key: {
+            "configured_value": configured_controls.get(key),
+            "requested_attempts": 0,
+            "sent_attempts": 0,
+            "accepted_attempts": 0,
+            "rejected_attempts": 0,
+            "missing_from_final_request_attempts": 0,
+            "acceptance_rate": None,
+            "rejected_reasons": {},
+            "rejected_example_ids": [],
+        }
+        for key in control_keys
+    }
+
+    attempts_total = 0
+    attempts_with_telemetry = 0
+
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        example_id = str(record.get("example_id", "")).strip()
+        attempts = record.get("attempts")
+        if not isinstance(attempts, list):
+            continue
+
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempts_total += 1
+
+            request_controls = attempt.get("request_controls")
+            if not isinstance(request_controls, dict):
+                continue
+            attempts_with_telemetry += 1
+
+            requested = request_controls.get("requested")
+            sent = request_controls.get("sent")
+            rejected = request_controls.get("rejected")
+            requested_map = requested if isinstance(requested, dict) else {}
+            sent_map = sent if isinstance(sent, dict) else {}
+            rejected_map = rejected if isinstance(rejected, dict) else {}
+
+            for key in control_keys:
+                control_stats = per_control[key]
+                requested_flag = key in requested_map and requested_map.get(key) not in (None, "")
+                sent_flag = key in sent_map and sent_map.get(key) not in (None, "")
+                rejected_reason = rejected_map.get(key)
+
+                if requested_flag:
+                    control_stats["requested_attempts"] += 1
+                if sent_flag:
+                    control_stats["sent_attempts"] += 1
+                if requested_flag and not sent_flag:
+                    control_stats["missing_from_final_request_attempts"] += 1
+
+                if rejected_reason is not None:
+                    control_stats["rejected_attempts"] += 1
+                    reason_text = str(rejected_reason).strip() or "unknown"
+                    reasons = control_stats["rejected_reasons"]
+                    reasons[reason_text] = int(reasons.get(reason_text, 0)) + 1
+                    rejected_examples = control_stats["rejected_example_ids"]
+                    if (
+                        example_id
+                        and example_id not in rejected_examples
+                        and len(rejected_examples) < 50
+                    ):
+                        rejected_examples.append(example_id)
+
+                if requested_flag and sent_flag and rejected_reason is None:
+                    control_stats["accepted_attempts"] += 1
+
+    for key in control_keys:
+        control_stats = per_control[key]
+        requested_attempts = int(control_stats["requested_attempts"])
+        if requested_attempts > 0:
+            control_stats["acceptance_rate"] = (
+                control_stats["accepted_attempts"] / requested_attempts
+            )
+
+    configured_non_null = {
+        key: value for key, value in configured_controls.items() if value is not None
+    }
+    return {
+        "configured": configured_non_null,
+        "attempts_total": attempts_total,
+        "attempts_with_control_telemetry": attempts_with_telemetry,
+        "per_control": per_control,
+    }
+
+
 def is_placeholder_value(value: Optional[str]) -> bool:
     """Return True if a value looks like an unresolved placeholder token."""
     if value is None:
@@ -485,6 +582,9 @@ class CompletionResult:
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     token_logprobs: Optional[List[Dict[str, Any]]] = None
+    request_controls_requested: Dict[str, str] = field(default_factory=dict)
+    request_controls_sent: Dict[str, str] = field(default_factory=dict)
+    request_controls_rejected: Dict[str, str] = field(default_factory=dict)
 
 
 PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
@@ -930,9 +1030,11 @@ class OpenAIConnector:
         self,
         api_key: str,
         base_url: Optional[str] = None,
+        provider: str = "openai",
         request_interval_ms: int = 0,
     ) -> None:
         self.client_type: str
+        self._provider = (provider or "openai").strip().lower()
         self._chat_incompatible_models: set[str] = set()
         self._chat_unsupported_params: Dict[str, set[str]] = {}
         self._responses_unsupported_params: Dict[str, set[str]] = {}
@@ -993,6 +1095,7 @@ class OpenAIConnector:
         top_p: Optional[float],
         top_k: Optional[int],
         service_tier: Optional[str],
+        include_logprobs: bool,
         reasoning_effort: Optional[str],
         thinking_level: Optional[str],
         effort: Optional[str],
@@ -1002,6 +1105,41 @@ class OpenAIConnector:
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
         model_key = model.strip().lower()
+        is_gemini_target = self._provider == "google" or "gemini" in model_key
+        requested_controls: Dict[str, str] = {}
+        rejected_controls: Dict[str, str] = {}
+        translated_thinking_level: Optional[str] = None
+
+        if reasoning_effort:
+            requested_controls["reasoning_effort"] = reasoning_effort
+        if thinking_level:
+            requested_controls["thinking_level"] = thinking_level
+        if effort:
+            requested_controls["effort"] = effort
+
+        def control_key_for_param(param_name: str) -> Optional[str]:
+            if (
+                param_name in {"reasoning", "reasoning_effort"}
+                and is_gemini_target
+                and thinking_level
+                and not reasoning_effort
+            ):
+                return "thinking_level"
+            mapping = {
+                "reasoning": "reasoning_effort",
+                "reasoning_effort": "reasoning_effort",
+                "thinkingLevel": "thinking_level",
+                "thinking_level": "thinking_level",
+                "effort": "effort",
+            }
+            return mapping.get(param_name)
+
+        def mark_control_rejected(param_name: str, reason: str) -> None:
+            control_key = control_key_for_param(param_name)
+            if not control_key:
+                return
+            if control_key in requested_controls:
+                rejected_controls[control_key] = reason
 
         def normalize_unsupported_parameter(name: Optional[str]) -> Optional[str]:
             if not isinstance(name, str):
@@ -1014,7 +1152,7 @@ class OpenAIConnector:
                 "top_p": "top_p",
                 "temperature": "temperature",
                 "reasoning": "reasoning",
-                "reasoning_effort": "reasoning",
+                "reasoning_effort": "reasoning_effort",
                 "thinkinglevel": "thinkingLevel",
                 "thinking_level": "thinkingLevel",
                 "effort": "effort",
@@ -1022,7 +1160,13 @@ class OpenAIConnector:
                 "top_logprobs": "top_logprobs",
                 "logprobs": "logprobs",
             }
-            return alias_map.get(normalized, normalized or None)
+            if normalized in alias_map:
+                return alias_map[normalized]
+            if "thinking" in normalized and "level" in normalized:
+                return "thinkingLevel"
+            if "reasoning" in normalized and "effort" in normalized:
+                return "reasoning_effort"
+            return normalized or None
 
         def extract_error_text(exc: Exception) -> str:
             error_message = getattr(exc, "message", None)
@@ -1100,6 +1244,7 @@ class OpenAIConnector:
                 r"unsupported parameter:\s*['`\"]?([a-zA-Z0-9_.-]+)['`\"]?",
                 r"unknown name\s*['`\"]([a-zA-Z0-9_.-]+)['`\"]\s*:\s*cannot find field",
                 r"unrecognized request argument supplied:\s*['`\"]?([a-zA-Z0-9_.-]+)['`\"]?",
+                r"unexpected keyword argument\s*['`\"]([a-zA-Z0-9_.-]+)['`\"]",
             )
             for pattern in patterns:
                 match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -1118,6 +1263,9 @@ class OpenAIConnector:
             if "temperature" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "temperature"
+            if "reasoning_effort" in text or "reasoning effort" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "reasoning_effort"
             if "reasoning" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "reasoning"
@@ -1125,6 +1273,7 @@ class OpenAIConnector:
                 "thinkinglevel" in text
                 or "thinking level" in text
                 or "thinking_level" in text
+                or "thinking_config" in text
             ):
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "thinkingLevel"
@@ -1140,12 +1289,110 @@ class OpenAIConnector:
             return None
 
         def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
+            nonlocal translated_thinking_level
+            extra_body: Dict[str, Any] = {}
+            existing_extra = request_args.get("extra_body")
+            if isinstance(existing_extra, dict):
+                extra_body.update(existing_extra)
             if reasoning_effort:
-                request_args["reasoning"] = {"effort": reasoning_effort}
+                if is_gemini_target:
+                    request_args["reasoning_effort"] = reasoning_effort
+                else:
+                    extra_body["reasoning"] = {"effort": reasoning_effort}
             if thinking_level:
-                request_args["thinkingLevel"] = thinking_level
+                if is_gemini_target:
+                    # Google OpenAI-compat supports reasoning_effort; map thinking_level to it.
+                    request_args["reasoning_effort"] = thinking_level
+                    translated_thinking_level = thinking_level
+                else:
+                    extra_body["thinkingLevel"] = thinking_level
             if effort:
-                request_args["effort"] = effort
+                extra_body["effort"] = effort
+            if extra_body:
+                request_args["extra_body"] = extra_body
+
+        def remove_request_parameter(request_args: Dict[str, Any], param_name: str) -> bool:
+            removed = False
+            if param_name == "reasoning":
+                if "reasoning_effort" in request_args:
+                    request_args.pop("reasoning_effort", None)
+                    removed = True
+            if param_name == "reasoning_effort":
+                if "reasoning" in request_args:
+                    request_args.pop("reasoning", None)
+                    removed = True
+            if param_name in request_args:
+                request_args.pop(param_name, None)
+                removed = True
+            extra_body = request_args.get("extra_body")
+            if isinstance(extra_body, dict) and param_name in extra_body:
+                extra_body.pop(param_name, None)
+                removed = True
+            if isinstance(extra_body, dict):
+                if param_name in {"thinkingLevel", "thinking_level"}:
+                    google_payload = extra_body.get("google")
+                    if isinstance(google_payload, dict):
+                        thinking_cfg = google_payload.get("thinking_config")
+                        if isinstance(thinking_cfg, dict) and "thinking_level" in thinking_cfg:
+                            thinking_cfg.pop("thinking_level", None)
+                            removed = True
+                            if not thinking_cfg:
+                                google_payload.pop("thinking_config", None)
+                            if not google_payload:
+                                extra_body.pop("google", None)
+                if param_name in {"reasoning", "reasoning_effort"}:
+                    if "reasoning" in extra_body:
+                        extra_body.pop("reasoning", None)
+                        removed = True
+                if not extra_body:
+                    request_args.pop("extra_body", None)
+            return removed
+
+        def collect_sent_controls(request_args: Dict[str, Any]) -> Dict[str, str]:
+            sent: Dict[str, str] = {}
+
+            if request_args.get("reasoning_effort") is not None:
+                sent["reasoning_effort"] = str(request_args["reasoning_effort"])
+                if translated_thinking_level is not None:
+                    sent["thinking_level"] = translated_thinking_level
+
+            reasoning_payload = request_args.get("reasoning")
+            if isinstance(reasoning_payload, dict):
+                effort_value = reasoning_payload.get("effort")
+                if effort_value is not None:
+                    sent["reasoning_effort"] = str(effort_value)
+            elif reasoning_payload is not None:
+                sent["reasoning_effort"] = str(reasoning_payload)
+
+            if request_args.get("thinkingLevel") is not None:
+                sent["thinking_level"] = str(request_args["thinkingLevel"])
+
+            if request_args.get("effort") is not None:
+                sent["effort"] = str(request_args["effort"])
+
+            extra_body = request_args.get("extra_body")
+            if isinstance(extra_body, dict):
+                extra_reasoning = extra_body.get("reasoning")
+                if isinstance(extra_reasoning, dict):
+                    effort_value = extra_reasoning.get("effort")
+                    if effort_value is not None:
+                        sent["reasoning_effort"] = str(effort_value)
+                elif extra_reasoning is not None:
+                    sent["reasoning_effort"] = str(extra_reasoning)
+
+                if extra_body.get("thinkingLevel") is not None:
+                    sent["thinking_level"] = str(extra_body["thinkingLevel"])
+
+                google_payload = extra_body.get("google")
+                if isinstance(google_payload, dict):
+                    thinking_cfg = google_payload.get("thinking_config")
+                    if isinstance(thinking_cfg, dict) and thinking_cfg.get("thinking_level") is not None:
+                        sent["thinking_level"] = str(thinking_cfg["thinking_level"])
+
+                if extra_body.get("effort") is not None:
+                    sent["effort"] = str(extra_body["effort"])
+
+            return sent
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
             entries: List[Dict[str, Any]] = []
@@ -1205,8 +1452,9 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "input": messages,
-                "logprobs": True,
             }
+            if include_logprobs:
+                request_args["logprobs"] = True
             if temperature is not None:
                 request_args["temperature"] = temperature
             if top_p is not None:
@@ -1215,7 +1463,8 @@ class OpenAIConnector:
                 request_args["service_tier"] = service_tier
             apply_reasoning_controls(request_args)
             for unsupported in self._responses_unsupported_params.get(model_key, set()):
-                request_args.pop(unsupported, None)
+                if remove_request_parameter(request_args, unsupported):
+                    mark_control_rejected(unsupported, "previously_rejected")
 
             while True:
                 try:
@@ -1226,16 +1475,16 @@ class OpenAIConnector:
                     unsupported_param = extract_unsupported_parameter(exc) or infer_known_unsupported_parameter(exc)
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
-                    if unsupported_param and unsupported_param in request_args:
+                    if unsupported_param and remove_request_parameter(request_args, unsupported_param):
                         self._responses_unsupported_params.setdefault(model_key, set()).add(
                             unsupported_param
                         )
+                        mark_control_rejected(unsupported_param, "api_rejected")
                         logging.info(
                             "Responses API rejected parameter '%s' for model %s; retrying without it.",
                             unsupported_param,
                             model,
                         )
-                        request_args.pop(unsupported_param, None)
                         continue
                     if "logprobs" in request_args:
                         self._responses_unsupported_params.setdefault(model_key, set()).add("logprobs")
@@ -1300,6 +1549,9 @@ class OpenAIConnector:
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 token_logprobs=token_logprobs or None,
+                request_controls_requested=dict(requested_controls),
+                request_controls_sent=collect_sent_controls(request_args),
+                request_controls_rejected=dict(rejected_controls),
             )
 
         if self.client_type == "chat_v1":
@@ -1308,9 +1560,10 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "messages": messages,
-                "logprobs": True,
-                "top_logprobs": 1,
             }
+            if include_logprobs:
+                request_args["logprobs"] = True
+                request_args["top_logprobs"] = 1
             if temperature is not None:
                 request_args["temperature"] = temperature
             if top_p is not None:
@@ -1319,7 +1572,8 @@ class OpenAIConnector:
                 request_args["service_tier"] = service_tier
             apply_reasoning_controls(request_args)
             for unsupported in self._chat_unsupported_params.get(model_key, set()):
-                request_args.pop(unsupported, None)
+                if remove_request_parameter(request_args, unsupported):
+                    mark_control_rejected(unsupported, "previously_rejected")
 
             while True:
                 try:
@@ -1337,9 +1591,10 @@ class OpenAIConnector:
                     unsupported_param = extract_unsupported_parameter(exc) or infer_known_unsupported_parameter(exc)
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
-                    if unsupported_param and unsupported_param in request_args:
+                    if unsupported_param and remove_request_parameter(request_args, unsupported_param):
                         unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
                         unsupported_params.add(unsupported_param)
+                        mark_control_rejected(unsupported_param, "api_rejected")
                         if unsupported_param == "logprobs":
                             unsupported_params.add("top_logprobs")
                         logging.info(
@@ -1347,7 +1602,6 @@ class OpenAIConnector:
                             unsupported_param,
                             model,
                         )
-                        request_args.pop(unsupported_param, None)
                         if unsupported_param == "logprobs":
                             request_args.pop("top_logprobs", None)
                         continue
@@ -1372,6 +1626,9 @@ class OpenAIConnector:
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 token_logprobs=token_logprobs,
+                request_controls_requested=dict(requested_controls),
+                request_controls_sent=collect_sent_controls(request_args),
+                request_controls_rejected=dict(rejected_controls),
             )
         if self.client_type == "responses_v1":
             return complete_with_responses_api()
@@ -1380,9 +1637,10 @@ class OpenAIConnector:
             request_args = {
                 "model": model,
                 "messages": messages,
-                "logprobs": True,
-                "top_logprobs": 1,
             }
+            if include_logprobs:
+                request_args["logprobs"] = True
+                request_args["top_logprobs"] = 1
             if temperature is not None:
                 request_args["temperature"] = temperature
             if top_p is not None:
@@ -1390,17 +1648,25 @@ class OpenAIConnector:
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
             if reasoning_effort or thinking_level or effort:
+                mark_control_rejected("reasoning", "legacy_sdk_ignored")
+                mark_control_rejected("thinkingLevel", "legacy_sdk_ignored")
+                mark_control_rejected("effort", "legacy_sdk_ignored")
                 logging.debug(
                     "Reasoning/thinking effort controls are ignored in legacy OpenAI SDK mode."
                 )
             self._throttle_request_if_needed()
             response = self._client.ChatCompletion.create(**request_args)
         except Exception as exc:  # noqa: BLE001
-            warn_logprob_retry(exc)
-            request_args.pop("logprobs", None)
-            request_args.pop("top_logprobs", None)
-            self._throttle_request_if_needed()
-            response = self._client.ChatCompletion.create(**request_args)
+            if include_logprobs and (
+                "logprobs" in request_args or "top_logprobs" in request_args
+            ):
+                warn_logprob_retry(exc)
+                request_args.pop("logprobs", None)
+                request_args.pop("top_logprobs", None)
+                self._throttle_request_if_needed()
+                response = self._client.ChatCompletion.create(**request_args)
+            else:
+                raise
         content = response["choices"][0]["message"]["content"]
         usage = response.get("usage", {}) if isinstance(response, dict) else {}
         prompt_tokens = usage.get("prompt_tokens")
@@ -1417,6 +1683,9 @@ class OpenAIConnector:
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             token_logprobs=token_logprobs,
+            request_controls_requested=dict(requested_controls),
+            request_controls_sent=collect_sent_controls(request_args),
+            request_controls_rejected=dict(rejected_controls),
         )
 
 
@@ -1561,6 +1830,10 @@ class Prediction:
 
 class ProviderQuotaExceededError(RuntimeError):
     """Raised when provider quota/rate limit is exhausted after retries."""
+
+
+class RequestedControlRejectedError(RuntimeError):
+    """Raised when requested reasoning/thinking controls are rejected by the endpoint."""
 
 
 def compute_metrics(
@@ -1910,6 +2183,7 @@ def classify_example(
     top_p: Optional[float],
     top_k: Optional[int],
     service_tier: Optional[str],
+    include_logprobs: bool,
     reasoning_effort: Optional[str],
     thinking_level: Optional[str],
     effort: Optional[str],
@@ -1923,6 +2197,7 @@ def classify_example(
     validator_prompt_max_candidates: int = 50,
     validator_prompt_max_chars: int = 8000,
     validator_exhausted_policy: str = "accept_blank_confidence",
+    strict_control_acceptance: bool = False,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
     base_messages = build_messages(
@@ -1971,6 +2246,7 @@ def classify_example(
                 top_p=top_p,
                 top_k=top_k,
                 service_tier=service_tier,
+                include_logprobs=include_logprobs,
                 reasoning_effort=reasoning_effort,
                 thinking_level=thinking_level,
                 effort=effort,
@@ -1980,6 +2256,42 @@ def classify_example(
             latest_prompt_tokens = result.prompt_tokens
             latest_completion_tokens = result.completion_tokens
             latest_total_tokens = result.total_tokens
+            log_entry["request_controls"] = {
+                "requested": result.request_controls_requested,
+                "sent": result.request_controls_sent,
+                "rejected": result.request_controls_rejected,
+            }
+            if result.request_controls_rejected:
+                rejection_reasons = set(result.request_controls_rejected.values())
+                log_message = (
+                    "Reasoning/thinking controls were rejected for example %s: %s "
+                    "(sent=%s)."
+                )
+                if rejection_reasons <= {"previously_rejected"}:
+                    logging.debug(
+                        log_message,
+                        example.example_id,
+                        result.request_controls_rejected,
+                        result.request_controls_sent,
+                    )
+                else:
+                    logging.warning(
+                        log_message,
+                        example.example_id,
+                        result.request_controls_rejected,
+                        result.request_controls_sent,
+                    )
+            if strict_control_acceptance and result.request_controls_requested:
+                requested_keys = set(result.request_controls_requested.keys())
+                sent_keys = set(result.request_controls_sent.keys())
+                rejected_keys = set(result.request_controls_rejected.keys())
+                missing_keys = sorted((requested_keys - sent_keys) | rejected_keys)
+                if missing_keys:
+                    raise RequestedControlRejectedError(
+                        "Requested reasoning/thinking controls were not accepted: "
+                        f"{missing_keys}; rejected={result.request_controls_rejected}; "
+                        f"sent={result.request_controls_sent}."
+                    )
             log_entry["response"] = {
                 "text": raw,
                 "prompt_tokens": result.prompt_tokens,
@@ -2213,6 +2525,9 @@ def classify_example(
             ), interaction_logs
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
             last_error = exc
+            strict_control_error = (
+                strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
+            )
             if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
                 # Give the model deterministic feedback about why the previous output was rejected.
                 validator_patch_message = {
@@ -2235,6 +2550,8 @@ def classify_example(
                 example.example_id,
                 exc,
             )
+            if strict_control_error:
+                break
             if attempt < max_retries:
                 time.sleep(retry_delay)
 
@@ -2266,6 +2583,8 @@ def classify_example(
         raise ProviderQuotaExceededError(
             f"Provider quota/rate limit exhausted for example {example.example_id}: {detail}"
         ) from last_error
+    if isinstance(last_error, RequestedControlRejectedError):
+        raise last_error
     raise RuntimeError(f"Failed to classify example {example.example_id}") from last_error
 
 
@@ -2430,6 +2749,7 @@ def process_dataset(
                         top_p=args.top_p,
                         top_k=args.top_k,
                         service_tier=args.service_tier,
+                        include_logprobs=args.logprobs,
                         reasoning_effort=args.reasoning_effort,
                         thinking_level=args.thinking_level,
                         effort=args.effort,
@@ -2443,6 +2763,7 @@ def process_dataset(
                         validator_prompt_max_candidates=args.validator_prompt_max_candidates,
                         validator_prompt_max_chars=args.validator_prompt_max_chars,
                         validator_exhausted_policy=args.validator_exhausted_policy,
+                        strict_control_acceptance=args.strict_control_acceptance,
                     )
                 except ProviderQuotaExceededError as exc:
                     halted_by_quota = True
@@ -2547,11 +2868,18 @@ def process_dataset(
         confidences.append(prediction.confidence)
 
     prompt_time_window = compute_prompt_time_window(log_records)
+    configured_controls = {
+        "reasoning_effort": args.reasoning_effort,
+        "thinking_level": args.thinking_level,
+        "effort": args.effort,
+    }
+    request_control_summary = compute_request_control_summary(log_records, configured_controls)
 
     metrics: Dict[str, Any] = {}
     if evaluated_truths:
         metrics = compute_metrics(evaluated_truths, evaluated_preds)
         metrics.update(prompt_time_window)
+        metrics["request_control_summary"] = request_control_summary
         with open(metrics_output, "w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
         logging.info("Saved metrics to %s", metrics_output)
@@ -2569,6 +2897,20 @@ def process_dataset(
             generate_confusion_heatmap(confusion, labels, heatmap_path)
     else:
         logging.warning("No ground-truth labels available; skipping metric computation.")
+
+    configured_controls_non_null = request_control_summary.get("configured", {})
+    if configured_controls_non_null:
+        per_control = request_control_summary.get("per_control", {})
+        for control_name, configured_value in configured_controls_non_null.items():
+            control_stats = per_control.get(control_name, {})
+            logging.info(
+                "Control '%s=%s' summary -> requested attempts: %s, accepted: %s, rejected: %s.",
+                control_name,
+                configured_value,
+                control_stats.get("requested_attempts", 0),
+                control_stats.get("accepted_attempts", 0),
+                control_stats.get("rejected_attempts", 0),
+            )
 
     if calibration_enabled and confidences and correctness:
         calibration_path = os.path.splitext(output_path)[0] + "_calibration.png"
@@ -2654,8 +2996,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         choices=["low", "medium", "high"],
         default=None,
         help=(
-            "Optional GPT/OpenAI reasoning effort level. "
-            "Sent as reasoning.effort when provided."
+            "Optional reasoning effort level. "
+            "Sent as reasoning.effort for OpenAI-style models and as reasoning_effort for Gemini targets."
         ),
     )
     parser.add_argument(
@@ -2664,7 +3006,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional Gemini thinking level. "
-            "Sent as thinkingLevel when provided."
+            "Sent as reasoning_effort for Gemini OpenAI-compatible targets."
         ),
     )
     parser.add_argument(
@@ -2674,6 +3016,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help=(
             "Optional Claude effort level. "
             "Sent as effort when provided."
+        ),
+    )
+    parser.add_argument(
+        "--strict_control_acceptance",
+        action="store_true",
+        help=(
+            "Fail an example when requested reasoning/thinking controls are rejected "
+            "or not present in the final successful request payload."
         ),
     )
     parser.add_argument(
@@ -2710,6 +3060,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--no_explanation",
         action="store_true",
         help="Skip requesting explanations to reduce token usage.",
+    )
+    parser.add_argument(
+        "--logprobs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable token log probabilities when supported. "
+            "Use --no-logprobs to skip requesting logprobs."
+        ),
     )
     parser.add_argument(
         "--calibration",
@@ -2856,6 +3215,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.api_base_var = provider_defaults["api_base_var"]
     include_explanation = not args.no_explanation
 
+    requested_control_flags = {
+        "reasoning_effort": args.reasoning_effort,
+        "thinking_level": args.thinking_level,
+        "effort": args.effort,
+    }
+    active_requested_controls = {
+        key: value for key, value in requested_control_flags.items() if value is not None
+    }
+    if active_requested_controls:
+        logging.info("Requested reasoning/thinking controls: %s", active_requested_controls)
+        if args.strict_control_acceptance:
+            logging.info(
+                "Strict control acceptance is enabled; runs will fail if requested controls are rejected."
+            )
+    if args.reasoning_effort and args.thinking_level and (
+        provider == "google" or "gemini" in str(args.model).lower()
+    ):
+        logging.error(
+            "Both --reasoning_effort and --thinking_level were requested for a Gemini target. "
+            "Use only one because these controls overlap for Gemini APIs."
+        )
+        return 1
+
     api_key = resolve_env_value(args.api_key_var, env_map)
     if is_placeholder_value(api_key):
         logging.error(
@@ -2895,10 +3277,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         calibration_enabled = False
     if not include_explanation:
         logging.info("Explanations disabled; model will only return labels and confidences.")
+    if not args.logprobs:
+        logging.info("Logprobs disabled; token-level probability estimates will be unavailable.")
 
     connector = OpenAIConnector(
         api_key=api_key,
         base_url=api_base_url,
+        provider=provider,
         request_interval_ms=max(0, args.request_interval_ms),
     )
 
@@ -2965,6 +3350,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "Stopping remaining input datasets because provider quota/rate limit was exhausted."
                 )
                 break
+    except RequestedControlRejectedError as exc:
+        logging.error("%s", exc)
+        logging.error(
+            "Run stopped because requested reasoning/thinking controls were rejected by the model endpoint."
+        )
+        return 2
     finally:
         if validator_client is not None:
             validator_client.close()
