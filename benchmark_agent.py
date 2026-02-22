@@ -993,6 +993,9 @@ class OpenAIConnector:
         top_p: Optional[float],
         top_k: Optional[int],
         service_tier: Optional[str],
+        reasoning_effort: Optional[str],
+        thinking_level: Optional[str],
+        effort: Optional[str],
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
@@ -1003,13 +1006,18 @@ class OpenAIConnector:
         def normalize_unsupported_parameter(name: Optional[str]) -> Optional[str]:
             if not isinstance(name, str):
                 return None
-            normalized = name.strip().lower().replace("-", "_")
+            normalized = name.strip().lower().replace("-", "_").replace(".", "_")
             alias_map = {
                 "servicetier": "service_tier",
                 "service_tier": "service_tier",
                 "topp": "top_p",
                 "top_p": "top_p",
                 "temperature": "temperature",
+                "reasoning": "reasoning",
+                "reasoning_effort": "reasoning",
+                "thinkinglevel": "thinkingLevel",
+                "thinking_level": "thinkingLevel",
+                "effort": "effort",
                 "toplogprobs": "top_logprobs",
                 "top_logprobs": "top_logprobs",
                 "logprobs": "logprobs",
@@ -1089,9 +1097,9 @@ class OpenAIConnector:
 
             text = str(error_message or exc)
             patterns = (
-                r"unsupported parameter:\s*['`\"]?([a-zA-Z0-9_]+)['`\"]?",
-                r"unknown name\s*['`\"]([a-zA-Z0-9_]+)['`\"]\s*:\s*cannot find field",
-                r"unrecognized request argument supplied:\s*['`\"]?([a-zA-Z0-9_]+)['`\"]?",
+                r"unsupported parameter:\s*['`\"]?([a-zA-Z0-9_.-]+)['`\"]?",
+                r"unknown name\s*['`\"]([a-zA-Z0-9_.-]+)['`\"]\s*:\s*cannot find field",
+                r"unrecognized request argument supplied:\s*['`\"]?([a-zA-Z0-9_.-]+)['`\"]?",
             )
             for pattern in patterns:
                 match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -1110,6 +1118,19 @@ class OpenAIConnector:
             if "temperature" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
                     return "temperature"
+            if "reasoning" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "reasoning"
+            if (
+                "thinkinglevel" in text
+                or "thinking level" in text
+                or "thinking_level" in text
+            ):
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "thinkingLevel"
+            if "effort" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not supported", "not allowed")):
+                    return "effort"
             if "top_logprobs" in text or "top logprobs" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid")):
                     return "top_logprobs"
@@ -1117,6 +1138,14 @@ class OpenAIConnector:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "logprobs"
             return None
+
+        def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
+            if reasoning_effort:
+                request_args["reasoning"] = {"effort": reasoning_effort}
+            if thinking_level:
+                request_args["thinkingLevel"] = thinking_level
+            if effort:
+                request_args["effort"] = effort
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
             entries: List[Dict[str, Any]] = []
@@ -1184,6 +1213,7 @@ class OpenAIConnector:
                 request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            apply_reasoning_controls(request_args)
             for unsupported in self._responses_unsupported_params.get(model_key, set()):
                 request_args.pop(unsupported, None)
 
@@ -1287,6 +1317,7 @@ class OpenAIConnector:
                 request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            apply_reasoning_controls(request_args)
             for unsupported in self._chat_unsupported_params.get(model_key, set()):
                 request_args.pop(unsupported, None)
 
@@ -1358,6 +1389,10 @@ class OpenAIConnector:
                 request_args["top_p"] = top_p
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            if reasoning_effort or thinking_level or effort:
+                logging.debug(
+                    "Reasoning/thinking effort controls are ignored in legacy OpenAI SDK mode."
+                )
             self._throttle_request_if_needed()
             response = self._client.ChatCompletion.create(**request_args)
         except Exception as exc:  # noqa: BLE001
@@ -1875,6 +1910,9 @@ def classify_example(
     top_p: Optional[float],
     top_k: Optional[int],
     service_tier: Optional[str],
+    reasoning_effort: Optional[str],
+    thinking_level: Optional[str],
+    effort: Optional[str],
     system_prompt: Optional[str],
     enable_cot: bool,
     include_explanation: bool,
@@ -1933,6 +1971,9 @@ def classify_example(
                 top_p=top_p,
                 top_k=top_k,
                 service_tier=service_tier,
+                reasoning_effort=reasoning_effort,
+                thinking_level=thinking_level,
+                effort=effort,
             )
             raw = result.text
             latest_raw_response = raw
@@ -2389,6 +2430,9 @@ def process_dataset(
                         top_p=args.top_p,
                         top_k=args.top_k,
                         service_tier=args.service_tier,
+                        reasoning_effort=args.reasoning_effort,
+                        thinking_level=args.thinking_level,
+                        effort=args.effort,
                         system_prompt=args.system_prompt,
                         enable_cot=args.enable_cot,
                         include_explanation=include_explanation,
@@ -2604,6 +2648,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         choices=["standard", "flex", "priority"],
         default="standard",
         help="Optional service-tier hint for providers that support differentiated throughput.",
+    )
+    parser.add_argument(
+        "--reasoning_effort",
+        choices=["low", "medium", "high"],
+        default=None,
+        help=(
+            "Optional GPT/OpenAI reasoning effort level. "
+            "Sent as reasoning.effort when provided."
+        ),
+    )
+    parser.add_argument(
+        "--thinking_level",
+        choices=["low", "medium", "high"],
+        default=None,
+        help=(
+            "Optional Gemini thinking level. "
+            "Sent as thinkingLevel when provided."
+        ),
+    )
+    parser.add_argument(
+        "--effort",
+        choices=["low", "medium", "high", "max"],
+        default=None,
+        help=(
+            "Optional Claude effort level. "
+            "Sent as effort when provided."
+        ),
     )
     parser.add_argument(
         "--provider",
@@ -2850,6 +2921,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     model=args.model,
                     include_explanation=include_explanation,
                     enable_cot=args.enable_cot,
+                    reasoning_effort=args.reasoning_effort,
+                    thinking_level=args.thinking_level,
+                    effort=args.effort,
                     max_retries=args.max_retries,
                 )
             )

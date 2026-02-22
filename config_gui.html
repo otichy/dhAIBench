@@ -413,7 +413,7 @@
             <div class="grid compact">
               <label class="inline">
                 <input type="checkbox" id="enable_cot" name="enable_cot" />
-                <span>Enable chain-of-thought reasoning</span>
+                <span>Encourage chain-of-thought reasoning</span>
               </label>
               <label class="inline">
                 <input type="checkbox" id="include_explanations" name="include_explanations" checked />
@@ -449,6 +449,34 @@
                     <option value="standard" selected>Standard</option>
                     <option value="flex">Flex</option>
                     <option value="priority">Priority</option>
+                  </select>
+                </label>
+                <label
+                  >GPT Reasoning Effort
+                  <select id="reasoning_effort" name="reasoning_effort">
+                    <option value="" selected>(omit)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label
+                  >Gemini Thinking Level
+                  <select id="thinking_level" name="thinking_level">
+                    <option value="" selected>(omit)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label
+                  >Claude Effort
+                  <select id="effort" name="effort">
+                    <option value="" selected>(omit)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="max">Max</option>
                   </select>
                 </label>
                 <label
@@ -554,6 +582,9 @@
                           [--temperature TEMPERATURE] [--top_p TOP_P]
                           [--top_k TOP_K]
                           [--service_tier {standard,flex,priority}]
+                          [--reasoning_effort {low,medium,high}]
+                          [--thinking_level {low,medium,high}]
+                          [--effort {low,medium,high,max}]
                           [--provider PROVIDER]
                           [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
@@ -597,6 +628,15 @@ options:
   --service_tier {standard,flex,priority}
                         Optional service-tier hint for providers that support
                         differentiated throughput.
+  --reasoning_effort {low,medium,high}
+                        Optional GPT/OpenAI reasoning effort level. Sent as
+                        reasoning.effort when provided.
+  --thinking_level {low,medium,high}
+                        Optional Gemini thinking level. Sent as thinkingLevel
+                        when provided.
+  --effort {low,medium,high,max}
+                        Optional Claude effort level. Sent as effort when
+                        provided.
   --provider PROVIDER   Model provider identifier used to look up default
                         credentials. Known providers are preconfigured; custom
                         providers are inferred from &lt;PROVIDER&gt;_API_KEY and
@@ -710,6 +750,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         provider: "openai",
         temperature: "",
         top_p: "",
+        reasoning_effort: "",
+        thinking_level: "",
+        effort: "",
         request_interval_ms: "0",
         few_shot_examples: "0",
         service_tier: "standard",
@@ -758,13 +801,16 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         model: "Model identifier. Click and pick from cached models or type your own model id.",
         provider: "Provider slug used by --provider. Refresh updates this list from config_models.js.",
         system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
-        enable_cot: "Adds chain-of-thought style prompt instructions.",
+        enable_cot: "Encourage model to 'Think ... step-by-step' to elicit chain-of-thought behaviour.",
         include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
         temperature: "Optional temperature sampling value. Leave blank to omit this parameter.",
         top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
         top_k: "Optional top-k sampling parameter, if your provider supports it.",
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
+        reasoning_effort: "GPT/OpenAI reasoning effort level (low, medium, high). Adds --reasoning_effort.",
+        thinking_level: "Gemini thinking level (low, medium, high). Adds --thinking_level.",
+        effort: "Claude effort control (low, medium, high, max). Adds --effort.",
         few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
@@ -947,6 +993,21 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const serviceTier = data.get("service_tier");
         if (serviceTier && serviceTier !== defaultValues.service_tier) {
           args.push("--service_tier", serviceTier);
+        }
+
+        const reasoningEffort = data.get("reasoning_effort");
+        if (reasoningEffort && reasoningEffort !== defaultValues.reasoning_effort) {
+          args.push("--reasoning_effort", reasoningEffort);
+        }
+
+        const thinkingLevel = data.get("thinking_level");
+        if (thinkingLevel && thinkingLevel !== defaultValues.thinking_level) {
+          args.push("--thinking_level", thinkingLevel);
+        }
+
+        const effort = data.get("effort");
+        if (effort && effort !== defaultValues.effort) {
+          args.push("--effort", effort);
         }
 
         const fewShot = data.get("few_shot_examples")?.trim();

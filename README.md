@@ -3,7 +3,7 @@
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible model for each example, and scores the predictions against gold labels. A companion browser-based configurator helps compose the command-line invocation.
 
 - **End-to-end evaluation**: process one or many input CSVs, merge optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
-- **Prompt controls**: tune temperature, top-p, top-k, chain-of-thought prompting, few-shot demonstrations, and custom system prompts.
+- **Prompt controls**: tune temperature, top-p, top-k, chain-of-thought prompting, provider-specific reasoning/thinking effort levels, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
 - **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
 - **Metadata preservation**: the optional `info` column feeds the model extra guidance, and any additional columns are carried through to the output file.
@@ -57,6 +57,7 @@ python benchmark_agent.py ^
   --model gpt-4o-mini ^
   --temperature 0.0 ^
   --top_p 1.0 ^
+  --reasoning_effort medium ^
   --request_interval_ms 250 ^
   --system_prompt "You are a linguistic classifier..." ^
   --enable_cot ^
@@ -88,6 +89,16 @@ When `--output` points to an existing CSV file, the run resumes: rows whose `ID`
   ```
 
 - The GUI in `config_gui.html` chooses automatically: if your prompt fits on one line it emits `--system_prompt`, otherwise it switches to `--system_prompt_b64`. A hint below the System Prompt box reminds you that multi-line instructions will be encoded before reaching the CLI. The Python agent now understands both flags transparently.
+
+### Reasoning/Thinking Effort Controls
+
+Use provider-specific controls when you need tighter control over model "thinking" token budgets:
+
+- `--reasoning_effort {low,medium,high}` for GPT/OpenAI-style reasoning (`reasoning.effort` in the request payload).
+- `--thinking_level {low,medium,high}` for Gemini-style thinking (`thinkingLevel` in the request payload).
+- `--effort {low,medium,high,max}` for Claude-style effort (`effort` in the request payload).
+
+These flags are optional and can be omitted to leave model defaults unchanged.
 
 ### Command Builder GUI
 
