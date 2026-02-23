@@ -32,6 +32,7 @@ class ValidatorRunInfo:
     effort: Optional[str]
     verbosity: Optional[str]
     cache_pad_target_tokens: int
+    prompt_cache_key: Optional[str]
     max_retries: int
 
 
@@ -108,6 +109,7 @@ class ValidatorClient:
                 "effort": run_info.effort,
                 "verbosity": run_info.verbosity,
                 "cache_pad_target_tokens": run_info.cache_pad_target_tokens,
+                "prompt_cache_key": run_info.prompt_cache_key,
                 "max_retries": run_info.max_retries,
             },
         }

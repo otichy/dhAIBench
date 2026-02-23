@@ -528,7 +528,7 @@
                   </select>
                 </label>
                 <label
-                  >Input Token Count (auto padded to cache)
+                  >Shared Prefix Token Target (auto padded)
                   <input
                     type="number"
                     min="0"
@@ -537,7 +537,17 @@
                     name="cache_pad_target_tokens"
                     value="0"
                   />
-                  <span class="hint">If set, prompt token length is calibrated from the first response and padded on subsequent prompts.</span>
+                  <span class="hint">Shared-prefix token target. If set, runtime pads only the cacheable shared prefix (not row-specific payload fields).</span>
+                </label>
+                <label
+                  >Prompt Cache Key
+                  <input
+                    type="text"
+                    id="prompt_cache_key"
+                    name="prompt_cache_key"
+                    placeholder="benchmark-prefix-v1"
+                  />
+                  <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
                 </label>
               </div>
             </details>
@@ -660,6 +670,7 @@
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
                           [--prompt_layout {standard,compact}]
                           [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
+                          [--prompt_cache_key PROMPT_CACHE_KEY]
                           [--enable_cot] [--no_explanation]
                           [--logprobs | --no-logprobs] [--calibration]
                           [--api_key_var API_KEY_VAR]
@@ -736,10 +747,14 @@ options:
                         verbose payload; compact removes duplicated fields to
                         improve cache reuse.
   --cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS
-                        Optional prompt-token target for cache padding. If >0,
-                        the first successful response calibrates prompt
-                        length; subsequent prompts are padded toward this
-                        token target.
+                        Optional shared-prefix token target for cache padding.
+                        If >0, the first successful example calibrates
+                        shared-prefix length; subsequent prompts are padded
+                        toward this shared-prefix target.
+  --prompt_cache_key PROMPT_CACHE_KEY
+                        Optional provider cache-routing key (when supported)
+                        to improve prompt-cache hit consistency for stable
+                        prompt prefixes.
   --enable_cot          If set, encourages the model to reason step-by-step
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
@@ -809,20 +824,20 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       <aside class="command-panel">
         <h2>Live Command</h2>
         <p class="panel-note">Updates as you edit fields. Flags and values are color-coded for quick scanning.</p>
+        <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
+        <div class="command-actions">
+          <button type="button" id="copy-button">Copy Command</button>
+          <button type="button" id="reset-button">Reset Defaults</button>
+        </div>
         <div id="prompt-token-estimate" class="token-estimate">
-          <strong>Base prompt estimate:</strong> waiting for input...
+          <strong>Shared prefix estimate:</strong> waiting for input...
         </div>
         <div class="token-estimate-controls">
           <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
           <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
           <p id="prompt-token-estimate-status" class="token-estimate-status">
-            Optional: sample a CSV to include real row text in the estimate.
+            Shared-prefix estimate ignores row-specific CSV fields; sampling is optional.
           </p>
-        </div>
-        <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
-        <div class="command-actions">
-          <button type="button" id="copy-button">Copy Command</button>
-          <button type="button" id="reset-button">Reset Defaults</button>
         </div>
       </aside>
     </div>
@@ -857,6 +872,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           : {};
       const PROMPT_ESTIMATE_SAMPLE_LIMIT = 100;
       const PROMPT_CACHE_HINT_TOKENS = 1024;
+      const MAX_CACHE_PADDING_TOKENS = 200000;
+      const CACHE_PADDING_PREFIX =
+        "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN";
+      const CACHE_PADDING_TOKEN = " cachepad";
+      const CACHE_PADDING_SUFFIX = "\nCACHE_PAD_END";
       let sampledEstimateRows = null;
       let sampledEstimateSource = "";
 
@@ -874,6 +894,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         few_shot_examples: "0",
         prompt_layout: "standard",
         cache_pad_target_tokens: "0",
+        prompt_cache_key: "",
         service_tier: "standard",
         include_explanations: true,
         api_key_var: "",
@@ -941,7 +962,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         prompt_layout:
           "Prompt payload shape. compact reduces duplicated per-example text to improve cache reuse.",
         cache_pad_target_tokens:
-          "Optional cache-padding that lengthens the prompt input to reach caching limits (differs per model). First successful request calibrates baseline token count; later prompts are padded toward the target. Consider increasing the size meaningfully first (longer context, longer system prompt, check the estimate.)",
+          "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
+        prompt_cache_key:
+          "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
         api_key_var: "Environment variable that stores the API key used for this run.",
@@ -1173,54 +1196,94 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         };
       }
 
-      function buildPromptEstimateForRow(data, row) {
+      function estimateCachePaddingTokenContribution(paddingUnits) {
+        const safeUnits = Math.max(0, Math.min(MAX_CACHE_PADDING_TOKENS, Number(paddingUnits) || 0));
+        if (safeUnits <= 0) {
+          return 0;
+        }
+        const charCount =
+          CACHE_PADDING_PREFIX.length + CACHE_PADDING_TOKEN.length * safeUnits + CACHE_PADDING_SUFFIX.length;
+        return estimateTokensFromChars(charCount).estimateMid;
+      }
+
+      function estimateRequiredCachePaddingUnits(sharedPrefixTokensEstimate, targetSharedPrefixTokens) {
+        const baseline = Math.max(0, Number(sharedPrefixTokensEstimate) || 0);
+        const target = Math.max(0, Number(targetSharedPrefixTokens) || 0);
+        if (target <= 0 || baseline >= target) {
+          return 0;
+        }
+
+        let low = 0;
+        let high = 1;
+        while (high < MAX_CACHE_PADDING_TOKENS && baseline + estimateCachePaddingTokenContribution(high) < target) {
+          high *= 2;
+        }
+        high = Math.min(high, MAX_CACHE_PADDING_TOKENS);
+        if (baseline + estimateCachePaddingTokenContribution(high) < target) {
+          return MAX_CACHE_PADDING_TOKENS;
+        }
+
+        while (low < high) {
+          const mid = Math.floor((low + high) / 2);
+          if (baseline + estimateCachePaddingTokenContribution(mid) >= target) {
+            high = mid;
+          } else {
+            low = mid + 1;
+          }
+        }
+        return low;
+      }
+
+      function buildSharedPrefixEstimate(data) {
         const config = getPromptEstimateConfig(data);
-        let userContent = config.instructionsText;
+        let sharedUserPrefix = config.instructionsText;
         if (config.fewShotCount > 0) {
-          userContent +=
+          sharedUserPrefix +=
             `\n\nHere are ${config.fewShotCount} labeled example(s) you should mimic when classifying:\n` +
             "[example content omitted in estimate]";
         }
-        const payload = buildEstimateTargetPayload(config.layout, row);
-        userContent += `\n\nNow classify this example:\n${serializePayloadForEstimate(config.layout, payload)}`;
-        const baseChars = config.systemMessage.length + userContent.length;
-        const tokenEstimates = estimateTokensFromChars(baseChars);
+        sharedUserPrefix += "\n\nNow classify this example:\n";
+
+        const baseSharedPrefixChars = config.systemMessage.length + sharedUserPrefix.length;
+        const baseTokenEstimates = estimateTokensFromChars(baseSharedPrefixChars);
+        const targetRaw = (data.get("cache_pad_target_tokens") || "0").toString().trim();
+        const targetSharedPrefixTokens = Math.max(0, Number.parseInt(targetRaw || "0", 10) || 0);
+        const paddingUnitsEstimate = estimateRequiredCachePaddingUnits(
+          baseTokenEstimates.estimateMid,
+          targetSharedPrefixTokens
+        );
+        const paddedSharedPrefixTokensEstimate =
+          baseTokenEstimates.estimateMid + estimateCachePaddingTokenContribution(paddingUnitsEstimate);
         return {
           layout: config.layout,
           fewShotCount: config.fewShotCount,
-          baseChars,
-          ...tokenEstimates,
+          baseSharedPrefixChars,
+          baseEstimateMid: baseTokenEstimates.estimateMid,
+          baseEstimateLow: baseTokenEstimates.estimateLow,
+          baseEstimateHigh: baseTokenEstimates.estimateHigh,
+          targetSharedPrefixTokens,
+          paddingUnitsEstimate,
+          paddedSharedPrefixTokensEstimate,
         };
       }
 
       function estimateBasePromptTokens(data) {
-        return buildPromptEstimateForRow(data, {
-          leftContext: "<left context from CSV>",
-          node: "<node from CSV>",
-          rightContext: "<right context from CSV>",
-          info: "<optional info from CSV>",
-        });
+        return buildSharedPrefixEstimate(data);
       }
 
       function computeSampledPromptEstimate(data, sampledRows) {
         if (!Array.isArray(sampledRows) || sampledRows.length === 0) {
           return null;
         }
-        const perRow = sampledRows.map((row) => buildPromptEstimateForRow(data, row));
-        const mids = perRow.map((item) => item.estimateMid);
-        const lows = perRow.map((item) => item.estimateLow);
-        const highs = perRow.map((item) => item.estimateHigh);
-        const chars = perRow.map((item) => item.baseChars);
-        const overCacheThreshold = mids.filter((value) => value >= PROMPT_CACHE_HINT_TOKENS).length;
+        const shared = buildSharedPrefixEstimate(data);
         return {
-          count: perRow.length,
-          avgMid: Math.round(mids.reduce((sum, value) => sum + value, 0) / mids.length),
-          minMid: Math.min(...mids),
-          maxMid: Math.max(...mids),
-          minLow: Math.min(...lows),
-          maxHigh: Math.max(...highs),
-          avgChars: Math.round(chars.reduce((sum, value) => sum + value, 0) / chars.length),
-          overCacheThreshold,
+          count: sampledRows.length,
+          sharedPrefixEstimateMid: shared.baseEstimateMid,
+          sharedPrefixEstimateLow: shared.baseEstimateLow,
+          sharedPrefixEstimateHigh: shared.baseEstimateHigh,
+          targetSharedPrefixTokens: shared.targetSharedPrefixTokens,
+          paddingUnitsEstimate: shared.paddingUnitsEstimate,
+          paddedSharedPrefixTokensEstimate: shared.paddedSharedPrefixTokensEstimate,
         };
       }
 
@@ -1241,32 +1304,41 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           estimate.fewShotCount > 0
             ? ` Few-shot example text is omitted (configured count: ${estimate.fewShotCount}).`
             : "";
-        if (Array.isArray(sampledEstimateRows) && sampledEstimateRows.length > 0) {
-          const sampled = computeSampledPromptEstimate(data, sampledEstimateRows);
-          if (sampled) {
-            const rowWord = sampled.count === 1 ? "row" : "rows";
-            let estimateHtml =
-              `<strong>Complete prompt estimate (${sampled.count} sampled ${rowWord}):</strong> ` +
-              `~${sampled.avgMid} avg tokens ` +
-              `(min ${sampled.minMid}, max ${sampled.maxMid}; range ${sampled.minLow}-${sampled.maxHigh}), ` +
-              `${sampled.avgChars} avg chars.` +
-              `<br>${sampled.overCacheThreshold}/${sampled.count} sampled ${rowWord} reach ` +
-              `~${PROMPT_CACHE_HINT_TOKENS}+ tokens (cache threshold hint).` +
-              `<br>Layout: <code>${escapeHtml(estimate.layout)}</code>.`;
-            if (sampledEstimateSource) {
-              estimateHtml += `<br>Source: <code>${escapeHtml(sampledEstimateSource)}</code>.`;
-            }
-            promptTokenEstimate.innerHTML = estimateHtml;
-            return;
-          }
-        }
+        const sampled = computeSampledPromptEstimate(data, sampledEstimateRows);
+        const sampledNote =
+          sampled && sampled.count > 0
+            ? `<br>Sampled rows: ${sampled.count} (does not change shared-prefix estimate).`
+            : "";
+        const targetNote =
+          estimate.targetSharedPrefixTokens > 0
+            ? `<br>Configured target shared prefix: <code>${estimate.targetSharedPrefixTokens}</code> tokens. ` +
+              `Estimated padding units: <code>${estimate.paddingUnitsEstimate}</code>. ` +
+              `Estimated padded shared prefix: ~${estimate.paddedSharedPrefixTokensEstimate} tokens.`
+            : "";
+        const cacheHintTokens =
+          estimate.targetSharedPrefixTokens > 0
+            ? estimate.targetSharedPrefixTokens
+            : PROMPT_CACHE_HINT_TOKENS;
+        const cacheHintStatus =
+          estimate.paddedSharedPrefixTokensEstimate >= cacheHintTokens
+            ? "target reached by estimate"
+            : "target not reached by estimate";
 
-        promptTokenEstimate.innerHTML =
-          `<strong>Fallback template estimate (CSV sample missing):</strong> ` +
-          `~${estimate.estimateMid} tokens (${estimate.estimateLow}-${estimate.estimateHigh}), ` +
-          `${estimate.baseChars} chars.<br>` +
-          `Layout: <code>${escapeHtml(estimate.layout)}</code>. ` +
-          `Select a CSV file or run sampling to estimate complete per-row prompts.${fewShotWarning}`;
+        let estimateHtml =
+          `<strong>Shared prefix estimate (cacheable part only):</strong> ` +
+          `~${estimate.baseEstimateMid} tokens ` +
+          `(range ${estimate.baseEstimateLow}-${estimate.baseEstimateHigh}), ` +
+          `${estimate.baseSharedPrefixChars} chars.` +
+          `<br>Row-specific payload fields are excluded from this estimate.` +
+          `<br>Cache hint threshold: ~${cacheHintTokens}+ tokens (${cacheHintStatus}).` +
+          `<br>Layout: <code>${escapeHtml(estimate.layout)}</code>.` +
+          targetNote +
+          sampledNote;
+        if (sampledEstimateSource) {
+          estimateHtml += `<br>Sample source: <code>${escapeHtml(sampledEstimateSource)}</code>.`;
+        }
+        estimateHtml += fewShotWarning;
+        promptTokenEstimate.innerHTML = estimateHtml;
       }
 
       function parseDelimitedRows(text, delimiter) {
@@ -1591,6 +1663,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const cachePadTargetTokens = data.get("cache_pad_target_tokens")?.toString().trim() ?? "";
         if (cachePadTargetTokens && Number(cachePadTargetTokens) > 0) {
           args.push("--cache_pad_target_tokens", cachePadTargetTokens);
+        }
+
+        const promptCacheKey = data.get("prompt_cache_key")?.toString().trim() ?? "";
+        if (promptCacheKey) {
+          args.push("--prompt_cache_key", shellQuote(promptCacheKey));
         }
 
         const labelsPath = data.get("labels_path")?.trim();

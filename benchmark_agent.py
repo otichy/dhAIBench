@@ -44,6 +44,10 @@ MANDATORY_SYSTEM_APPEND = (
 )
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
 MAX_CACHE_PADDING_TOKENS = 200_000
+TOKEN_CHAR_ESTIMATE_RATIO = 4.0
+CACHE_PADDING_PREFIX = "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN"
+CACHE_PADDING_TOKEN = " cachepad"
+CACHE_PADDING_SUFFIX = "\nCACHE_PAD_END"
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -672,6 +676,60 @@ def resolve_span_contract(node: str) -> Tuple[str, str]:
     return node.strip(), SPAN_SOURCE_NODE
 
 
+def estimate_token_count_from_chars(char_count: int) -> int:
+    """Estimate token count from character count using a fixed heuristic."""
+    safe_chars = max(0, int(char_count))
+    if safe_chars <= 0:
+        return 0
+    return max(1, int(round(safe_chars / TOKEN_CHAR_ESTIMATE_RATIO)))
+
+
+def estimate_token_count_from_text(text: str) -> int:
+    """Estimate token count for free-form text."""
+    return estimate_token_count_from_chars(len(text or ""))
+
+
+def estimate_cache_padding_tokens(padding_tokens: int) -> int:
+    """Estimate token contribution of a cache padding block."""
+    safe_tokens = max(0, min(int(padding_tokens), MAX_CACHE_PADDING_TOKENS))
+    if safe_tokens <= 0:
+        return 0
+    char_count = (
+        len(CACHE_PADDING_PREFIX)
+        + (len(CACHE_PADDING_TOKEN) * safe_tokens)
+        + len(CACHE_PADDING_SUFFIX)
+    )
+    return estimate_token_count_from_chars(char_count)
+
+
+def estimate_required_cache_padding_tokens(
+    shared_prefix_tokens: int, target_shared_prefix_tokens: int
+) -> int:
+    """Return the minimum cache-padding units required to reach target shared-prefix length."""
+    target = max(0, int(target_shared_prefix_tokens))
+    baseline = max(0, int(shared_prefix_tokens))
+    if target <= 0 or baseline >= target:
+        return 0
+
+    low = 0
+    high = 1
+    while high < MAX_CACHE_PADDING_TOKENS and (
+        baseline + estimate_cache_padding_tokens(high)
+    ) < target:
+        high *= 2
+    high = min(high, MAX_CACHE_PADDING_TOKENS)
+    if (baseline + estimate_cache_padding_tokens(high)) < target:
+        return MAX_CACHE_PADDING_TOKENS
+
+    while low < high:
+        mid = (low + high) // 2
+        if baseline + estimate_cache_padding_tokens(mid) >= target:
+            high = mid
+        else:
+            low = mid + 1
+    return low
+
+
 def build_cache_padding_text(padding_tokens: int) -> str:
     """Build deterministic filler text to increase prompt length for cache thresholds."""
     safe_tokens = max(0, int(padding_tokens))
@@ -684,13 +742,8 @@ def build_cache_padding_text(padding_tokens: int) -> str:
             MAX_CACHE_PADDING_TOKENS,
         )
         safe_tokens = MAX_CACHE_PADDING_TOKENS
-    filler = " cachepad" * safe_tokens
-    return (
-        "Cache-normalization filler block. Ignore this block for classification.\n"
-        "CACHE_PAD_BEGIN"
-        f"{filler}\n"
-        "CACHE_PAD_END"
-    )
+    filler = CACHE_PADDING_TOKEN * safe_tokens
+    return f"{CACHE_PADDING_PREFIX}{filler}{CACHE_PADDING_SUFFIX}"
 
 
 # --------------------------- Data Loading ---------------------------------- #
@@ -718,6 +771,15 @@ class CompletionResult:
     request_controls_requested: Dict[str, str] = field(default_factory=dict)
     request_controls_sent: Dict[str, str] = field(default_factory=dict)
     request_controls_rejected: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PromptBuildArtifacts:
+    messages: List[Dict[str, str]]
+    shared_prefix_text: str
+    variable_payload_text: str
+    shared_prefix_tokens_estimate: int
+    variable_payload_tokens_estimate: int
 
 
 PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
@@ -1233,12 +1295,16 @@ class OpenAIConnector:
         reasoning_effort: Optional[str],
         thinking_level: Optional[str],
         effort: Optional[str],
+        prompt_cache_key: Optional[str],
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
         model_key = model.strip().lower()
+        normalized_prompt_cache_key = (
+            str(prompt_cache_key).strip() if prompt_cache_key is not None else ""
+        ) or None
         is_gemini_target = self._provider == "google" or "gemini" in model_key
         requested_controls: Dict[str, str] = {}
         rejected_controls: Dict[str, str] = {}
@@ -1299,6 +1365,8 @@ class OpenAIConnector:
                 "toplogprobs": "top_logprobs",
                 "top_logprobs": "top_logprobs",
                 "logprobs": "logprobs",
+                "promptcachekey": "prompt_cache_key",
+                "prompt_cache_key": "prompt_cache_key",
             }
             if normalized in alias_map:
                 return alias_map[normalized]
@@ -1429,6 +1497,9 @@ class OpenAIConnector:
             if "logprobs" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "logprobs"
+            if "prompt_cache_key" in text or "prompt cache key" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return "prompt_cache_key"
             return None
 
         def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
@@ -1685,6 +1756,8 @@ class OpenAIConnector:
                 request_args["text"] = text_payload
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            if normalized_prompt_cache_key:
+                request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             for unsupported in self._responses_unsupported_params.get(model_key, set()):
                 if remove_request_parameter(request_args, unsupported):
@@ -1799,6 +1872,8 @@ class OpenAIConnector:
                 request_args["verbosity"] = verbosity
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            if normalized_prompt_cache_key:
+                request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             for unsupported in self._chat_unsupported_params.get(model_key, set()):
                 if remove_request_parameter(request_args, unsupported):
@@ -1881,6 +1956,8 @@ class OpenAIConnector:
                 logging.debug("Verbosity control is ignored in legacy OpenAI SDK mode.")
             if service_tier and service_tier != "standard":
                 request_args["service_tier"] = service_tier
+            if normalized_prompt_cache_key:
+                request_args["prompt_cache_key"] = normalized_prompt_cache_key
             if reasoning_effort or thinking_level or effort:
                 mark_control_rejected("reasoning", "legacy_sdk_ignored")
                 mark_control_rejected("thinkingLevel", "legacy_sdk_ignored")
@@ -1928,7 +2005,7 @@ class OpenAIConnector:
 # --------------------------- Prompt Builder -------------------------------- #
 
 
-def build_messages(
+def build_prompt_artifacts(
     example: Example,
     system_prompt: Optional[str],
     enable_cot: bool,
@@ -1936,8 +2013,8 @@ def build_messages(
     prompt_layout: str = "standard",
     few_shot_context: Optional[List[Example]] = None,
     cache_padding_text: Optional[str] = None,
-) -> List[Dict[str, str]]:
-    """Construct chat messages for the classification prompt."""
+) -> PromptBuildArtifacts:
+    """Construct chat messages and shared-prefix metadata for cache targeting."""
     layout = (prompt_layout or "standard").strip().lower()
     alias_map = {
         "legacy": "standard",
@@ -2013,7 +2090,7 @@ def build_messages(
     )
     user_instructions.append("Do not include any text outside the JSON object.")
 
-    user_content = "\n".join(user_instructions)
+    user_content_prefix = "\n".join(user_instructions)
 
     def serialize_payload(payload: Any) -> str:
         if layout == "standard":
@@ -2066,28 +2143,58 @@ def build_messages(
             build_example_payload(sample, include_label=True)
             for sample in few_shot_context
         ]
-        user_content += (
+        user_content_prefix += (
             f"\n\nHere are {len(samples)} labeled example(s) you should mimic when classifying:\n"
             + serialize_payload(samples)
         )
 
     normalized_cache_padding = (cache_padding_text or "").strip()
     if normalized_cache_padding:
-        user_content += (
+        user_content_prefix += (
             "\n\nCache-length normalization block (ignore this for classification):\n"
             + normalized_cache_padding
         )
 
     target_payload = build_example_payload(example, include_label=False)
-
-    user_content += "\n\nNow classify this example:\n"
-    user_content += serialize_payload(target_payload)
+    user_content_prefix += "\n\nNow classify this example:\n"
+    variable_payload_text = serialize_payload(target_payload)
+    user_content = user_content_prefix + variable_payload_text
 
     messages = [
         {"role": "system", "content": system_msg},
         {"role": "user", "content": user_content},
     ]
-    return messages
+    shared_prefix_text = f"{system_msg}\n\n{user_content_prefix}"
+    shared_prefix_tokens_estimate = estimate_token_count_from_text(shared_prefix_text)
+    variable_payload_tokens_estimate = estimate_token_count_from_text(variable_payload_text)
+    return PromptBuildArtifacts(
+        messages=messages,
+        shared_prefix_text=shared_prefix_text,
+        variable_payload_text=variable_payload_text,
+        shared_prefix_tokens_estimate=shared_prefix_tokens_estimate,
+        variable_payload_tokens_estimate=variable_payload_tokens_estimate,
+    )
+
+
+def build_messages(
+    example: Example,
+    system_prompt: Optional[str],
+    enable_cot: bool,
+    include_explanation: bool,
+    prompt_layout: str = "standard",
+    few_shot_context: Optional[List[Example]] = None,
+    cache_padding_text: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Construct chat messages for the classification prompt."""
+    return build_prompt_artifacts(
+        example=example,
+        system_prompt=system_prompt,
+        enable_cot=enable_cot,
+        include_explanation=include_explanation,
+        prompt_layout=prompt_layout,
+        few_shot_context=few_shot_context,
+        cache_padding_text=cache_padding_text,
+    ).messages
 
 
 # --------------------------- Evaluation ------------------------------------ #
@@ -2108,6 +2215,8 @@ class Prediction:
     span_source: Optional[str] = None
     validator_status: Optional[str] = None
     validator_reason: Optional[str] = None
+    shared_prefix_tokens_estimate: Optional[int] = None
+    variable_prompt_tokens_estimate: Optional[int] = None
 
 
 class ProviderQuotaExceededError(RuntimeError):
@@ -2488,17 +2597,19 @@ def classify_example(
     strict_control_acceptance: bool = False,
     cache_padding_text: Optional[str] = None,
     cache_padding_tokens_estimate: int = 0,
+    prompt_cache_key: Optional[str] = None,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
-    base_messages = build_messages(
-        example,
-        system_prompt,
-        enable_cot,
-        include_explanation,
+    prompt_artifacts = build_prompt_artifacts(
+        example=example,
+        system_prompt=system_prompt,
+        enable_cot=enable_cot,
+        include_explanation=include_explanation,
         prompt_layout=prompt_layout,
         few_shot_context=few_shot_context,
         cache_padding_text=cache_padding_text,
     )
+    base_messages = prompt_artifacts.messages
     validator_patch_message: Optional[Dict[str, str]] = None
     validator_status: Optional[str] = None
     validator_reason: Optional[str] = None
@@ -2535,6 +2646,10 @@ def classify_example(
                 if cache_padding_tokens_estimate > 0
                 else 0,
             },
+            "prompt_estimate": {
+                "shared_prefix_tokens_estimate": prompt_artifacts.shared_prefix_tokens_estimate,
+                "variable_tokens_estimate": prompt_artifacts.variable_payload_tokens_estimate,
+            },
         }
         try:
             result = connector.complete(
@@ -2549,6 +2664,7 @@ def classify_example(
                 reasoning_effort=reasoning_effort,
                 thinking_level=thinking_level,
                 effort=effort,
+                prompt_cache_key=prompt_cache_key,
             )
             raw = result.text
             latest_raw_response = raw
@@ -2822,6 +2938,8 @@ def classify_example(
                 span_source=span_source or None,
                 validator_status=validator_status,
                 validator_reason=validator_reason,
+                shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+                variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
             ), interaction_logs
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
             last_error = exc
@@ -2886,6 +3004,8 @@ def classify_example(
             span_source=None,
             validator_status="accepted_after_parse_error",
             validator_reason=str(last_error),
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
         ), interaction_logs
     if is_quota_or_rate_limit_error(last_error):
         detail = str(last_error).strip() or last_error.__class__.__name__
@@ -2937,14 +3057,14 @@ def process_dataset(
     cache_pad_target_tokens = max(0, int(getattr(args, "cache_pad_target_tokens", 0) or 0))
     cache_padding_tokens_estimate = 0
     cache_padding_text: Optional[str] = None
-    cache_padding_calibration_prompt_tokens: Optional[int] = None
+    cache_padding_calibration_shared_prefix_tokens: Optional[int] = None
     cache_padding_calibration_example_id: Optional[str] = None
     cache_padding_applied_examples = 0
-    cache_padding_missing_usage_warned = False
+    cache_padding_missing_prefix_warned = False
 
     if cache_pad_target_tokens > 0:
         logging.info(
-            "Cache padding target enabled at %d prompt tokens. First successful response with prompt token usage will calibrate padding.",
+            "Cache padding target enabled at %d shared-prefix tokens. First successful example will calibrate shared-prefix padding.",
             cache_pad_target_tokens,
         )
 
@@ -3097,6 +3217,7 @@ def process_dataset(
                         strict_control_acceptance=args.strict_control_acceptance,
                         cache_padding_text=cache_padding_text,
                         cache_padding_tokens_estimate=cache_padding_tokens_estimate,
+                        prompt_cache_key=args.prompt_cache_key,
                     )
                 except ProviderQuotaExceededError as exc:
                     halted_by_quota = True
@@ -3131,25 +3252,29 @@ def process_dataset(
                     total_reported_tokens += prediction.total_tokens
 
                 if cache_pad_target_tokens > 0:
-                    if cache_padding_calibration_prompt_tokens is None:
-                        if prediction.prompt_tokens is None:
-                            if not cache_padding_missing_usage_warned:
+                    if cache_padding_calibration_shared_prefix_tokens is None:
+                        shared_prefix_tokens = prediction.shared_prefix_tokens_estimate
+                        if shared_prefix_tokens is None:
+                            if not cache_padding_missing_prefix_warned:
                                 logging.warning(
-                                    "Prompt token usage not returned yet; waiting to calibrate cache padding."
+                                    "Shared-prefix token estimate unavailable; waiting to calibrate cache padding."
                                 )
-                                cache_padding_missing_usage_warned = True
+                                cache_padding_missing_prefix_warned = True
                         else:
-                            cache_padding_missing_usage_warned = False
-                            cache_padding_calibration_prompt_tokens = prediction.prompt_tokens
+                            cache_padding_missing_prefix_warned = False
+                            cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
                             cache_padding_calibration_example_id = example.example_id
-                            deficit_tokens = cache_pad_target_tokens - prediction.prompt_tokens
-                            if deficit_tokens > 0:
-                                cache_padding_tokens_estimate = deficit_tokens
-                                cache_padding_text = build_cache_padding_text(deficit_tokens)
+                            required_padding_tokens = estimate_required_cache_padding_tokens(
+                                shared_prefix_tokens,
+                                cache_pad_target_tokens,
+                            )
+                            if required_padding_tokens > 0:
+                                cache_padding_tokens_estimate = required_padding_tokens
+                                cache_padding_text = build_cache_padding_text(required_padding_tokens)
                                 logging.info(
-                                    "Calibrated cache padding from example %s: prompt_tokens=%d, target=%d, applying estimated +%d tokens to subsequent prompts.",
+                                    "Calibrated cache padding from example %s: shared_prefix_tokens~%d, target=%d, applying +%d padding units to subsequent prompts.",
                                     example.example_id,
-                                    prediction.prompt_tokens,
+                                    shared_prefix_tokens,
                                     cache_pad_target_tokens,
                                     cache_padding_tokens_estimate,
                                 )
@@ -3157,9 +3282,9 @@ def process_dataset(
                                 cache_padding_tokens_estimate = 0
                                 cache_padding_text = None
                                 logging.info(
-                                    "Cache padding target already met on calibration example %s (prompt_tokens=%d, target=%d); no padding will be applied.",
+                                    "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
                                     example.example_id,
-                                    prediction.prompt_tokens,
+                                    shared_prefix_tokens,
                                     cache_pad_target_tokens,
                                 )
 
@@ -3257,8 +3382,11 @@ def process_dataset(
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
     cache_padding_summary = {
         "enabled": cache_pad_target_tokens > 0,
+        "target_shared_prefix_tokens": cache_pad_target_tokens,
+        "calibration_shared_prefix_tokens": cache_padding_calibration_shared_prefix_tokens,
+        # Backwards-compatible aliases kept for existing dashboards.
         "target_prompt_tokens": cache_pad_target_tokens,
-        "calibration_prompt_tokens": cache_padding_calibration_prompt_tokens,
+        "calibration_prompt_tokens": cache_padding_calibration_shared_prefix_tokens,
         "calibration_example_id": cache_padding_calibration_example_id,
         "applied_padding_tokens_estimate": cache_padding_tokens_estimate,
         "examples_with_padding_applied": cache_padding_applied_examples,
@@ -3314,10 +3442,10 @@ def process_dataset(
 
     if cache_pad_target_tokens > 0:
         logging.info(
-            "Cache padding summary -> target: %d, calibration prompt tokens: %s, applied padding estimate: %d, padded examples: %d.",
+            "Cache padding summary -> target shared-prefix: %d, calibration shared-prefix tokens: %s, applied padding units: %d, padded examples: %d.",
             cache_pad_target_tokens,
-            cache_padding_calibration_prompt_tokens
-            if cache_padding_calibration_prompt_tokens is not None
+            cache_padding_calibration_shared_prefix_tokens
+            if cache_padding_calibration_shared_prefix_tokens is not None
             else "N/A",
             cache_padding_tokens_estimate,
             cache_padding_applied_examples,
@@ -3486,9 +3614,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=int,
         default=0,
         help=(
-            "Optional prompt-token target for cache padding. "
-            "If >0, the first successful response calibrates prompt length; "
-            "subsequent prompts are padded toward this token target."
+            "Optional shared-prefix token target for cache padding. "
+            "If >0, the first successful example calibrates shared-prefix length; "
+            "subsequent prompts are padded toward this shared-prefix target."
+        ),
+    )
+    parser.add_argument(
+        "--prompt_cache_key",
+        default=None,
+        help=(
+            "Optional provider cache-routing key (when supported) to improve "
+            "prompt-cache hit consistency for stable prompt prefixes."
         ),
     )
     parser.add_argument(
@@ -3747,9 +3883,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     if args.cache_pad_target_tokens > 0:
         logging.info(
-            "Cache padding target configured: %d prompt tokens (0 disables padding).",
+            "Cache padding target configured: %d shared-prefix tokens (0 disables padding).",
             args.cache_pad_target_tokens,
         )
+        if args.cache_pad_target_tokens < 1024:
+            logging.warning(
+                "Cache padding target %d is below 1024 shared-prefix tokens; OpenAI prompt caching usually requires at least 1024 shared-prefix tokens.",
+                args.cache_pad_target_tokens,
+            )
+    if args.prompt_cache_key:
+        logging.info("Prompt cache key configured: %s", args.prompt_cache_key)
 
     connector = OpenAIConnector(
         api_key=api_key,
@@ -3783,6 +3926,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     effort=args.effort,
                     verbosity=args.verbosity,
                     cache_pad_target_tokens=args.cache_pad_target_tokens,
+                    prompt_cache_key=args.prompt_cache_key,
                     max_retries=args.max_retries,
                 )
             )
