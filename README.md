@@ -3,7 +3,7 @@
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible model for each example, and scores the predictions against gold labels. A companion browser-based configurator helps compose the command-line invocation.
 
 - **End-to-end evaluation**: process one or many input CSVs, merge optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
-- **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, provider-specific reasoning/thinking effort and verbosity levels, few-shot demonstrations, and custom system prompts.
+- **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, prompt payload layout, provider-specific reasoning/thinking effort and verbosity levels, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
 - **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
 - **Metadata preservation**: the optional `info` column feeds the model extra guidance, and any additional columns are carried through to the output file.
@@ -57,6 +57,7 @@ python benchmark_agent.py ^
   --model gpt-4o-mini ^
   --temperature 0.0 ^
   --top_p 1.0 ^
+  --prompt_layout compact ^
   --reasoning_effort medium ^
   --request_interval_ms 250 ^
   --system_prompt "You are a linguistic classifier..." ^
@@ -101,6 +102,15 @@ Use provider-specific controls when you need tighter control over model "thinkin
 
 These flags are optional and can be omitted to leave model defaults unchanged.
 Use `--strict_control_acceptance` to fail examples when requested controls are rejected or stripped from the final successful request payload.
+
+### Prompt Layout (Caching)
+
+Use `--prompt_layout` to control how much duplicated per-example text is sent:
+
+- `standard` (default): existing verbose payload (`left_context`/`node`/`right_context` + `marked_example` + `classification_target.note`).
+- `compact`: removes duplicated fields while keeping explicit context fields and `classification_target`.
+
+For prompt-caching experiments, start with `--prompt_layout compact` and keep other prompt settings fixed.
 
 ### Command Builder GUI
 
@@ -178,6 +188,7 @@ Running the agent creates:
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), and token usage statistics. Confidence is included when the model supplies a valid value; entries that violated the span contract omit it.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
   The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, and `verbosity` controls when used.
+  It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
 - A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.

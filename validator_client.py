@@ -26,10 +26,12 @@ class ValidatorRunInfo:
     model: str
     include_explanation: bool
     enable_cot: bool
+    prompt_layout: str
     reasoning_effort: Optional[str]
     thinking_level: Optional[str]
     effort: Optional[str]
     verbosity: Optional[str]
+    cache_pad_target_tokens: int
     max_retries: int
 
 
@@ -100,10 +102,12 @@ class ValidatorClient:
                 "model": run_info.model,
                 "include_explanation": run_info.include_explanation,
                 "enable_cot": run_info.enable_cot,
+                "prompt_layout": run_info.prompt_layout,
                 "reasoning_effort": run_info.reasoning_effort,
                 "thinking_level": run_info.thinking_level,
                 "effort": run_info.effort,
                 "verbosity": run_info.verbosity,
+                "cache_pad_target_tokens": run_info.cache_pad_target_tokens,
                 "max_retries": run_info.max_retries,
             },
         }

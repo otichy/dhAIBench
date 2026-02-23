@@ -285,6 +285,33 @@
         color: var(--muted);
         font-size: 0.92rem;
       }
+      .token-estimate {
+        margin: 0 0 0.9rem;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid #d5e4f3;
+        background: #f5f9ff;
+        border-radius: 8px;
+        font-size: 0.88rem;
+        color: #18344d;
+        line-height: 1.35;
+      }
+      .token-estimate strong {
+        font-weight: 700;
+      }
+      .token-estimate-controls {
+        margin: 0 0 0.9rem;
+        display: grid;
+        gap: 0.45rem;
+      }
+      .token-estimate-controls input[type="file"] {
+        margin: 0;
+        padding: 0.15rem 0;
+      }
+      .token-estimate-status {
+        margin: 0;
+        font-size: 0.83rem;
+        color: #35526d;
+      }
       code {
         font-weight: bolder;
       }
@@ -493,6 +520,25 @@
                   >Few-shot Examples
                   <input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" />
                 </label>
+                <label
+                  >Prompt Layout
+                  <select id="prompt_layout" name="prompt_layout">
+                    <option value="standard" selected>Standard</option>
+                    <option value="compact">Compact (cache-optimized)</option>
+                  </select>
+                </label>
+                <label
+                  >Cache Pad Target Tokens
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    id="cache_pad_target_tokens"
+                    name="cache_pad_target_tokens"
+                    value="0"
+                  />
+                  <span class="hint">0 disables padding. If set, prompt token length is calibrated from the first response and padded on subsequent prompts.</span>
+                </label>
               </div>
             </details>
 
@@ -612,6 +658,8 @@
                           [--provider PROVIDER]
                           [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
+                          [--prompt_layout {standard,compact}]
+                          [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
                           [--enable_cot] [--no_explanation]
                           [--logprobs | --no-logprobs] [--calibration]
                           [--api_key_var API_KEY_VAR]
@@ -683,6 +731,15 @@ options:
   --few_shot_examples FEW_SHOT_EXAMPLES
                         Number of labeled examples to prepend as few-shot
                         demonstrations.
+  --prompt_layout {standard,compact}
+                        Prompt payload layout. standard preserves the current
+                        verbose payload; compact removes duplicated fields to
+                        improve cache reuse.
+  --cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS
+                        Optional prompt-token target for cache padding. If >0,
+                        the first successful response calibrates prompt
+                        length; subsequent prompts are padded toward this
+                        token target.
   --enable_cot          If set, encourages the model to reason step-by-step
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
@@ -752,6 +809,16 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       <aside class="command-panel">
         <h2>Live Command</h2>
         <p class="panel-note">Updates as you edit fields. Flags and values are color-coded for quick scanning.</p>
+        <div id="prompt-token-estimate" class="token-estimate">
+          <strong>Base prompt estimate:</strong> waiting for input...
+        </div>
+        <div class="token-estimate-controls">
+          <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
+          <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
+          <p id="prompt-token-estimate-status" class="token-estimate-status">
+            Optional: sample a CSV to include real row text in the estimate.
+          </p>
+        </div>
         <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
         <div class="command-actions">
           <button type="button" id="copy-button">Copy Command</button>
@@ -768,6 +835,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
       const form = document.getElementById("config-form");
       const commandOutput = document.getElementById("command-output");
+      const promptTokenEstimate = document.getElementById("prompt-token-estimate");
+      const promptTokenEstimateStatus = document.getElementById("prompt-token-estimate-status");
+      const estimateCsvFileInput = document.getElementById("estimate-csv-file");
+      const sampleCsvButton = document.getElementById("sample-csv-button");
       const copyButton = document.getElementById("copy-button");
       const providerSelect = document.getElementById("provider");
       const apiKeyVarInput = document.getElementById("api_key_var");
@@ -782,6 +853,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
           ? window.MODEL_CATALOG
           : {};
+      const PROMPT_ESTIMATE_SAMPLE_LIMIT = 100;
+      const PROMPT_CACHE_HINT_TOKENS = 1024;
+      let sampledEstimateRows = null;
+      let sampledEstimateSource = "";
 
       const defaultValues = {
         provider: "openai",
@@ -795,6 +870,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         strict_control_acceptance: false,
         request_interval_ms: "0",
         few_shot_examples: "0",
+        prompt_layout: "standard",
+        cache_pad_target_tokens: "0",
         service_tier: "standard",
         include_explanations: true,
         api_key_var: "",
@@ -859,6 +936,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         strict_control_acceptance:
           "Abort examples where requested controls are rejected or omitted from the final successful request.",
         few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
+        prompt_layout:
+          "Prompt payload shape. compact reduces duplicated per-example text to improve cache reuse.",
+        cache_pad_target_tokens:
+          "Optional cache-padding target prompt tokens. First successful request calibrates baseline; later prompts are padded toward this target.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
         api_key_var: "Environment variable that stores the API key used for this run.",
@@ -928,6 +1009,435 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
             return `<span class="cmd-token ${cls}">${escapeHtml(token)}</span>`;
           })
           .join('<span class="cmd-space"> </span>');
+      }
+
+      function getPromptEstimateConfig(data) {
+        const rawSystemPrompt = data.get("system_prompt");
+        const trimmedSystemPrompt =
+          typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
+        const effectiveSystemPrompt = trimmedSystemPrompt || defaultValues.system_prompt;
+        const mandatorySystemAppend =
+          "Classify ONLY the text wrapped inside [[ ]]. Use surrounding context as evidence only. If uncertain, return \"unclassified\".";
+        const systemMessage = `${effectiveSystemPrompt}\n\n${mandatorySystemAppend}`;
+
+        const layoutRaw = (data.get("prompt_layout") || defaultValues.prompt_layout || "standard")
+          .toString()
+          .trim()
+          .toLowerCase();
+        const layout = layoutRaw === "compact" ? "compact" : "standard";
+        const includeExplanations = Boolean(data.get("include_explanations"));
+        const enableCot = Boolean(data.get("enable_cot"));
+        const fewShotRaw = (data.get("few_shot_examples") || "0").toString().trim();
+        const parsedFewShot = Number.parseInt(fewShotRaw || "0", 10);
+        const fewShotCount =
+          Number.isFinite(parsedFewShot) && parsedFewShot > 0 ? parsedFewShot : 0;
+
+        const userInstructions =
+          layout === "standard"
+            ? [
+                "You will receive left_context, node, right_context, info, and a marked example where node is wrapped as [[node]].",
+                "If the node contains inner [[...]] spans, classify only those marked spans; otherwise classify the full node.",
+                "Identify the label that best matches the required span according to the task definition.",
+                "The payload includes a classification_target helper indicating exactly what text must be classified.",
+              ]
+            : [
+                "You will receive left_context, node, and right_context fields for a text excerpt.",
+                "If the node contains inner [[...]] spans, classify only those marked spans; otherwise classify the full node.",
+                "Identify the label that best matches the required span according to the task definition.",
+                "The payload includes a classification_target helper indicating exactly what text must be classified.",
+              ];
+
+        if (enableCot) {
+          userInstructions.splice(
+            2,
+            0,
+            "Think through the linguistic evidence step-by-step before committing to the label."
+          );
+        }
+
+        if (includeExplanations) {
+          userInstructions.push(
+            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1]), node_echo (string), span_source (string)."
+          );
+        } else {
+          userInstructions.push(
+            "Return a JSON object with keys: label (string), confidence (float in [0,1]), node_echo (string), span_source (string). Do not include an explanation field."
+          );
+        }
+
+        userInstructions.push(
+          'Set span_source to "node" when the entire node is being classified. If any inner [[...]] spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text.'
+        );
+        userInstructions.push(
+          "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
+        );
+        userInstructions.push(
+          "Contract: if node_echo or span_source fail to meet these requirements, the response will be rejected."
+        );
+        userInstructions.push("Do not include any text outside the JSON object.");
+
+        return {
+          layout,
+          fewShotCount,
+          systemMessage,
+          instructionsText: userInstructions.join("\n"),
+        };
+      }
+
+      function estimateTokensFromChars(charCount) {
+        const safeChars = Math.max(1, charCount);
+        return {
+          estimateMid: Math.max(1, Math.round(safeChars / 4)),
+          estimateLow: Math.max(1, Math.round(safeChars / 4.5)),
+          estimateHigh: Math.max(1, Math.round(safeChars / 3.5)),
+        };
+      }
+
+      function serializePayloadForEstimate(layout, payload) {
+        return layout === "standard"
+          ? JSON.stringify(payload, null, 2)
+          : JSON.stringify(payload);
+      }
+
+      function extractMarkedSpanTarget(nodeText) {
+        const node = (nodeText || "").toString();
+        const matches = [];
+        const pattern = /\[\[([\s\S]*?)\]\]/g;
+        let match;
+        while ((match = pattern.exec(node)) !== null) {
+          const span = (match[1] || "").trim();
+          if (span) {
+            matches.push(span);
+          }
+        }
+        if (matches.length) {
+          return {
+            focus: "marked_subspan",
+            text: matches.join(" "),
+          };
+        }
+        return {
+          focus: "node",
+          text: node.trim(),
+        };
+      }
+
+      function markNodeInContextForEstimate(left, node, right) {
+        const leftPart = (left || "").toString().trim();
+        const nodePartRaw = (node || "").toString().trim();
+        const rightPart = (right || "").toString().trim();
+        const nodePart =
+          nodePartRaw.includes("[[") || nodePartRaw.includes("]]")
+            ? nodePartRaw
+            : `[[${nodePartRaw}]]`;
+        return [leftPart, nodePart, rightPart].filter((part) => part.length > 0).join(" ");
+      }
+
+      function buildEstimateTargetPayload(layout, row) {
+        const leftContext = (row.leftContext || "").toString();
+        const node = (row.node || "").toString();
+        const rightContext = (row.rightContext || "").toString();
+        const info = (row.info || "").toString();
+        const target = extractMarkedSpanTarget(node);
+        const classificationNote =
+          target.focus === "marked_subspan"
+            ? "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
+            : "Classify the entire node; left/right contexts simply provide supporting evidence.";
+
+        if (layout === "compact") {
+          const compactPayload = {
+            left_context: leftContext,
+            node,
+            right_context: rightContext,
+            classification_target: target,
+          };
+          if (info) {
+            compactPayload.info = info;
+          }
+          return compactPayload;
+        }
+
+        return {
+          left_context: leftContext,
+          node,
+          right_context: rightContext,
+          info,
+          marked_example: markNodeInContextForEstimate(leftContext, node, rightContext),
+          classification_target: {
+            focus: target.focus,
+            text: target.text,
+            note: classificationNote,
+          },
+        };
+      }
+
+      function buildPromptEstimateForRow(data, row) {
+        const config = getPromptEstimateConfig(data);
+        let userContent = config.instructionsText;
+        if (config.fewShotCount > 0) {
+          userContent +=
+            `\n\nHere are ${config.fewShotCount} labeled example(s) you should mimic when classifying:\n` +
+            "[example content omitted in estimate]";
+        }
+        const payload = buildEstimateTargetPayload(config.layout, row);
+        userContent += `\n\nNow classify this example:\n${serializePayloadForEstimate(config.layout, payload)}`;
+        const baseChars = config.systemMessage.length + userContent.length;
+        const tokenEstimates = estimateTokensFromChars(baseChars);
+        return {
+          layout: config.layout,
+          fewShotCount: config.fewShotCount,
+          baseChars,
+          ...tokenEstimates,
+        };
+      }
+
+      function estimateBasePromptTokens(data) {
+        return buildPromptEstimateForRow(data, {
+          leftContext: "<left context from CSV>",
+          node: "<node from CSV>",
+          rightContext: "<right context from CSV>",
+          info: "<optional info from CSV>",
+        });
+      }
+
+      function computeSampledPromptEstimate(data, sampledRows) {
+        if (!Array.isArray(sampledRows) || sampledRows.length === 0) {
+          return null;
+        }
+        const perRow = sampledRows.map((row) => buildPromptEstimateForRow(data, row));
+        const mids = perRow.map((item) => item.estimateMid);
+        const lows = perRow.map((item) => item.estimateLow);
+        const highs = perRow.map((item) => item.estimateHigh);
+        const chars = perRow.map((item) => item.baseChars);
+        const overCacheThreshold = mids.filter((value) => value >= PROMPT_CACHE_HINT_TOKENS).length;
+        return {
+          count: perRow.length,
+          avgMid: Math.round(mids.reduce((sum, value) => sum + value, 0) / mids.length),
+          minMid: Math.min(...mids),
+          maxMid: Math.max(...mids),
+          minLow: Math.min(...lows),
+          maxHigh: Math.max(...highs),
+          avgChars: Math.round(chars.reduce((sum, value) => sum + value, 0) / chars.length),
+          overCacheThreshold,
+        };
+      }
+
+      function setPromptEstimateStatus(message, isError = false) {
+        if (!promptTokenEstimateStatus) {
+          return;
+        }
+        promptTokenEstimateStatus.textContent = message || "";
+        promptTokenEstimateStatus.style.color = isError ? "#b00020" : "#35526d";
+      }
+
+      function updatePromptTokenEstimate(data) {
+        if (!promptTokenEstimate) {
+          return;
+        }
+        const estimate = estimateBasePromptTokens(data);
+        const fewShotWarning =
+          estimate.fewShotCount > 0
+            ? ` Few-shot example text is omitted (configured count: ${estimate.fewShotCount}).`
+            : "";
+        if (Array.isArray(sampledEstimateRows) && sampledEstimateRows.length > 0) {
+          const sampled = computeSampledPromptEstimate(data, sampledEstimateRows);
+          if (sampled) {
+            const rowWord = sampled.count === 1 ? "row" : "rows";
+            let estimateHtml =
+              `<strong>Complete prompt estimate (${sampled.count} sampled ${rowWord}):</strong> ` +
+              `~${sampled.avgMid} avg tokens ` +
+              `(min ${sampled.minMid}, max ${sampled.maxMid}; range ${sampled.minLow}-${sampled.maxHigh}), ` +
+              `${sampled.avgChars} avg chars.` +
+              `<br>${sampled.overCacheThreshold}/${sampled.count} sampled ${rowWord} reach ` +
+              `~${PROMPT_CACHE_HINT_TOKENS}+ tokens (cache threshold hint).` +
+              `<br>Layout: <code>${escapeHtml(estimate.layout)}</code>.`;
+            if (sampledEstimateSource) {
+              estimateHtml += `<br>Source: <code>${escapeHtml(sampledEstimateSource)}</code>.`;
+            }
+            promptTokenEstimate.innerHTML = estimateHtml;
+            return;
+          }
+        }
+
+        promptTokenEstimate.innerHTML =
+          `<strong>Fallback template estimate (CSV sample missing):</strong> ` +
+          `~${estimate.estimateMid} tokens (${estimate.estimateLow}-${estimate.estimateHigh}), ` +
+          `${estimate.baseChars} chars.<br>` +
+          `Layout: <code>${escapeHtml(estimate.layout)}</code>. ` +
+          `Select a CSV file or run sampling to estimate complete per-row prompts.${fewShotWarning}`;
+      }
+
+      function parseDelimitedRows(text, delimiter) {
+        const rows = [];
+        let currentRow = [];
+        let currentCell = "";
+        let inQuotes = false;
+        let index = 0;
+        while (index < text.length) {
+          const char = text[index];
+          if (char === '"') {
+            if (inQuotes && text[index + 1] === '"') {
+              currentCell += '"';
+              index += 2;
+              continue;
+            }
+            inQuotes = !inQuotes;
+            index += 1;
+            continue;
+          }
+          if (!inQuotes && char === delimiter) {
+            currentRow.push(currentCell);
+            currentCell = "";
+            index += 1;
+            continue;
+          }
+          if (!inQuotes && (char === "\n" || char === "\r")) {
+            currentRow.push(currentCell);
+            rows.push(currentRow);
+            currentRow = [];
+            currentCell = "";
+            if (char === "\r" && text[index + 1] === "\n") {
+              index += 2;
+            } else {
+              index += 1;
+            }
+            continue;
+          }
+          currentCell += char;
+          index += 1;
+        }
+        if (currentCell.length > 0 || currentRow.length > 0) {
+          currentRow.push(currentCell);
+          rows.push(currentRow);
+        }
+        return rows;
+      }
+
+      function normalizeHeaderName(value) {
+        return (value || "")
+          .toString()
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
+      }
+
+      function parseCsvExamplesForEstimate(text) {
+        const content = (text || "").replace(/^\uFEFF/, "");
+        if (!content.trim()) {
+          return [];
+        }
+        let rows = parseDelimitedRows(content, ";");
+        if (rows.length > 0 && rows[0].length <= 1) {
+          rows = parseDelimitedRows(content, ",");
+        }
+        if (!rows.length) {
+          return [];
+        }
+        const headers = rows[0].map((value) => value.trim());
+        const headerIndex = {};
+        headers.forEach((header, idx) => {
+          const normalized = normalizeHeaderName(header);
+          if (normalized && !Object.prototype.hasOwnProperty.call(headerIndex, normalized)) {
+            headerIndex[normalized] = idx;
+          }
+        });
+        const leftIdx = headerIndex.leftcontext;
+        const nodeIdx = headerIndex.node;
+        const rightIdx = headerIndex.rightcontext;
+        const infoIdx =
+          headerIndex.info !== undefined
+            ? headerIndex.info
+            : headerIndex.metadata !== undefined
+              ? headerIndex.metadata
+              : null;
+        if (leftIdx === undefined || nodeIdx === undefined || rightIdx === undefined) {
+          throw new Error("CSV must include leftContext, node, and rightContext columns.");
+        }
+
+        const records = [];
+        for (let idx = 1; idx < rows.length; idx += 1) {
+          const row = rows[idx];
+          if (!Array.isArray(row) || row.every((cell) => !String(cell || "").trim())) {
+            continue;
+          }
+          records.push({
+            leftContext: row[leftIdx] || "",
+            node: row[nodeIdx] || "",
+            rightContext: row[rightIdx] || "",
+            info: infoIdx === null ? "" : row[infoIdx] || "",
+          });
+        }
+        return records;
+      }
+
+      function sampleEvenly(records, sampleSize) {
+        if (!Array.isArray(records) || records.length === 0) {
+          return [];
+        }
+        if (records.length <= sampleSize) {
+          return records.slice();
+        }
+        const sampled = [];
+        const step = records.length / sampleSize;
+        for (let idx = 0; idx < sampleSize; idx += 1) {
+          sampled.push(records[Math.floor(idx * step)]);
+        }
+        return sampled;
+      }
+
+      async function readCsvTextForEstimate() {
+        if (estimateCsvFileInput && estimateCsvFileInput.files && estimateCsvFileInput.files.length > 0) {
+          const csvFile = estimateCsvFileInput.files[0];
+          const text = await csvFile.text();
+          return { text, sourceLabel: csvFile.name || "selected file" };
+        }
+        const inputRaw = (form.elements.namedItem("input_path")?.value || "").toString();
+        const inputPaths = inputRaw
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        if (!inputPaths.length) {
+          throw new Error("No input CSV path is set. Provide input path or choose a local file.");
+        }
+        const firstPath = inputPaths[0];
+        if (/^[a-zA-Z]:[\\/]/.test(firstPath)) {
+          throw new Error("Local absolute paths cannot be read by browser fetch. Use the file picker.");
+        }
+        const response = await fetch(firstPath, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Failed to load "${firstPath}" (HTTP ${response.status}). Use the file picker.`);
+        }
+        const text = await response.text();
+        return { text, sourceLabel: firstPath };
+      }
+
+      async function sampleCsvForPromptEstimate() {
+        setPromptEstimateStatus("Sampling CSV rows for token estimate...");
+        if (sampleCsvButton) {
+          sampleCsvButton.disabled = true;
+        }
+        try {
+          const { text, sourceLabel } = await readCsvTextForEstimate();
+          const records = parseCsvExamplesForEstimate(text);
+          if (!records.length) {
+            throw new Error("CSV has no data rows after header.");
+          }
+          sampledEstimateRows = sampleEvenly(records, PROMPT_ESTIMATE_SAMPLE_LIMIT);
+          sampledEstimateSource = sourceLabel;
+          updatePromptTokenEstimate(new FormData(form));
+          setPromptEstimateStatus(
+            `Sampled ${sampledEstimateRows.length}/${records.length} rows from ${sourceLabel}.`
+          );
+        } catch (error) {
+          sampledEstimateRows = null;
+          sampledEstimateSource = "";
+          updatePromptTokenEstimate(new FormData(form));
+          setPromptEstimateStatus(error && error.message ? error.message : "CSV sampling failed.", true);
+        } finally {
+          if (sampleCsvButton) {
+            sampleCsvButton.disabled = false;
+          }
+        }
       }
 
       function encodeSystemPromptForCli(value) {
@@ -1071,6 +1581,16 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           args.push("--few_shot_examples", fewShot);
         }
 
+        const promptLayout = data.get("prompt_layout");
+        if (promptLayout && promptLayout !== defaultValues.prompt_layout) {
+          args.push("--prompt_layout", promptLayout);
+        }
+
+        const cachePadTargetTokens = data.get("cache_pad_target_tokens")?.toString().trim() ?? "";
+        if (cachePadTargetTokens && Number(cachePadTargetTokens) > 0) {
+          args.push("--cache_pad_target_tokens", cachePadTargetTokens);
+        }
+
         const labelsPath = data.get("labels_path")?.trim();
         if (labelsPath) {
           args.push("--labels", shellQuote(labelsPath));
@@ -1154,6 +1674,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
         latestCommandText = args.join(" ");
         commandOutput.innerHTML = renderCommandTokens(args);
+        updatePromptTokenEstimate(data);
       }
 
       function ensureProviderRegistered(slug, labelHint) {
@@ -1316,6 +1837,14 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         if (modelClearButton) {
           modelClearButton.title = "Clear the model input field.";
         }
+        if (sampleCsvButton) {
+          sampleCsvButton.title =
+            "Manually re-sample CSV and refresh prompt token estimate (also runs automatically on file selection).";
+        }
+        if (estimateCsvFileInput) {
+          estimateCsvFileInput.title =
+            "Optional local CSV file used only for prompt-token estimation.";
+        }
       }
 
       function saveConfig() {
@@ -1405,6 +1934,17 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
       form.addEventListener("input", handleFormChange);
       copyButton.addEventListener("click", copyCommand);
+      if (sampleCsvButton) {
+        sampleCsvButton.addEventListener("click", sampleCsvForPromptEstimate);
+      }
+      if (estimateCsvFileInput) {
+        estimateCsvFileInput.addEventListener("change", async () => {
+          sampledEstimateRows = null;
+          sampledEstimateSource = "";
+          setPromptEstimateStatus("Local CSV selected. Sampling now...");
+          await sampleCsvForPromptEstimate();
+        });
+      }
       if (refreshModelsButton) {
         refreshModelsButton.addEventListener("click", refreshModelCatalogFromScript);
       }

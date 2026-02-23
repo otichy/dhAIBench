@@ -33,16 +33,17 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
 
-NODE_MARKER_LEFT = "⟦"
-NODE_MARKER_RIGHT = "⟧"
+NODE_MARKER_LEFT = "âź¦"
+NODE_MARKER_RIGHT = "âź§"
 SPAN_SOURCE_NODE = "node"
 SPAN_SOURCE_MARKED_SUBSPAN = "marked_subspan"
 MANDATORY_SYSTEM_APPEND = (
-    "Classify ONLY the text that is explicitly wrapped inside ⟦ ⟧ (the 'node' or its marked sub-span). "
+    "Classify ONLY the text that is explicitly wrapped inside âź¦ âź§ (the 'node' or its marked sub-span). "
     "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. "
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
+MAX_CACHE_PADDING_TOKENS = 200_000
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -253,6 +254,101 @@ def compute_request_control_summary(
         "attempts_total": attempts_total,
         "attempts_with_control_telemetry": attempts_with_telemetry,
         "per_control": per_control,
+    }
+
+
+def _flatten_numeric_metrics(
+    value: Any,
+    prefix: str = "",
+    out: Optional[Dict[str, float]] = None,
+) -> Dict[str, float]:
+    """Flatten nested numeric values into a dot-path map."""
+    if out is None:
+        out = {}
+    if isinstance(value, dict):
+        for raw_key, nested in value.items():
+            key = str(raw_key)
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            _flatten_numeric_metrics(nested, next_prefix, out)
+        return out
+    if isinstance(value, list):
+        for nested in value:
+            next_prefix = f"{prefix}[]" if prefix else "[]"
+            _flatten_numeric_metrics(nested, next_prefix, out)
+        return out
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+        if math.isfinite(number):
+            out[prefix or "value"] = out.get(prefix or "value", 0.0) + number
+    return out
+
+
+def _normalize_metric_number(value: float) -> Any:
+    """Render whole-number floats as ints in metrics output."""
+    rounded = round(value)
+    if math.isfinite(value) and abs(value - rounded) < 1e-9:
+        return int(rounded)
+    return value
+
+
+def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate usage-metadata/caching signals from prompt logs."""
+    attempts_total = 0
+    attempts_with_usage_metadata = 0
+    attempts_with_cached_token_signals = 0
+    cached_tokens_total_estimate = 0.0
+    cache_read_tokens_total = 0.0
+    cache_write_tokens_total = 0.0
+    cache_token_fields_totals: Dict[str, float] = {}
+
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        attempts = record.get("attempts")
+        if not isinstance(attempts, list):
+            continue
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempts_total += 1
+            response_payload = attempt.get("response")
+            if not isinstance(response_payload, dict):
+                continue
+            usage_metadata = response_payload.get("usage_metadata")
+            if not isinstance(usage_metadata, dict):
+                continue
+            attempts_with_usage_metadata += 1
+
+            flattened = _flatten_numeric_metrics(usage_metadata)
+            attempt_cache_values: List[float] = []
+            for field_path, value in flattened.items():
+                lowered = field_path.lower()
+                if ("cache" in lowered or "cached" in lowered) and "token" in lowered:
+                    cache_token_fields_totals[field_path] = (
+                        cache_token_fields_totals.get(field_path, 0.0) + value
+                    )
+                    attempt_cache_values.append(value)
+                    if "read" in lowered or "hit" in lowered:
+                        cache_read_tokens_total += value
+                    if "write" in lowered or "creation" in lowered or "create" in lowered:
+                        cache_write_tokens_total += value
+
+            if attempt_cache_values:
+                attempts_with_cached_token_signals += 1
+                cached_tokens_total_estimate += max(attempt_cache_values)
+
+    normalized_fields = {
+        field_path: _normalize_metric_number(value)
+        for field_path, value in sorted(cache_token_fields_totals.items())
+    }
+    return {
+        "attempts_total": attempts_total,
+        "attempts_with_usage_metadata": attempts_with_usage_metadata,
+        "attempts_with_cached_token_signals": attempts_with_cached_token_signals,
+        "cached_tokens_total_estimate": _normalize_metric_number(cached_tokens_total_estimate),
+        "cache_read_tokens_total": _normalize_metric_number(cache_read_tokens_total),
+        "cache_write_tokens_total": _normalize_metric_number(cache_write_tokens_total),
+        "cache_token_fields_totals": normalized_fields,
     }
 
 
@@ -576,6 +672,27 @@ def resolve_span_contract(node: str) -> Tuple[str, str]:
     return node.strip(), SPAN_SOURCE_NODE
 
 
+def build_cache_padding_text(padding_tokens: int) -> str:
+    """Build deterministic filler text to increase prompt length for cache thresholds."""
+    safe_tokens = max(0, int(padding_tokens))
+    if safe_tokens <= 0:
+        return ""
+    if safe_tokens > MAX_CACHE_PADDING_TOKENS:
+        logging.warning(
+            "Requested cache padding tokens (%d) exceed safe cap (%d); truncating.",
+            safe_tokens,
+            MAX_CACHE_PADDING_TOKENS,
+        )
+        safe_tokens = MAX_CACHE_PADDING_TOKENS
+    filler = " cachepad" * safe_tokens
+    return (
+        "Cache-normalization filler block. Ignore this block for classification.\n"
+        "CACHE_PAD_BEGIN"
+        f"{filler}\n"
+        "CACHE_PAD_END"
+    )
+
+
 # --------------------------- Data Loading ---------------------------------- #
 
 
@@ -597,6 +714,7 @@ class CompletionResult:
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     token_logprobs: Optional[List[Dict[str, Any]]] = None
+    usage_metadata: Optional[Dict[str, Any]] = None
     request_controls_requested: Dict[str, str] = field(default_factory=dict)
     request_controls_sent: Dict[str, str] = field(default_factory=dict)
     request_controls_rejected: Dict[str, str] = field(default_factory=dict)
@@ -1496,6 +1614,58 @@ class OpenAIConnector:
                     return int(value)
             return None
 
+        def serialize_usage_payload(value: Any) -> Any:
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, dict):
+                serialized: Dict[str, Any] = {}
+                for raw_key, raw_value in value.items():
+                    if raw_value is None:
+                        continue
+                    serialized[str(raw_key)] = serialize_usage_payload(raw_value)
+                return serialized
+            if isinstance(value, (list, tuple)):
+                serialized_items = [
+                    serialize_usage_payload(item) for item in value if item is not None
+                ]
+                return serialized_items
+            for method_name in ("model_dump", "to_dict", "dict"):
+                method = getattr(value, method_name, None)
+                if callable(method):
+                    try:
+                        dumped = method()
+                    except TypeError:
+                        continue
+                    except Exception:
+                        continue
+                    return serialize_usage_payload(dumped)
+            value_dict = getattr(value, "__dict__", None)
+            if isinstance(value_dict, dict):
+                return serialize_usage_payload(value_dict)
+            return str(value)
+
+        def collect_usage_metadata(response_obj: Any, usage_obj: Any) -> Optional[Dict[str, Any]]:
+            usage_payload = serialize_usage_payload(usage_obj)
+            usage_metadata_obj: Any = None
+            if isinstance(response_obj, dict):
+                usage_metadata_obj = (
+                    response_obj.get("usage_metadata") or response_obj.get("usageMetadata")
+                )
+            else:
+                usage_metadata_obj = getattr(response_obj, "usage_metadata", None)
+            if usage_metadata_obj is None and isinstance(usage_payload, dict):
+                usage_metadata_obj = (
+                    usage_payload.get("usage_metadata") or usage_payload.get("usageMetadata")
+                )
+            usage_metadata_payload = serialize_usage_payload(usage_metadata_obj)
+
+            metadata: Dict[str, Any] = {}
+            if isinstance(usage_payload, dict) and usage_payload:
+                metadata["usage"] = usage_payload
+            if isinstance(usage_metadata_payload, dict) and usage_metadata_payload:
+                metadata["usage_metadata"] = usage_metadata_payload
+            return metadata or None
+
         def complete_with_responses_api() -> CompletionResult:
             request_args = {
                 "model": model,
@@ -1597,12 +1767,15 @@ class OpenAIConnector:
                 if isinstance(fallback_text, str) and fallback_text:
                     texts.append(fallback_text)
 
+            usage_metadata = collect_usage_metadata(response, usage)
+
             return CompletionResult(
                 text="".join(texts),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 token_logprobs=token_logprobs or None,
+                usage_metadata=usage_metadata,
                 request_controls_requested=dict(requested_controls),
                 request_controls_sent=collect_sent_controls(request_args),
                 request_controls_rejected=dict(rejected_controls),
@@ -1676,12 +1849,14 @@ class OpenAIConnector:
             completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
             total_tokens = getattr(usage, "total_tokens", None) if usage else None
             token_logprobs = collect_logprobs(getattr(response.choices[0], "logprobs", None))
+            usage_metadata = collect_usage_metadata(response, usage)
             return CompletionResult(
                 text=message,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 token_logprobs=token_logprobs,
+                usage_metadata=usage_metadata,
                 request_controls_requested=dict(requested_controls),
                 request_controls_sent=collect_sent_controls(request_args),
                 request_controls_rejected=dict(rejected_controls),
@@ -1736,12 +1911,14 @@ class OpenAIConnector:
         if isinstance(choice, dict):
             logprobs_obj = choice.get("logprobs")
         token_logprobs = collect_logprobs(logprobs_obj)
+        usage_metadata = collect_usage_metadata(response, usage)
         return CompletionResult(
             text=content or "",
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             token_logprobs=token_logprobs,
+            usage_metadata=usage_metadata,
             request_controls_requested=dict(requested_controls),
             request_controls_sent=collect_sent_controls(request_args),
             request_controls_rejected=dict(rejected_controls),
@@ -1756,9 +1933,31 @@ def build_messages(
     system_prompt: Optional[str],
     enable_cot: bool,
     include_explanation: bool,
+    prompt_layout: str = "standard",
     few_shot_context: Optional[List[Example]] = None,
+    cache_padding_text: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     """Construct chat messages for the classification prompt."""
+    layout = (prompt_layout or "standard").strip().lower()
+    alias_map = {
+        "legacy": "standard",
+        "minimal": "compact",
+        "aggressive": "compact",
+    }
+    normalized_layout = alias_map.get(layout, layout)
+    if normalized_layout != layout:
+        logging.warning(
+            "Prompt layout %r is deprecated; using %r instead.",
+            layout,
+            normalized_layout,
+        )
+    layout = normalized_layout
+    if layout not in {"standard", "compact"}:
+        logging.warning(
+            "Unknown prompt layout %r; falling back to 'standard'.", prompt_layout
+        )
+        layout = "standard"
+
     if system_prompt:
         system_msg = system_prompt.strip()
     else:
@@ -1768,12 +1967,20 @@ def build_messages(
         )
     system_msg = f"{system_msg.rstrip()}\n\n{MANDATORY_SYSTEM_APPEND}"
 
-    user_instructions = [
-        "You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as ⟦node⟧.",
-        "When the node itself contains inner ⟦...⟧ spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.",
-        "Identify the label that best matches the required span according to the task definition.",
-        "The payload includes a classification_target helper indicating exactly which text must be classified.",
-    ]
+    if layout == "standard":
+        user_instructions = [
+            "You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as âź¦nodeâź§.",
+            "When the node itself contains inner âź¦...âź§ spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.",
+            "Identify the label that best matches the required span according to the task definition.",
+            "The payload includes a classification_target helper indicating exactly which text must be classified.",
+        ]
+    else:
+        user_instructions = [
+            "You will receive left_context, node, and right_context fields for a text excerpt.",
+            "If the node contains inner âź¦...âź§ spans, classify only those marked spans; otherwise classify the full node.",
+            "Identify the label that best matches the required span according to the task definition.",
+            "The payload includes a classification_target helper indicating exactly which text must be classified.",
+        ]
 
     if enable_cot:
         user_instructions.insert(
@@ -1795,7 +2002,7 @@ def build_messages(
     user_instructions.append(json_instruction)
     user_instructions.append(
         'Set span_source to "node" when the entire node is being classified. '
-        'If any inner ⟦...⟧ spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text '
+        'If any inner âź¦...âź§ spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text '
         "(join multiple marked spans with a single space, in order)."
     )
     user_instructions.append(
@@ -1808,62 +2015,78 @@ def build_messages(
 
     user_content = "\n".join(user_instructions)
 
-    if few_shot_context:
-        samples = []
-        for sample in few_shot_context:
-            sample_target_text, sample_span_focus = resolve_span_contract(sample.node)
-            samples.append(
-                {
-                    "left_context": sample.left_context,
-                    "node": sample.node,
-                    "right_context": sample.right_context,
-                    "info": sample.info,
-                    "label": sample.truth,
-                    "marked_example": mark_node_in_context(
-                        sample.left_context, sample.node, sample.right_context
-                    ),
-                    "classification_target": {
-                        "focus": sample_span_focus,
-                        "text": sample_target_text,
-                        "note": (
-                            "Classify only the marked sub-span; use the remaining text as context."
-                            if sample_span_focus == SPAN_SOURCE_MARKED_SUBSPAN
-                            else "Classify the entire node with support from the provided context."
-                        ),
-                    },
-                }
+    def serialize_payload(payload: Any) -> str:
+        if layout == "standard":
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    def build_example_payload(target: Example, include_label: bool) -> Dict[str, Any]:
+        span_text, span_focus = resolve_span_contract(target.node)
+        marked_example = mark_node_in_context(
+            target.left_context, target.node, target.right_context
+        )
+        classification_target = {
+            "focus": span_focus,
+            "text": span_text,
+        }
+        payload: Dict[str, Any]
+        if layout == "compact":
+            payload = {
+                "left_context": target.left_context,
+                "node": target.node,
+                "right_context": target.right_context,
+                "classification_target": classification_target,
+            }
+            if target.info:
+                payload["info"] = target.info
+        else:
+            classification_note = (
+                "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
+                if span_focus == SPAN_SOURCE_MARKED_SUBSPAN
+                else "Classify the entire node; left/right contexts simply provide supporting evidence."
             )
+            payload = {
+                "left_context": target.left_context,
+                "node": target.node,
+                "right_context": target.right_context,
+                "info": target.info,
+                "marked_example": marked_example,
+                "classification_target": {
+                    "focus": span_focus,
+                    "text": span_text,
+                    "note": classification_note,
+                },
+            }
+        if include_label:
+            payload["label"] = target.truth
+        return payload
+
+    if few_shot_context:
+        samples = [
+            build_example_payload(sample, include_label=True)
+            for sample in few_shot_context
+        ]
         user_content += (
             f"\n\nHere are {len(samples)} labeled example(s) you should mimic when classifying:\n"
-            + json.dumps(samples, ensure_ascii=False, indent=2)
+            + serialize_payload(samples)
         )
 
-    target_span_text, target_span_focus = resolve_span_contract(example.node)
-    classification_note = (
-        "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
-        if target_span_focus == SPAN_SOURCE_MARKED_SUBSPAN
-        else "Classify the entire node; left/right contexts simply provide supporting evidence."
-    )
+    normalized_cache_padding = (cache_padding_text or "").strip()
+    if normalized_cache_padding:
+        user_content += (
+            "\n\nCache-length normalization block (ignore this for classification):\n"
+            + normalized_cache_padding
+        )
 
-    target_payload = {
-        "left_context": example.left_context,
-        "node": example.node,
-        "right_context": example.right_context,
-        "info": example.info,
-        "marked_example": mark_node_in_context(
-            example.left_context, example.node, example.right_context
-        ),
-        "classification_target": {
-            "focus": target_span_focus,
-            "text": target_span_text,
-            "note": classification_note,
-        },
-    }
+    target_payload = build_example_payload(example, include_label=False)
 
     user_content += "\n\nNow classify this example:\n"
-    user_content += json.dumps(target_payload, ensure_ascii=False, indent=2)
+    user_content += serialize_payload(target_payload)
 
-    messages = [{"role": "system", "content": system_msg}, {"role": "user", "content": user_content}]
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_content},
+    ]
     return messages
 
 
@@ -2254,6 +2477,7 @@ def classify_example(
     system_prompt: Optional[str],
     enable_cot: bool,
     include_explanation: bool,
+    prompt_layout: str,
     few_shot_context: Optional[List[Example]],
     max_retries: int,
     retry_delay: float,
@@ -2262,6 +2486,8 @@ def classify_example(
     validator_prompt_max_chars: int = 8000,
     validator_exhausted_policy: str = "accept_blank_confidence",
     strict_control_acceptance: bool = False,
+    cache_padding_text: Optional[str] = None,
+    cache_padding_tokens_estimate: int = 0,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
     base_messages = build_messages(
@@ -2269,7 +2495,9 @@ def classify_example(
         system_prompt,
         enable_cot,
         include_explanation,
+        prompt_layout=prompt_layout,
         few_shot_context=few_shot_context,
+        cache_padding_text=cache_padding_text,
     )
     validator_patch_message: Optional[Dict[str, str]] = None
     validator_status: Optional[str] = None
@@ -2301,6 +2529,12 @@ def classify_example(
             "attempt": attempt,
             "timestamp": utc_timestamp(),
             "request": copy.deepcopy(messages),
+            "prompt_padding": {
+                "applied": bool(cache_padding_text),
+                "padding_tokens_estimate": int(cache_padding_tokens_estimate)
+                if cache_padding_tokens_estimate > 0
+                else 0,
+            },
         }
         try:
             result = connector.complete(
@@ -2362,6 +2596,7 @@ def classify_example(
                 "prompt_tokens": result.prompt_tokens,
                 "completion_tokens": result.completion_tokens,
                 "total_tokens": result.total_tokens,
+                "usage_metadata": result.usage_metadata,
             }
             payload = extract_json_object(raw)
             label = str(payload.get("label", "")).strip()
@@ -2699,6 +2934,19 @@ def process_dataset(
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_reported_tokens = 0
+    cache_pad_target_tokens = max(0, int(getattr(args, "cache_pad_target_tokens", 0) or 0))
+    cache_padding_tokens_estimate = 0
+    cache_padding_text: Optional[str] = None
+    cache_padding_calibration_prompt_tokens: Optional[int] = None
+    cache_padding_calibration_example_id: Optional[str] = None
+    cache_padding_applied_examples = 0
+    cache_padding_missing_usage_warned = False
+
+    if cache_pad_target_tokens > 0:
+        logging.info(
+            "Cache padding target enabled at %d prompt tokens. First successful response with prompt token usage will calibrate padding.",
+            cache_pad_target_tokens,
+        )
 
     ensure_directory(output_path)
     log_path = os.path.splitext(output_path)[0] + ".log"
@@ -2820,6 +3068,7 @@ def process_dataset(
                     pending_total,
                 )
                 few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+                padding_active_for_example = bool(cache_padding_text)
                 try:
                     prediction, attempt_logs = classify_example(
                         connector=connector,
@@ -2837,6 +3086,7 @@ def process_dataset(
                         system_prompt=args.system_prompt,
                         enable_cot=args.enable_cot,
                         include_explanation=include_explanation,
+                        prompt_layout=args.prompt_layout,
                         few_shot_context=few_shot_context,
                         max_retries=args.max_retries,
                         retry_delay=args.retry_delay,
@@ -2845,6 +3095,8 @@ def process_dataset(
                         validator_prompt_max_chars=args.validator_prompt_max_chars,
                         validator_exhausted_policy=args.validator_exhausted_policy,
                         strict_control_acceptance=args.strict_control_acceptance,
+                        cache_padding_text=cache_padding_text,
+                        cache_padding_tokens_estimate=cache_padding_tokens_estimate,
                     )
                 except ProviderQuotaExceededError as exc:
                     halted_by_quota = True
@@ -2869,12 +3121,47 @@ def process_dataset(
                     )
                     break
                 predictions[example.example_id] = prediction
+                if padding_active_for_example:
+                    cache_padding_applied_examples += 1
                 if prediction.prompt_tokens is not None:
                     total_prompt_tokens += prediction.prompt_tokens
                 if prediction.completion_tokens is not None:
                     total_completion_tokens += prediction.completion_tokens
                 if prediction.total_tokens is not None:
                     total_reported_tokens += prediction.total_tokens
+
+                if cache_pad_target_tokens > 0:
+                    if cache_padding_calibration_prompt_tokens is None:
+                        if prediction.prompt_tokens is None:
+                            if not cache_padding_missing_usage_warned:
+                                logging.warning(
+                                    "Prompt token usage not returned yet; waiting to calibrate cache padding."
+                                )
+                                cache_padding_missing_usage_warned = True
+                        else:
+                            cache_padding_missing_usage_warned = False
+                            cache_padding_calibration_prompt_tokens = prediction.prompt_tokens
+                            cache_padding_calibration_example_id = example.example_id
+                            deficit_tokens = cache_pad_target_tokens - prediction.prompt_tokens
+                            if deficit_tokens > 0:
+                                cache_padding_tokens_estimate = deficit_tokens
+                                cache_padding_text = build_cache_padding_text(deficit_tokens)
+                                logging.info(
+                                    "Calibrated cache padding from example %s: prompt_tokens=%d, target=%d, applying estimated +%d tokens to subsequent prompts.",
+                                    example.example_id,
+                                    prediction.prompt_tokens,
+                                    cache_pad_target_tokens,
+                                    cache_padding_tokens_estimate,
+                                )
+                            else:
+                                cache_padding_tokens_estimate = 0
+                                cache_padding_text = None
+                                logging.info(
+                                    "Cache padding target already met on calibration example %s (prompt_tokens=%d, target=%d); no padding will be applied.",
+                                    example.example_id,
+                                    prediction.prompt_tokens,
+                                    cache_pad_target_tokens,
+                                )
 
                 log_records.append(
                     {
@@ -2967,12 +3254,24 @@ def process_dataset(
         "verbosity": args.verbosity,
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
+    usage_metadata_summary = compute_usage_metadata_summary(log_records)
+    cache_padding_summary = {
+        "enabled": cache_pad_target_tokens > 0,
+        "target_prompt_tokens": cache_pad_target_tokens,
+        "calibration_prompt_tokens": cache_padding_calibration_prompt_tokens,
+        "calibration_example_id": cache_padding_calibration_example_id,
+        "applied_padding_tokens_estimate": cache_padding_tokens_estimate,
+        "examples_with_padding_applied": cache_padding_applied_examples,
+    }
 
     metrics: Dict[str, Any] = {}
     if evaluated_truths:
         metrics = compute_metrics(evaluated_truths, evaluated_preds)
+        metrics["prompt_layout"] = args.prompt_layout
+        metrics["cache_padding"] = cache_padding_summary
         metrics.update(prompt_time_window)
         metrics["request_control_summary"] = request_control_summary
+        metrics["usage_metadata_summary"] = usage_metadata_summary
         with open(metrics_output, "w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
         logging.info("Saved metrics to %s", metrics_output)
@@ -3004,6 +3303,25 @@ def process_dataset(
                 control_stats.get("accepted_attempts", 0),
                 control_stats.get("rejected_attempts", 0),
             )
+
+    if usage_metadata_summary.get("attempts_with_usage_metadata", 0):
+        logging.info(
+            "Usage metadata summary -> attempts with metadata: %s, cache-signaled attempts: %s, cached tokens (estimate): %s.",
+            usage_metadata_summary.get("attempts_with_usage_metadata", 0),
+            usage_metadata_summary.get("attempts_with_cached_token_signals", 0),
+            usage_metadata_summary.get("cached_tokens_total_estimate", 0),
+        )
+
+    if cache_pad_target_tokens > 0:
+        logging.info(
+            "Cache padding summary -> target: %d, calibration prompt tokens: %s, applied padding estimate: %d, padded examples: %d.",
+            cache_pad_target_tokens,
+            cache_padding_calibration_prompt_tokens
+            if cache_padding_calibration_prompt_tokens is not None
+            else "N/A",
+            cache_padding_tokens_estimate,
+            cache_padding_applied_examples,
+        )
 
     if calibration_enabled and confidences and correctness:
         calibration_path = os.path.splitext(output_path)[0] + "_calibration.png"
@@ -3152,6 +3470,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=int,
         default=0,
         help="Number of labeled examples to prepend as few-shot demonstrations.",
+    )
+    parser.add_argument(
+        "--prompt_layout",
+        choices=["standard", "compact"],
+        default="standard",
+        help=(
+            "Prompt payload layout. "
+            "standard preserves the current verbose payload; "
+            "compact removes duplicated fields to improve cache reuse."
+        ),
+    )
+    parser.add_argument(
+        "--cache_pad_target_tokens",
+        type=int,
+        default=0,
+        help=(
+            "Optional prompt-token target for cache padding. "
+            "If >0, the first successful response calibrates prompt length; "
+            "subsequent prompts are padded toward this token target."
+        ),
     )
     parser.add_argument(
         "--enable_cot",
@@ -3304,6 +3642,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not args.model:
         parser.error("--model is required unless --update-models is specified.")
+    if args.cache_pad_target_tokens < 0:
+        parser.error("--cache_pad_target_tokens must be >= 0.")
 
     overall_start = time.perf_counter()
     env_map = parse_env_file(".env")
@@ -3400,6 +3740,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         logging.info("Explanations disabled; model will only return labels and confidences.")
     if not args.logprobs:
         logging.info("Logprobs disabled; token-level probability estimates will be unavailable.")
+    if args.prompt_layout != "standard":
+        logging.info(
+            "Prompt layout set to '%s' (cache-optimized payload mode).",
+            args.prompt_layout,
+        )
+    if args.cache_pad_target_tokens > 0:
+        logging.info(
+            "Cache padding target configured: %d prompt tokens (0 disables padding).",
+            args.cache_pad_target_tokens,
+        )
 
     connector = OpenAIConnector(
         api_key=api_key,
@@ -3427,10 +3777,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     model=args.model,
                     include_explanation=include_explanation,
                     enable_cot=args.enable_cot,
+                    prompt_layout=args.prompt_layout,
                     reasoning_effort=args.reasoning_effort,
                     thinking_level=args.thinking_level,
                     effort=args.effort,
                     verbosity=args.verbosity,
+                    cache_pad_target_tokens=args.cache_pad_target_tokens,
                     max_retries=args.max_retries,
                 )
             )
@@ -3510,3 +3862,4 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
