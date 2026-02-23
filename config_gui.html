@@ -528,7 +528,7 @@
                   </select>
                 </label>
                 <label
-                  >Cache Pad Target Tokens
+                  >Input Token Count (auto padded to cache)
                   <input
                     type="number"
                     min="0"
@@ -537,7 +537,7 @@
                     name="cache_pad_target_tokens"
                     value="0"
                   />
-                  <span class="hint">0 disables padding. If set, prompt token length is calibrated from the first response and padded on subsequent prompts.</span>
+                  <span class="hint">If set, prompt token length is calibrated from the first response and padded on subsequent prompts.</span>
                 </label>
               </div>
             </details>
@@ -822,6 +822,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
         <div class="command-actions">
           <button type="button" id="copy-button">Copy Command</button>
+          <button type="button" id="reset-button">Reset Defaults</button>
         </div>
       </aside>
     </div>
@@ -840,6 +841,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       const estimateCsvFileInput = document.getElementById("estimate-csv-file");
       const sampleCsvButton = document.getElementById("sample-csv-button");
       const copyButton = document.getElementById("copy-button");
+      const resetButton = document.getElementById("reset-button");
       const providerSelect = document.getElementById("provider");
       const apiKeyVarInput = document.getElementById("api_key_var");
       const apiBaseVarInput = document.getElementById("api_base_var");
@@ -939,7 +941,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         prompt_layout:
           "Prompt payload shape. compact reduces duplicated per-example text to improve cache reuse.",
         cache_pad_target_tokens:
-          "Optional cache-padding target prompt tokens. First successful request calibrates baseline; later prompts are padded toward this target.",
+          "Optional cache-padding that lengthens the prompt input to reach caching limits (differs per model). First successful request calibrates baseline token count; later prompts are padded toward the target. Consider increasing the size meaningfully first (longer context, longer system prompt, check the estimate.)",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
         api_key_var: "Environment variable that stores the API key used for this run.",
@@ -1834,6 +1836,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         if (copyButton) {
           copyButton.title = "Copy the currently generated command line to clipboard.";
         }
+        if (resetButton) {
+          resetButton.title = "Reset all GUI fields to defaults and clear saved settings.";
+        }
         if (modelClearButton) {
           modelClearButton.title = "Clear the model input field.";
         }
@@ -1925,6 +1930,41 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           });
       }
 
+      function resetConfigToDefaults() {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch (error) {
+          console.warn("Unable to clear stored configuration:", error);
+        }
+
+        form.reset();
+        for (const [name, value] of Object.entries(defaultValues)) {
+          const control = form.elements.namedItem(name);
+          if (!control || control.type === "file" || control instanceof RadioNodeList) {
+            continue;
+          }
+          if (control.type === "checkbox") {
+            control.checked = Boolean(value);
+          } else {
+            control.value = value;
+          }
+        }
+
+        if (estimateCsvFileInput) {
+          estimateCsvFileInput.value = "";
+        }
+        sampledEstimateRows = null;
+        sampledEstimateSource = "";
+        setPromptEstimateStatus("Optional: sample a CSV to include real row text in the estimate.");
+
+        ensureProviderRegistered(defaultValues.provider, defaultValues.provider);
+        providerSelect.value = defaultValues.provider;
+        modelInput.value = "";
+        updatePlaceholdersForProvider(providerSelect.value);
+        updateModelOptionsForProvider(providerSelect.value);
+        handleFormChange();
+      }
+
       modelCatalog = getWindowModelCatalog();
       syncProvidersFromCatalog();
       loadConfig();
@@ -1934,6 +1974,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
       form.addEventListener("input", handleFormChange);
       copyButton.addEventListener("click", copyCommand);
+      if (resetButton) {
+        resetButton.addEventListener("click", resetConfigToDefaults);
+      }
       if (sampleCsvButton) {
         sampleCsvButton.addEventListener("click", sampleCsvForPromptEstimate);
       }
