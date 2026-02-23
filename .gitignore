@@ -1,3 +1,5 @@
 .env
 config_models.js
 /data
+__pycache__/
+*.py[cod]
