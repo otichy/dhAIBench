@@ -1369,6 +1369,8 @@ class OpenAIConnector:
                 "reasoning_effort": "reasoning_effort",
                 "thinkingLevel": "thinking_level",
                 "thinking_level": "thinking_level",
+                "thinking_config": "thinking_level",
+                "google_thinking_config": "thinking_level",
                 "effort": "effort",
                 "verbosity": "verbosity",
                 "prompt_cache_key": "prompt_cache_key",
@@ -1402,6 +1404,9 @@ class OpenAIConnector:
                 "reasoning_effort": "reasoning_effort",
                 "thinkinglevel": "thinkingLevel",
                 "thinking_level": "thinkingLevel",
+                "thinkingconfig": "thinkingLevel",
+                "thinking_config": "thinkingLevel",
+                "google_thinking_config": "thinkingLevel",
                 "effort": "effort",
                 "toplogprobs": "top_logprobs",
                 "top_logprobs": "top_logprobs",
@@ -1565,6 +1570,15 @@ class OpenAIConnector:
                     # Google OpenAI-compat supports reasoning_effort; map thinking_level to it.
                     request_args["reasoning_effort"] = thinking_level
                     translated_thinking_level = thinking_level
+                    google_payload = extra_body.get("google")
+                    if not isinstance(google_payload, dict):
+                        google_payload = {}
+                    thinking_config = google_payload.get("thinking_config")
+                    if not isinstance(thinking_config, dict):
+                        thinking_config = {}
+                    thinking_config["thinking_level"] = thinking_level
+                    google_payload["thinking_config"] = thinking_config
+                    extra_body["google"] = google_payload
                 else:
                     extra_body["thinkingLevel"] = thinking_level
             if effort:
@@ -1600,7 +1614,7 @@ class OpenAIConnector:
                 extra_body.pop(param_name, None)
                 removed = True
             if isinstance(extra_body, dict):
-                if param_name in {"thinkingLevel", "thinking_level"}:
+                if param_name in {"thinkingLevel", "thinking_level", "thinking_config", "google_thinking_config"}:
                     google_payload = extra_body.get("google")
                     if isinstance(google_payload, dict):
                         thinking_cfg = google_payload.get("thinking_config")
@@ -1678,6 +1692,11 @@ class OpenAIConnector:
 
                 if extra_body.get("thinkingLevel") is not None:
                     sent["thinking_level"] = str(extra_body["thinkingLevel"])
+                top_level_thinking_cfg = extra_body.get("thinking_config")
+                if isinstance(top_level_thinking_cfg, dict) and top_level_thinking_cfg.get("thinking_level") is not None:
+                    sent["thinking_level"] = str(top_level_thinking_cfg["thinking_level"])
+                if extra_body.get("cached_content") is not None:
+                    sent["gemini_cached_content"] = str(extra_body["cached_content"])
 
                 google_payload = extra_body.get("google")
                 if isinstance(google_payload, dict):
@@ -1784,16 +1803,26 @@ class OpenAIConnector:
         def collect_usage_metadata(response_obj: Any, usage_obj: Any) -> Optional[Dict[str, Any]]:
             usage_payload = serialize_usage_payload(usage_obj)
             usage_metadata_obj: Any = None
-            if isinstance(response_obj, dict):
-                usage_metadata_obj = (
-                    response_obj.get("usage_metadata") or response_obj.get("usageMetadata")
-                )
-            else:
-                usage_metadata_obj = getattr(response_obj, "usage_metadata", None)
-            if usage_metadata_obj is None and isinstance(usage_payload, dict):
-                usage_metadata_obj = (
-                    usage_payload.get("usage_metadata") or usage_payload.get("usageMetadata")
-                )
+
+            def read_field(value: Any, *keys: str) -> Any:
+                if value is None:
+                    return None
+                for key in keys:
+                    if isinstance(value, dict):
+                        if key in value and value.get(key) is not None:
+                            return value.get(key)
+                        continue
+                    attr_value = getattr(value, key, None)
+                    if attr_value is not None:
+                        return attr_value
+                    model_extra = getattr(value, "model_extra", None)
+                    if isinstance(model_extra, dict) and model_extra.get(key) is not None:
+                        return model_extra.get(key)
+                return None
+
+            usage_metadata_obj = read_field(response_obj, "usage_metadata", "usageMetadata")
+            if usage_metadata_obj is None:
+                usage_metadata_obj = read_field(usage_payload, "usage_metadata", "usageMetadata")
             usage_metadata_payload = serialize_usage_payload(usage_metadata_obj)
 
             metadata: Dict[str, Any] = {}
