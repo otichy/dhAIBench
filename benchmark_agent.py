@@ -980,6 +980,105 @@ def fetch_provider_models(provider: str, api_key: str, api_base: str) -> Tuple[L
     return _parse_model_payload(payload, provider, endpoint)
 
 
+def _gemini_caching_base_url(api_base_url: Optional[str]) -> str:
+    """Derive the Gemini REST caching API base URL from the OpenAI-compat base URL.
+
+    Google AI Studio's OpenAI-compat endpoint is:
+        https://generativelanguage.googleapis.com/v1beta/openai
+    The caching REST API lives at the parent path:
+        https://generativelanguage.googleapis.com/v1beta
+    """
+    fallback = "https://generativelanguage.googleapis.com/v1beta"
+    if not api_base_url:
+        return fallback
+    trimmed = api_base_url.rstrip("/")
+    if trimmed.lower().endswith("/openai"):
+        return trimmed[: -len("/openai")]
+    return trimmed
+
+
+def create_gemini_cached_content(
+    api_key: str,
+    api_base_url: Optional[str],
+    model: str,
+    system_prompt: str,
+    ttl_seconds: int,
+) -> str:
+    """Create a Gemini CachedContent resource from a system prompt.
+
+    Uses the Gemini REST API directly (no additional SDK required).
+    Returns the resource name, e.g. ``cachedContents/abc123``.
+    Raises ``RuntimeError`` on API errors.
+    """
+    base = _gemini_caching_base_url(api_base_url)
+    endpoint = f"{base}/cachedContents?key={api_key}"
+    body = json.dumps(
+        {
+            "model": model,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "ttl": f"{ttl_seconds}s",
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        raise RuntimeError(
+            f"Gemini CachedContent creation failed: HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Gemini CachedContent creation failed: {exc}") from exc
+    name = payload.get("name")
+    if not name:
+        raise RuntimeError(
+            f"Gemini CachedContent creation response did not include a name: {payload}"
+        )
+    return str(name)
+
+
+def delete_gemini_cached_content(
+    api_key: str,
+    api_base_url: Optional[str],
+    cache_name: str,
+) -> bool:
+    """Delete a Gemini CachedContent resource by name.
+
+    ``cache_name`` should be the resource name returned by
+    :func:`create_gemini_cached_content`, e.g. ``cachedContents/abc123``.
+    Returns ``True`` on success, ``False`` on failure (logs a warning).
+    """
+    base = _gemini_caching_base_url(api_base_url)
+    # cache_name may or may not include a leading slash relative to base
+    name_path = cache_name.lstrip("/")
+    endpoint = f"{base}/{name_path}?key={api_key}"
+    request = urllib.request.Request(endpoint, method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=60):
+            pass
+        return True
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        logging.warning(
+            "Failed to delete Gemini cache %s: HTTP %s %s %s",
+            cache_name,
+            exc.code,
+            exc.reason or "",
+            detail,
+        )
+        return False
+    except urllib.error.URLError as exc:
+        logging.warning("Failed to delete Gemini cache %s: %s", cache_name, exc)
+        return False
+
+
 def write_model_catalog_js(catalog: Dict[str, Dict[str, Any]], output_path: str) -> None:
     """Write the catalog as a small JS module consumable by the GUI."""
     ensure_directory(output_path)
@@ -1575,7 +1674,12 @@ class OpenAIConnector:
                     # Google OpenAI-compat supports reasoning_effort; map thinking_level to it.
                     request_args["reasoning_effort"] = thinking_level
                     translated_thinking_level = thinking_level
-                    google_payload = extra_body.get("google")
+                    # Google-specific params must be nested under extra_body["extra_body"]["google"]
+                    # so they appear as {"extra_body": {"google": {...}}} in the HTTP request body.
+                    gemini_inner = extra_body.get("extra_body")
+                    if not isinstance(gemini_inner, dict):
+                        gemini_inner = {}
+                    google_payload = gemini_inner.get("google")
                     if not isinstance(google_payload, dict):
                         google_payload = {}
                     thinking_config = google_payload.get("thinking_config")
@@ -1583,17 +1687,24 @@ class OpenAIConnector:
                         thinking_config = {}
                     thinking_config["thinking_level"] = thinking_level
                     google_payload["thinking_config"] = thinking_config
-                    extra_body["google"] = google_payload
+                    gemini_inner["google"] = google_payload
+                    extra_body["extra_body"] = gemini_inner
                 else:
                     extra_body["thinkingLevel"] = thinking_level
             if effort:
                 extra_body["effort"] = effort
             if normalized_gemini_cached_content and is_gemini_target:
-                google_payload = extra_body.get("google")
+                # Google-specific params must be nested under extra_body["extra_body"]["google"]
+                # so they appear as {"extra_body": {"google": {...}}} in the HTTP request body.
+                gemini_inner = extra_body.get("extra_body")
+                if not isinstance(gemini_inner, dict):
+                    gemini_inner = {}
+                google_payload = gemini_inner.get("google")
                 if not isinstance(google_payload, dict):
                     google_payload = {}
                 google_payload["cached_content"] = normalized_gemini_cached_content
-                extra_body["google"] = google_payload
+                gemini_inner["google"] = google_payload
+                extra_body["extra_body"] = gemini_inner
             if extra_body:
                 request_args["extra_body"] = extra_body
 
@@ -1620,23 +1731,31 @@ class OpenAIConnector:
                 removed = True
             if isinstance(extra_body, dict):
                 if param_name in {"thinkingLevel", "thinking_level", "thinking_config", "google_thinking_config"}:
-                    google_payload = extra_body.get("google")
-                    if isinstance(google_payload, dict):
-                        thinking_cfg = google_payload.get("thinking_config")
-                        if isinstance(thinking_cfg, dict) and "thinking_level" in thinking_cfg:
-                            thinking_cfg.pop("thinking_level", None)
-                            removed = True
-                            if not thinking_cfg:
-                                google_payload.pop("thinking_config", None)
-                            if not google_payload:
-                                extra_body.pop("google", None)
+                    gemini_inner = extra_body.get("extra_body")
+                    if isinstance(gemini_inner, dict):
+                        google_payload = gemini_inner.get("google")
+                        if isinstance(google_payload, dict):
+                            thinking_cfg = google_payload.get("thinking_config")
+                            if isinstance(thinking_cfg, dict) and "thinking_level" in thinking_cfg:
+                                thinking_cfg.pop("thinking_level", None)
+                                removed = True
+                                if not thinking_cfg:
+                                    google_payload.pop("thinking_config", None)
+                                if not google_payload:
+                                    gemini_inner.pop("google", None)
+                                if not gemini_inner:
+                                    extra_body.pop("extra_body", None)
                 if param_name in {"cached_content", "gemini_cached_content", "google_cached_content"}:
-                    google_payload = extra_body.get("google")
-                    if isinstance(google_payload, dict) and "cached_content" in google_payload:
-                        google_payload.pop("cached_content", None)
-                        removed = True
-                        if not google_payload:
-                            extra_body.pop("google", None)
+                    gemini_inner = extra_body.get("extra_body")
+                    if isinstance(gemini_inner, dict):
+                        google_payload = gemini_inner.get("google")
+                        if isinstance(google_payload, dict) and "cached_content" in google_payload:
+                            google_payload.pop("cached_content", None)
+                            removed = True
+                            if not google_payload:
+                                gemini_inner.pop("google", None)
+                            if not gemini_inner:
+                                extra_body.pop("extra_body", None)
                 if param_name in {"reasoning", "reasoning_effort"}:
                     if "reasoning" in extra_body:
                         extra_body.pop("reasoning", None)
@@ -1703,13 +1822,15 @@ class OpenAIConnector:
                 if extra_body.get("cached_content") is not None:
                     sent["gemini_cached_content"] = str(extra_body["cached_content"])
 
-                google_payload = extra_body.get("google")
-                if isinstance(google_payload, dict):
-                    thinking_cfg = google_payload.get("thinking_config")
-                    if isinstance(thinking_cfg, dict) and thinking_cfg.get("thinking_level") is not None:
-                        sent["thinking_level"] = str(thinking_cfg["thinking_level"])
-                    if google_payload.get("cached_content") is not None:
-                        sent["gemini_cached_content"] = str(google_payload["cached_content"])
+                gemini_inner = extra_body.get("extra_body")
+                if isinstance(gemini_inner, dict):
+                    google_payload = gemini_inner.get("google")
+                    if isinstance(google_payload, dict):
+                        thinking_cfg = google_payload.get("thinking_config")
+                        if isinstance(thinking_cfg, dict) and thinking_cfg.get("thinking_level") is not None:
+                            sent["thinking_level"] = str(thinking_cfg["thinking_level"])
+                        if google_payload.get("cached_content") is not None:
+                            sent["gemini_cached_content"] = str(google_payload["cached_content"])
 
                 if extra_body.get("effort") is not None:
                     sent["effort"] = str(extra_body["effort"])
@@ -1835,6 +1956,25 @@ class OpenAIConnector:
                 metadata["usage"] = usage_payload
             if isinstance(usage_metadata_payload, dict) and usage_metadata_payload:
                 metadata["usage_metadata"] = usage_metadata_payload
+
+            # Capture any remaining model_extra fields from the response that were not
+            # already extracted as usage_metadata above.  This ensures provider-specific
+            # extensions (e.g. Gemini's usageMetadata, thoughtsTokenCount, etc.) are
+            # preserved in the log even if their key names differ from what read_field
+            # searches for, making the data available for compute_usage_metadata_summary.
+            response_model_extra = getattr(response_obj, "model_extra", None)
+            if isinstance(response_model_extra, dict):
+                already_used = {"usage_metadata", "usageMetadata"}
+                extra_fields: Dict[str, Any] = {}
+                for key, val in response_model_extra.items():
+                    if key in already_used or val is None:
+                        continue
+                    serialized = serialize_usage_payload(val)
+                    if serialized is not None and serialized != {} and serialized != []:
+                        extra_fields[key] = serialized
+                if extra_fields:
+                    metadata["response_extra"] = extra_fields
+
             return metadata or None
 
         def complete_with_responses_api() -> CompletionResult:
@@ -2115,6 +2255,7 @@ def build_prompt_artifacts(
     prompt_layout: str = "standard",
     few_shot_context: Optional[List[Example]] = None,
     cache_padding_text: Optional[str] = None,
+    suppress_system_message: bool = False,
 ) -> PromptBuildArtifacts:
     """Construct chat messages and shared-prefix metadata for cache targeting."""
     layout = (prompt_layout or "standard").strip().lower()
@@ -2259,10 +2400,13 @@ def build_prompt_artifacts(
     variable_payload_text = serialize_payload(target_payload)
     user_content = user_content_prefix + variable_payload_text
 
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": user_content},
-    ]
+    if suppress_system_message:
+        messages = [{"role": "user", "content": user_content}]
+    else:
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_content},
+        ]
     shared_prefix_text = f"{system_msg}\n\n{user_content_prefix}"
     shared_prefix_tokens_estimate = estimate_token_count_from_text(shared_prefix_text)
     variable_payload_tokens_estimate = estimate_token_count_from_text(variable_payload_text)
@@ -2708,6 +2852,9 @@ def classify_example(
         prompt_layout=prompt_layout,
         few_shot_context=few_shot_context,
         cache_padding_text=cache_padding_text,
+        # When using a Gemini CachedContent the system instruction is already stored
+        # in the cache; sending it again causes a 400 INVALID_ARGUMENT error.
+        suppress_system_message=bool(gemini_cached_content),
     )
     base_messages = prompt_artifacts.messages
     validator_patch_message: Optional[Dict[str, str]] = None
@@ -3163,7 +3310,20 @@ def process_dataset(
     cache_padding_applied_examples = 0
     cache_padding_missing_prefix_warned = False
 
-    if cache_pad_target_tokens > 0:
+    # When --create_gemini_cache pre-computed a fixed padding, use it for every request
+    # instead of calibrating at runtime.  This ensures the system message in each request
+    # matches the system instruction stored in the Gemini CachedContent resource.
+    gemini_cache_preset_padding = getattr(args, "_gemini_cache_preset_padding", None)
+    if gemini_cache_preset_padding:
+        cache_padding_text = gemini_cache_preset_padding
+        cache_padding_tokens_estimate = estimate_token_count_from_chars(len(gemini_cache_preset_padding))
+        cache_padding_calibration_shared_prefix_tokens = 0  # sentinel: skip calibration
+        logging.info(
+            "Using pre-computed cache padding from --create_gemini_cache (%d chars, ~%d tokens).",
+            len(gemini_cache_preset_padding),
+            cache_padding_tokens_estimate,
+        )
+    elif cache_pad_target_tokens > 0:
         logging.info(
             "Cache padding target enabled at %d shared-prefix tokens. First successful example will calibrate shared-prefix padding.",
             cache_pad_target_tokens,
@@ -3763,7 +3923,36 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional Gemini context-cache resource name for providers that expose "
-            "Gemini OpenAI-compatible caching via extra_body.google.cached_content."
+            "Gemini OpenAI-compatible caching via extra_body.extra_body.google.cached_content. "
+            "Mutually exclusive with --create_gemini_cache."
+        ),
+    )
+    parser.add_argument(
+        "--create_gemini_cache",
+        action="store_true",
+        help=(
+            "Auto-create a Gemini CachedContent resource from the system prompt before "
+            "the benchmark run and delete it afterward (unless --keep_gemini_cache is set). "
+            "Sets --gemini_cached_content automatically. "
+            "Mutually exclusive with --gemini_cached_content."
+        ),
+    )
+    parser.add_argument(
+        "--gemini_cache_ttl",
+        type=int,
+        default=3600,
+        help=(
+            "Time-to-live in seconds for the auto-created Gemini cache "
+            "(default: 3600 = 1 hour). Only used when --create_gemini_cache is set."
+        ),
+    )
+    parser.add_argument(
+        "--keep_gemini_cache",
+        action="store_true",
+        help=(
+            "Do not delete the auto-created Gemini cache after the run. "
+            "The cache resource name is logged so it can be reused via --gemini_cached_content. "
+            "Only meaningful when --create_gemini_cache is set."
         ),
     )
     parser.add_argument(
@@ -3919,6 +4108,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--model is required unless --update-models is specified.")
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
+    if args.create_gemini_cache and args.gemini_cached_content:
+        parser.error(
+            "--create_gemini_cache and --gemini_cached_content are mutually exclusive. "
+            "Use --create_gemini_cache to auto-create a cache, or --gemini_cached_content "
+            "to supply an existing cache resource name."
+        )
 
     overall_start = time.perf_counter()
     env_map = parse_env_file(".env")
@@ -4041,6 +4236,60 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "--gemini_cached_content is set but target does not look like Gemini; this control may be ignored."
             )
 
+    created_cache_name: Optional[str] = None
+    if args.create_gemini_cache:
+        is_gemini_target = provider == "google" or "gemini" in str(args.model).strip().lower()
+        if not is_gemini_target:
+            logging.error(
+                "--create_gemini_cache is set but the target does not look like a Gemini model "
+                "(provider=%s, model=%s). Aborting.",
+                provider,
+                args.model,
+            )
+            return 1
+        system_for_cache = (args.system_prompt or DEFAULT_SYSTEM_PROMPT).rstrip()
+        if MANDATORY_SYSTEM_APPEND:
+            system_for_cache = system_for_cache.rstrip() + "\n\n" + MANDATORY_SYSTEM_APPEND
+        # Gemini requires at least 1024 tokens in the cached content.  Pre-compute padding so
+        # the cache content meets that minimum (and the user's --cache_pad_target_tokens target
+        # if specified).  The same padding is then applied to every request so the system message
+        # in each request matches what was cached.
+        _GEMINI_CACHE_MIN_TOKENS = 1024
+        cache_system_tokens = estimate_token_count_from_chars(len(system_for_cache))
+        effective_cache_target = max(args.cache_pad_target_tokens, _GEMINI_CACHE_MIN_TOKENS)
+        preset_padding_units = estimate_required_cache_padding_tokens(
+            cache_system_tokens, effective_cache_target
+        )
+        gemini_cache_preset_padding: Optional[str] = None
+        if preset_padding_units > 0:
+            gemini_cache_preset_padding = build_cache_padding_text(preset_padding_units)
+            system_for_cache = system_for_cache.rstrip() + "\n\n" + gemini_cache_preset_padding
+            logging.info(
+                "Cache padding pre-computed: system prompt ~%d tokens, target %d tokens, +%d padding units.",
+                cache_system_tokens,
+                effective_cache_target,
+                preset_padding_units,
+            )
+        logging.info(
+            "Creating Gemini CachedContent from system prompt (TTL %ds)...",
+            args.gemini_cache_ttl,
+        )
+        try:
+            created_cache_name = create_gemini_cached_content(
+                api_key, api_base_url, args.model, system_for_cache, args.gemini_cache_ttl
+            )
+        except RuntimeError as exc:
+            logging.error("Failed to create Gemini CachedContent: %s", exc)
+            return 1
+        args.gemini_cached_content = created_cache_name
+        logging.info("Gemini CachedContent created: %s", created_cache_name)
+        # Store the pre-computed padding so process_dataset applies the same padding to every
+        # request (bypassing runtime calibration, which would measure a different prefix length).
+        # Also disable the cache_pad_target_tokens calibration since we already have fixed padding.
+        if gemini_cache_preset_padding:
+            args._gemini_cache_preset_padding = gemini_cache_preset_padding
+            args.cache_pad_target_tokens = 0
+
     connector = OpenAIConnector(
         api_key=api_key,
         base_url=api_base_url,
@@ -4125,6 +4374,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     finally:
         if validator_client is not None:
             validator_client.close()
+        if created_cache_name is not None:
+            if args.keep_gemini_cache:
+                logging.info(
+                    "Gemini cache kept for reuse: --gemini_cached_content %s",
+                    created_cache_name,
+                )
+            else:
+                logging.info("Deleting auto-created Gemini cache: %s", created_cache_name)
+                delete_gemini_cached_content(api_key, api_base_url, created_cache_name)
 
     if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
         total_token_usage = (
