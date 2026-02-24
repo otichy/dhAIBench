@@ -221,6 +221,34 @@
       details.optional-group[open] > summary {
         margin-bottom: 0.8rem;
       }
+      .token-control-split {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.85rem 1rem;
+      }
+      .token-panel {
+        border: 1px solid #d6e3f2;
+        border-radius: 10px;
+        padding: 0.72rem 0.82rem 0.2rem;
+        background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+      }
+      .token-panel.output-panel {
+        background: linear-gradient(180deg, #f7fbf8 0%, #ffffff 100%);
+      }
+      .token-panel-title {
+        margin: 0 0 0.24rem;
+        font-size: 0.96rem;
+        font-weight: 700;
+        color: #1c4f82;
+      }
+      .token-panel-hint {
+        margin: 0 0 0.62rem;
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+      .token-panel .grid {
+        gap: 0.62rem 1rem;
+      }
       pre {
         background: #f5f8fc;
         padding: 1rem;
@@ -481,79 +509,91 @@
 
             <details class="optional-group">
               <summary>Prompt length and cache controls</summary>
-              <div class="grid">
-                <label
-                  >GPT Reasoning Effort
-                  <select id="reasoning_effort" name="reasoning_effort">
-                    <option value="" selected>(omit)</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="xhigh">XHigh</option>
-                  </select>
-                </label>
-                <label
-                  >GPT Verbosity
-                  <select id="verbosity" name="verbosity">
-                    <option value="" selected>(omit)</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </label>
-                <label
-                  >Gemini Thinking Level
-                  <select id="thinking_level" name="thinking_level">
-                    <option value="" selected>(omit)</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </label>
-                <label
-                  >Claude Effort
-                  <select id="effort" name="effort">
-                    <option value="" selected>(omit)</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="max">Max</option>
-                  </select>
-                </label>
-                <label
-                  >Prompt Layout
-                  <select id="prompt_layout" name="prompt_layout">
-                    <option value="standard" selected>Standard</option>
-                    <option value="compact">Compact (cache-optimized)</option>
-                  </select>
-                </label>
-                <label
-                  >Shared Prefix Token Target (auto padded)
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    id="cache_pad_target_tokens"
-                    name="cache_pad_target_tokens"
-                    value="0"
-                  />
-                  <span class="hint">Shared-prefix token target. If set, runtime pads only the cacheable shared prefix (not row-specific payload fields).</span>
-                </label>
-                <label
-                  >Prompt Cache Key
-                  <input
-                    type="text"
-                    id="prompt_cache_key"
-                    name="prompt_cache_key"
-                    placeholder="benchmark-prefix-v1"
-                  />
-                  <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
-                </label>
+              <div class="token-control-split">
+                <section class="token-panel input-panel">
+                  <h4 class="token-panel-title">Input token controls</h4>
+                  <p class="token-panel-hint">Affect prompt size, cacheability, and prefix reuse.</p>
+                  <div class="grid">
+                    <label
+                      >Prompt Layout
+                      <select id="prompt_layout" name="prompt_layout">
+                        <option value="standard" selected>Standard</option>
+                        <option value="compact">Compact (cache-optimized)</option>
+                      </select>
+                    </label>
+                    <label
+                      >Shared Prefix Token Target (auto padded)
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        id="cache_pad_target_tokens"
+                        name="cache_pad_target_tokens"
+                        value="0"
+                      />
+                      <span class="hint">Shared-prefix token target. If set, runtime pads only the cacheable shared prefix (not row-specific payload fields).</span>
+                    </label>
+                    <label
+                      >Prompt Cache Key
+                      <input
+                        type="text"
+                        id="prompt_cache_key"
+                        name="prompt_cache_key"
+                        placeholder="benchmark-prefix-v1"
+                      />
+                      <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
+                    </label>
+                  </div>
+                  <label class="inline">
+                    <input type="checkbox" id="enable_cot" name="enable_cot" />
+                    <span>Encourage chain-of-thought reasoning</span>
+                  </label>
+                </section>
+                <section class="token-panel output-panel">
+                  <h4 class="token-panel-title">Output/reasoning token controls</h4>
+                  <p class="token-panel-hint">Bias completion detail and hidden reasoning token budgets.</p>
+                  <div class="grid">
+                    <label
+                      >GPT Reasoning Effort
+                      <select id="reasoning_effort" name="reasoning_effort">
+                        <option value="" selected>(omit)</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="xhigh">XHigh</option>
+                      </select>
+                    </label>
+                    <label
+                      >GPT Verbosity
+                      <select id="verbosity" name="verbosity">
+                        <option value="" selected>(omit)</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label
+                      >Gemini Thinking Level
+                      <select id="thinking_level" name="thinking_level">
+                        <option value="" selected>(omit)</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label
+                      >Claude Effort
+                      <select id="effort" name="effort">
+                        <option value="" selected>(omit)</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="max">Max</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
               </div>
-              <label class="inline">
-                <input type="checkbox" id="enable_cot" name="enable_cot" />
-                <span>Encourage chain-of-thought reasoning</span>
-              </label>
             </details>
 
             <details class="optional-group">
