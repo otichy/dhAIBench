@@ -543,6 +543,29 @@
                       />
                       <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
                     </label>
+                  </div>
+                  <label class="inline">
+                    <input type="checkbox" id="create_gemini_cache" name="create_gemini_cache" onchange="toggleGeminiCacheMode(this.checked)" />
+                    <span>Auto-create Gemini cache from system prompt</span>
+                  </label>
+                  <div id="gemini_cache_create_options" style="display:none" class="grid">
+                    <label>Cache TTL (seconds)
+                      <input
+                        type="number"
+                        min="60"
+                        step="60"
+                        id="gemini_cache_ttl"
+                        name="gemini_cache_ttl"
+                        value="3600"
+                      />
+                      <span class="hint">How long to keep the cache (default: 3600 = 1 hour). The run must complete within this window.</span>
+                    </label>
+                    <label class="inline">
+                      <input type="checkbox" id="keep_gemini_cache" name="keep_gemini_cache" />
+                      <span>Keep cache after run (logs name for reuse via <code>--gemini_cached_content</code>)</span>
+                    </label>
+                  </div>
+                  <div id="gemini_cache_manual" class="grid">
                     <label
                       >Gemini Cached Content
                       <input
@@ -551,7 +574,7 @@
                         name="gemini_cached_content"
                         placeholder="cachedContents/your-cache-id"
                       />
-                      <span class="hint">Optional Gemini context-cache resource name for OpenAI-compatible Gemini endpoints.</span>
+                      <span class="hint">Pre-created Gemini context-cache resource name. Use this if the cache already exists, or use auto-create above.</span>
                     </label>
                   </div>
                   <label class="inline">
@@ -955,6 +978,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         cache_pad_target_tokens: "0",
         prompt_cache_key: "",
         gemini_cached_content: "",
+        create_gemini_cache: false,
+        gemini_cache_ttl: "3600",
+        keep_gemini_cache: false,
         service_tier: "standard",
         include_explanations: true,
         api_key_var: "",
@@ -1027,6 +1053,12 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
         gemini_cached_content:
           "Optional Gemini context-cache resource name sent as --gemini_cached_content (Gemini OpenAI-compatible endpoints).",
+        create_gemini_cache:
+          "Automatically create a Gemini CachedContent from the system prompt before the run and delete it afterward.",
+        gemini_cache_ttl:
+          "Time-to-live in seconds for the auto-created Gemini cache (default: 3600 = 1 hour).",
+        keep_gemini_cache:
+          "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
         api_key_var: "Environment variable that stores the API key used for this run.",
@@ -1632,6 +1664,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           modelCatalogMeta.textContent = note;
         }
       }
+      function toggleGeminiCacheMode(createEnabled) {
+        document.getElementById("gemini_cache_create_options").style.display = createEnabled ? "" : "none";
+        document.getElementById("gemini_cache_manual").style.display = createEnabled ? "none" : "";
+      }
+
       function buildCommand() {
         const data = new FormData(form);
         const args = ["python", "benchmark_agent.py"];
@@ -1735,6 +1772,18 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const geminiCachedContent = data.get("gemini_cached_content")?.toString().trim() ?? "";
         if (geminiCachedContent) {
           args.push("--gemini_cached_content", shellQuote(geminiCachedContent));
+        }
+
+        const createGeminiCache = data.get("create_gemini_cache");
+        if (createGeminiCache) {
+          args.push("--create_gemini_cache");
+          const geminiCacheTtl = data.get("gemini_cache_ttl")?.toString().trim() ?? "";
+          if (geminiCacheTtl && Number(geminiCacheTtl) !== 3600) {
+            args.push("--gemini_cache_ttl", geminiCacheTtl);
+          }
+          if (data.get("keep_gemini_cache")) {
+            args.push("--keep_gemini_cache");
+          }
         }
 
         const labelsPath = data.get("labels_path")?.trim();

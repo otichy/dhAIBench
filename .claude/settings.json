@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(python -c \":*)",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "Read(//d/OneDrive - Filozofická fakulta, Univerzita Karlova/Skola/ai/dhAIBench/**)",
+      "WebFetch(domain:googleapis.github.io)",
+      "Bash(python -c \"import benchmark_agent; print\\(''import OK''\\)\")",
+      "Bash(python benchmark_agent.py --help)",
+      "Bash(python benchmark_agent.py --input dummy --model dummy --create_gemini_cache --gemini_cached_content foo)",
+      "Bash(python -c \"import benchmark_agent; print\\(''OK''\\)\")"
     ]
   }
 }

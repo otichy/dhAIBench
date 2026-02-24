@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "WebSearch",
+      "WebFetch(domain:discuss.ai.google.dev)",
+      "Bash(head:*)",
+      "Bash(cd:*)"
     ]
   }
 }
