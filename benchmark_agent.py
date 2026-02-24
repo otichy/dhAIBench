@@ -345,6 +345,11 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
                     attempt_cache_values.append(value)
                     if "read" in lowered or "hit" in lowered:
                         cache_read_tokens_total += value
+                    elif "cached" in lowered and "write" not in lowered and "creation" not in lowered and "create" not in lowered:
+                        # Fields like prompt_tokens_details.cached_tokens (OpenAI) and
+                        # usageMetadata.cachedContentTokenCount (Gemini) represent cache reads
+                        # but don't contain "read" or "hit" in their name.
+                        cache_read_tokens_total += value
                     if "write" in lowered or "creation" in lowered or "create" in lowered:
                         cache_write_tokens_total += value
                 canonical = re.sub(r"[^a-z0-9]", "", lowered)
@@ -2247,10 +2252,7 @@ def build_prompt_artifacts(
 
     normalized_cache_padding = (cache_padding_text or "").strip()
     if normalized_cache_padding:
-        user_content_prefix += (
-            "\n\nCache-length normalization block (ignore this for classification):\n"
-            + normalized_cache_padding
-        )
+        system_msg = system_msg.rstrip() + "\n\n" + normalized_cache_padding
 
     target_payload = build_example_payload(example, include_label=False)
     user_content_prefix += "\n\nNow classify this example:\n"
@@ -3554,15 +3556,20 @@ def process_dataset(
                 gemini_cached_token_total,
             )
         elif (
-            getattr(args, "gemini_cached_content", None)
-            and (
-                str(getattr(args, "provider", "")).strip().lower() == "google"
-                or "gemini" in str(getattr(args, "model", "")).strip().lower()
-            )
+            str(getattr(args, "provider", "")).strip().lower() == "google"
+            or "gemini" in str(getattr(args, "model", "")).strip().lower()
         ):
-            logging.warning(
-                "Gemini cached content was configured but usage metadata did not report cachedContentTokenCount."
-            )
+            if getattr(args, "gemini_cached_content", None):
+                logging.warning(
+                    "Gemini cached content was configured but usage metadata did not report cachedContentTokenCount."
+                )
+            elif cache_pad_target_tokens > 0:
+                logging.warning(
+                    "Cache padding was applied (target %d tokens) but Gemini did not report any cachedContentTokenCount. "
+                    "Implicit caching may not be supported for this model or endpoint, or the cache was not yet warm. "
+                    "For reliable caching, create a CachedContent resource and pass it via --gemini_cached_content.",
+                    cache_pad_target_tokens,
+                )
 
     if cache_pad_target_tokens > 0:
         logging.info(
