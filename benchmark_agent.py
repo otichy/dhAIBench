@@ -169,7 +169,13 @@ def compute_request_control_summary(
     configured_controls: Dict[str, Optional[str]],
 ) -> Dict[str, Any]:
     """Aggregate request-control acceptance telemetry from prompt logs."""
-    control_keys = ("reasoning_effort", "thinking_level", "effort", "verbosity")
+    control_keys = (
+        "reasoning_effort",
+        "thinking_level",
+        "effort",
+        "verbosity",
+        "prompt_cache_key",
+    )
     per_control: Dict[str, Dict[str, Any]] = {
         key: {
             "configured_value": configured_controls.get(key),
@@ -1318,6 +1324,8 @@ class OpenAIConnector:
             requested_controls["effort"] = effort
         if verbosity:
             requested_controls["verbosity"] = verbosity
+        if normalized_prompt_cache_key:
+            requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
 
         def control_key_for_param(param_name: str) -> Optional[str]:
             if (
@@ -1334,6 +1342,7 @@ class OpenAIConnector:
                 "thinking_level": "thinking_level",
                 "effort": "effort",
                 "verbosity": "verbosity",
+                "prompt_cache_key": "prompt_cache_key",
                 "text_verbosity": "verbosity",
             }
             return mapping.get(param_name)
@@ -1601,6 +1610,8 @@ class OpenAIConnector:
 
             if request_args.get("verbosity") is not None:
                 sent["verbosity"] = str(request_args["verbosity"])
+            if request_args.get("prompt_cache_key") is not None:
+                sent["prompt_cache_key"] = str(request_args["prompt_cache_key"])
 
             extra_body = request_args.get("extra_body")
             if isinstance(extra_body, dict):
@@ -3377,6 +3388,7 @@ def process_dataset(
         "thinking_level": args.thinking_level,
         "effort": args.effort,
         "verbosity": args.verbosity,
+        "prompt_cache_key": args.prompt_cache_key,
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
@@ -3798,6 +3810,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "thinking_level": args.thinking_level,
         "effort": args.effort,
         "verbosity": args.verbosity,
+        "prompt_cache_key": args.prompt_cache_key,
     }
     active_requested_controls = {
         key: value for key, value in requested_control_flags.items() if value is not None
