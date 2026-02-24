@@ -543,6 +543,16 @@
                       />
                       <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
                     </label>
+                    <label
+                      >Gemini Cached Content
+                      <input
+                        type="text"
+                        id="gemini_cached_content"
+                        name="gemini_cached_content"
+                        placeholder="cachedContents/your-cache-id"
+                      />
+                      <span class="hint">Optional Gemini context-cache resource name for OpenAI-compatible Gemini endpoints.</span>
+                    </label>
                   </div>
                   <label class="inline">
                     <input type="checkbox" id="enable_cot" name="enable_cot" />
@@ -715,6 +725,7 @@
                           [--prompt_layout {standard,compact}]
                           [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
                           [--prompt_cache_key PROMPT_CACHE_KEY]
+                          [--gemini_cached_content GEMINI_CACHED_CONTENT]
                           [--enable_cot] [--no_explanation]
                           [--logprobs | --no-logprobs] [--calibration]
                           [--api_key_var API_KEY_VAR]
@@ -799,6 +810,10 @@ options:
                         Optional provider cache-routing key (when supported)
                         to improve prompt-cache hit consistency for stable
                         prompt prefixes.
+  --gemini_cached_content GEMINI_CACHED_CONTENT
+                        Optional Gemini context-cache resource name passed via
+                        extra_body.google.cached_content when targeting Gemini
+                        OpenAI-compatible endpoints.
   --enable_cot          If set, encourages the model to reason step-by-step
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
@@ -939,6 +954,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         prompt_layout: "standard",
         cache_pad_target_tokens: "0",
         prompt_cache_key: "",
+        gemini_cached_content: "",
         service_tier: "standard",
         include_explanations: true,
         api_key_var: "",
@@ -1009,6 +1025,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
         prompt_cache_key:
           "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
+        gemini_cached_content:
+          "Optional Gemini context-cache resource name sent as --gemini_cached_content (Gemini OpenAI-compatible endpoints).",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Output CSV file path, or output directory when running multiple inputs.",
         api_key_var: "Environment variable that stores the API key used for this run.",
@@ -1712,6 +1730,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const promptCacheKey = data.get("prompt_cache_key")?.toString().trim() ?? "";
         if (promptCacheKey) {
           args.push("--prompt_cache_key", shellQuote(promptCacheKey));
+        }
+
+        const geminiCachedContent = data.get("gemini_cached_content")?.toString().trim() ?? "";
+        if (geminiCachedContent) {
+          args.push("--gemini_cached_content", shellQuote(geminiCachedContent));
         }
 
         const labelsPath = data.get("labels_path")?.trim();

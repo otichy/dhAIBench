@@ -33,6 +33,7 @@ class ValidatorRunInfo:
     verbosity: Optional[str]
     cache_pad_target_tokens: int
     prompt_cache_key: Optional[str]
+    gemini_cached_content: Optional[str]
     max_retries: int
 
 
@@ -110,6 +111,7 @@ class ValidatorClient:
                 "verbosity": run_info.verbosity,
                 "cache_pad_target_tokens": run_info.cache_pad_target_tokens,
                 "prompt_cache_key": run_info.prompt_cache_key,
+                "gemini_cached_content": run_info.gemini_cached_content,
                 "max_retries": run_info.max_retries,
             },
         }

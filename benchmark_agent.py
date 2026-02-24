@@ -175,6 +175,7 @@ def compute_request_control_summary(
         "effort",
         "verbosity",
         "prompt_cache_key",
+        "gemini_cached_content",
     )
     per_control: Dict[str, Dict[str, Any]] = {
         key: {
@@ -310,6 +311,9 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
     cache_read_tokens_total = 0.0
     cache_write_tokens_total = 0.0
     cache_token_fields_totals: Dict[str, float] = {}
+    attempts_with_gemini_cached_content_token_signals = 0
+    gemini_cached_content_token_count_total = 0.0
+    gemini_cached_content_token_fields_totals: Dict[str, float] = {}
 
     for record in log_records:
         if not isinstance(record, dict):
@@ -331,6 +335,7 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
 
             flattened = _flatten_numeric_metrics(usage_metadata)
             attempt_cache_values: List[float] = []
+            attempt_has_gemini_cached_content_tokens = False
             for field_path, value in flattened.items():
                 lowered = field_path.lower()
                 if ("cache" in lowered or "cached" in lowered) and "token" in lowered:
@@ -342,14 +347,27 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
                         cache_read_tokens_total += value
                     if "write" in lowered or "creation" in lowered or "create" in lowered:
                         cache_write_tokens_total += value
+                canonical = re.sub(r"[^a-z0-9]", "", lowered)
+                if "cachedcontenttokencount" in canonical:
+                    gemini_cached_content_token_fields_totals[field_path] = (
+                        gemini_cached_content_token_fields_totals.get(field_path, 0.0) + value
+                    )
+                    gemini_cached_content_token_count_total += value
+                    attempt_has_gemini_cached_content_tokens = True
 
             if attempt_cache_values:
                 attempts_with_cached_token_signals += 1
                 cached_tokens_total_estimate += max(attempt_cache_values)
+            if attempt_has_gemini_cached_content_tokens:
+                attempts_with_gemini_cached_content_token_signals += 1
 
     normalized_fields = {
         field_path: _normalize_metric_number(value)
         for field_path, value in sorted(cache_token_fields_totals.items())
+    }
+    normalized_gemini_fields = {
+        field_path: _normalize_metric_number(value)
+        for field_path, value in sorted(gemini_cached_content_token_fields_totals.items())
     }
     return {
         "attempts_total": attempts_total,
@@ -359,6 +377,11 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
         "cache_read_tokens_total": _normalize_metric_number(cache_read_tokens_total),
         "cache_write_tokens_total": _normalize_metric_number(cache_write_tokens_total),
         "cache_token_fields_totals": normalized_fields,
+        "attempts_with_gemini_cached_content_token_signals": attempts_with_gemini_cached_content_token_signals,
+        "gemini_cached_content_token_count_total": _normalize_metric_number(
+            gemini_cached_content_token_count_total
+        ),
+        "gemini_cached_content_token_fields_totals": normalized_gemini_fields,
     }
 
 
@@ -1302,6 +1325,7 @@ class OpenAIConnector:
         thinking_level: Optional[str],
         effort: Optional[str],
         prompt_cache_key: Optional[str],
+        gemini_cached_content: Optional[str],
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
@@ -1310,6 +1334,9 @@ class OpenAIConnector:
         model_key = model.strip().lower()
         normalized_prompt_cache_key = (
             str(prompt_cache_key).strip() if prompt_cache_key is not None else ""
+        ) or None
+        normalized_gemini_cached_content = (
+            str(gemini_cached_content).strip() if gemini_cached_content is not None else ""
         ) or None
         is_gemini_target = self._provider == "google" or "gemini" in model_key
         requested_controls: Dict[str, str] = {}
@@ -1326,6 +1353,8 @@ class OpenAIConnector:
             requested_controls["verbosity"] = verbosity
         if normalized_prompt_cache_key:
             requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
+        if normalized_gemini_cached_content and is_gemini_target:
+            requested_controls["gemini_cached_content"] = normalized_gemini_cached_content
 
         def control_key_for_param(param_name: str) -> Optional[str]:
             if (
@@ -1343,6 +1372,9 @@ class OpenAIConnector:
                 "effort": "effort",
                 "verbosity": "verbosity",
                 "prompt_cache_key": "prompt_cache_key",
+                "cached_content": "gemini_cached_content",
+                "gemini_cached_content": "gemini_cached_content",
+                "google_cached_content": "gemini_cached_content",
                 "text_verbosity": "verbosity",
             }
             return mapping.get(param_name)
@@ -1376,6 +1408,9 @@ class OpenAIConnector:
                 "logprobs": "logprobs",
                 "promptcachekey": "prompt_cache_key",
                 "prompt_cache_key": "prompt_cache_key",
+                "cachedcontent": "cached_content",
+                "cached_content": "cached_content",
+                "google_cached_content": "cached_content",
             }
             if normalized in alias_map:
                 return alias_map[normalized]
@@ -1509,6 +1544,9 @@ class OpenAIConnector:
             if "prompt_cache_key" in text or "prompt cache key" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "prompt_cache_key"
+            if "cached_content" in text or "cached content" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return "cached_content"
             return None
 
         def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
@@ -1531,6 +1569,12 @@ class OpenAIConnector:
                     extra_body["thinkingLevel"] = thinking_level
             if effort:
                 extra_body["effort"] = effort
+            if normalized_gemini_cached_content and is_gemini_target:
+                google_payload = extra_body.get("google")
+                if not isinstance(google_payload, dict):
+                    google_payload = {}
+                google_payload["cached_content"] = normalized_gemini_cached_content
+                extra_body["google"] = google_payload
             if extra_body:
                 request_args["extra_body"] = extra_body
 
@@ -1567,6 +1611,13 @@ class OpenAIConnector:
                                 google_payload.pop("thinking_config", None)
                             if not google_payload:
                                 extra_body.pop("google", None)
+                if param_name in {"cached_content", "gemini_cached_content", "google_cached_content"}:
+                    google_payload = extra_body.get("google")
+                    if isinstance(google_payload, dict) and "cached_content" in google_payload:
+                        google_payload.pop("cached_content", None)
+                        removed = True
+                        if not google_payload:
+                            extra_body.pop("google", None)
                 if param_name in {"reasoning", "reasoning_effort"}:
                     if "reasoning" in extra_body:
                         extra_body.pop("reasoning", None)
@@ -1612,6 +1663,8 @@ class OpenAIConnector:
                 sent["verbosity"] = str(request_args["verbosity"])
             if request_args.get("prompt_cache_key") is not None:
                 sent["prompt_cache_key"] = str(request_args["prompt_cache_key"])
+            if request_args.get("cached_content") is not None:
+                sent["gemini_cached_content"] = str(request_args["cached_content"])
 
             extra_body = request_args.get("extra_body")
             if isinstance(extra_body, dict):
@@ -1631,6 +1684,8 @@ class OpenAIConnector:
                     thinking_cfg = google_payload.get("thinking_config")
                     if isinstance(thinking_cfg, dict) and thinking_cfg.get("thinking_level") is not None:
                         sent["thinking_level"] = str(thinking_cfg["thinking_level"])
+                    if google_payload.get("cached_content") is not None:
+                        sent["gemini_cached_content"] = str(google_payload["cached_content"])
 
                 if extra_body.get("effort") is not None:
                     sent["effort"] = str(extra_body["effort"])
@@ -1969,6 +2024,8 @@ class OpenAIConnector:
                 request_args["service_tier"] = service_tier
             if normalized_prompt_cache_key:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
+            if normalized_gemini_cached_content:
+                mark_control_rejected("cached_content", "legacy_sdk_ignored")
             if reasoning_effort or thinking_level or effort:
                 mark_control_rejected("reasoning", "legacy_sdk_ignored")
                 mark_control_rejected("thinkingLevel", "legacy_sdk_ignored")
@@ -2609,6 +2666,7 @@ def classify_example(
     cache_padding_text: Optional[str] = None,
     cache_padding_tokens_estimate: int = 0,
     prompt_cache_key: Optional[str] = None,
+    gemini_cached_content: Optional[str] = None,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
     prompt_artifacts = build_prompt_artifacts(
@@ -2676,6 +2734,7 @@ def classify_example(
                 thinking_level=thinking_level,
                 effort=effort,
                 prompt_cache_key=prompt_cache_key,
+                gemini_cached_content=gemini_cached_content,
             )
             raw = result.text
             latest_raw_response = raw
@@ -3229,6 +3288,7 @@ def process_dataset(
                         cache_padding_text=cache_padding_text,
                         cache_padding_tokens_estimate=cache_padding_tokens_estimate,
                         prompt_cache_key=args.prompt_cache_key,
+                        gemini_cached_content=args.gemini_cached_content,
                     )
                 except ProviderQuotaExceededError as exc:
                     halted_by_quota = True
@@ -3389,6 +3449,7 @@ def process_dataset(
         "effort": args.effort,
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
+        "gemini_cached_content": args.gemini_cached_content,
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
@@ -3451,6 +3512,28 @@ def process_dataset(
             usage_metadata_summary.get("attempts_with_cached_token_signals", 0),
             usage_metadata_summary.get("cached_tokens_total_estimate", 0),
         )
+        gemini_cached_token_total = usage_metadata_summary.get(
+            "gemini_cached_content_token_count_total", 0
+        )
+        gemini_cached_attempts = usage_metadata_summary.get(
+            "attempts_with_gemini_cached_content_token_signals", 0
+        )
+        if gemini_cached_attempts or gemini_cached_token_total:
+            logging.info(
+                "Gemini cache metadata -> attempts with cachedContentTokenCount: %s, total cachedContentTokenCount: %s.",
+                gemini_cached_attempts,
+                gemini_cached_token_total,
+            )
+        elif (
+            getattr(args, "gemini_cached_content", None)
+            and (
+                str(getattr(args, "provider", "")).strip().lower() == "google"
+                or "gemini" in str(getattr(args, "model", "")).strip().lower()
+            )
+        ):
+            logging.warning(
+                "Gemini cached content was configured but usage metadata did not report cachedContentTokenCount."
+            )
 
     if cache_pad_target_tokens > 0:
         logging.info(
@@ -3640,6 +3723,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--gemini_cached_content",
+        default=None,
+        help=(
+            "Optional Gemini context-cache resource name for providers that expose "
+            "Gemini OpenAI-compatible caching via extra_body.google.cached_content."
+        ),
+    )
+    parser.add_argument(
         "--enable_cot",
         action="store_true",
         help="If set, encourages the model to reason step-by-step before answering.",
@@ -3811,6 +3902,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "effort": args.effort,
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
+        "gemini_cached_content": args.gemini_cached_content,
     }
     active_requested_controls = {
         key: value for key, value in requested_control_flags.items() if value is not None
@@ -3906,6 +3998,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
     if args.prompt_cache_key:
         logging.info("Prompt cache key configured: %s", args.prompt_cache_key)
+    if args.gemini_cached_content:
+        logging.info("Gemini cached content configured: %s", args.gemini_cached_content)
+        if not (provider == "google" or "gemini" in str(args.model).strip().lower()):
+            logging.warning(
+                "--gemini_cached_content is set but target does not look like Gemini; this control may be ignored."
+            )
 
     connector = OpenAIConnector(
         api_key=api_key,
@@ -3940,6 +4038,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     verbosity=args.verbosity,
                     cache_pad_target_tokens=args.cache_pad_target_tokens,
                     prompt_cache_key=args.prompt_cache_key,
+                    gemini_cached_content=args.gemini_cached_content,
                     max_retries=args.max_retries,
                 )
             )
