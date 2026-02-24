@@ -437,16 +437,10 @@
                 placeholder="You are a linguistic classifier that excels at semantic disambiguation."
               ></textarea>
             </label>
-            <div class="grid compact">
-              <label class="inline">
-                <input type="checkbox" id="enable_cot" name="enable_cot" />
-                <span>Encourage chain-of-thought reasoning</span>
-              </label>
-              <label class="inline">
-                <input type="checkbox" id="include_explanations" name="include_explanations" checked />
-                <span>Include explanations in model outputs</span>
-              </label>
-            </div>
+            <label class="inline">
+              <input type="checkbox" id="include_explanations" name="include_explanations" checked />
+              <span>Include explanations in model outputs</span>
+            </label>
           </fieldset>
 
           <fieldset>
@@ -478,6 +472,16 @@
                     <option value="priority">Priority</option>
                   </select>
                 </label>
+                <label
+                  >Few-shot Examples
+                  <input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" />
+                </label>
+              </div>
+            </details>
+
+            <details class="optional-group">
+              <summary>Prompt length and cache controls</summary>
+              <div class="grid">
                 <label
                   >GPT Reasoning Effort
                   <select id="reasoning_effort" name="reasoning_effort">
@@ -517,10 +521,6 @@
                   </select>
                 </label>
                 <label
-                  >Few-shot Examples
-                  <input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" />
-                </label>
-                <label
                   >Prompt Layout
                   <select id="prompt_layout" name="prompt_layout">
                     <option value="standard" selected>Standard</option>
@@ -550,6 +550,10 @@
                   <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
                 </label>
               </div>
+              <label class="inline">
+                <input type="checkbox" id="enable_cot" name="enable_cot" />
+                <span>Encourage chain-of-thought reasoning</span>
+              </label>
             </details>
 
             <details class="optional-group">
