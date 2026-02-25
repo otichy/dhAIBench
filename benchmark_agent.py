@@ -490,6 +490,18 @@ def is_empty_model_response_error(exc: BaseException) -> bool:
     return any(marker in text for marker in markers)
 
 
+def is_malformed_model_response_error(exc: BaseException) -> bool:
+    """Best-effort detection for malformed provider completion payloads."""
+    text = str(exc).strip().lower()
+    if not text:
+        return False
+    markers = (
+        "malformed chat completion response",
+        "nonetype' object has no attribute 'content'",
+    )
+    return any(marker in text for marker in markers)
+
+
 def ensure_directory(path: str) -> None:
     """Create the directory for path if it does not yet exist."""
     directory = os.path.dirname(os.path.abspath(path))
@@ -1860,6 +1872,121 @@ def load_existing_prompt_log(path: str) -> List[Dict[str, Any]]:
     return []
 
 
+def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
+    """Print a compact error summary for a prompt log JSON file."""
+    log_path = os.path.expanduser(path)
+    if not os.path.exists(log_path):
+        logging.error("Prompt log does not exist: %s", log_path)
+        return 1
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:  # noqa: BLE001
+        logging.error("Unable to parse prompt log %s: %s", log_path, exc)
+        return 1
+
+    if not isinstance(payload, list):
+        logging.error("Prompt log %s is not a JSON list.", log_path)
+        return 1
+
+    records = payload
+    attempts_total = 0
+    error_attempts_total = 0
+    examples_with_errors = 0
+    error_by_type: Dict[str, int] = defaultdict(int)
+    error_by_category: Dict[str, int] = defaultdict(int)
+    error_by_message: Dict[str, int] = defaultdict(int)
+    per_example_rows: List[Tuple[int, str, int, str]] = []
+
+    def infer_error_type(message: str) -> str:
+        lowered = message.lower()
+        if "list index out of range" in lowered:
+            return "IndexError"
+        if "has no attribute 'content'" in lowered:
+            return "AttributeError"
+        if "json" in lowered and "decode" in lowered:
+            return "JSONDecodeError"
+        return "unknown"
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        example_id = str(record.get("example_id", "")).strip() or "<missing-id>"
+        attempts_obj = record.get("attempts")
+        attempts = attempts_obj if isinstance(attempts_obj, list) else []
+        attempts_total += len(attempts)
+
+        error_count_for_example = 0
+        max_attempt_num = 0
+        final_status = "unknown"
+
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempt_num = parse_optional_int(attempt.get("attempt")) or 0
+            if attempt_num > max_attempt_num:
+                max_attempt_num = attempt_num
+                final_status = str(attempt.get("status", "unknown"))
+
+            if str(attempt.get("status", "")).strip().lower() != "error":
+                continue
+
+            error_count_for_example += 1
+            error_attempts_total += 1
+            error_message = str(attempt.get("error", "")).strip() or "<empty>"
+            error_type = str(attempt.get("error_type", "")).strip() or infer_error_type(error_message)
+            error_category = str(attempt.get("error_category", "")).strip()
+            if not error_category:
+                error_category = (
+                    "malformed_provider_response"
+                    if is_malformed_model_response_error(ValueError(error_message))
+                    else "uncategorized"
+                )
+            error_by_type[error_type] += 1
+            error_by_category[error_category] += 1
+            error_by_message[error_message] += 1
+
+        if error_count_for_example:
+            examples_with_errors += 1
+            effective_max_attempt = max_attempt_num if max_attempt_num > 0 else len(attempts)
+            per_example_rows.append(
+                (error_count_for_example, example_id, effective_max_attempt, final_status)
+            )
+
+    logging.info("Prompt-log error summary: %s", log_path)
+    logging.info("Examples: %d", len(records))
+    logging.info("Attempts: %d", attempts_total)
+    logging.info("Error attempts: %d", error_attempts_total)
+    logging.info("Examples with errors: %d", examples_with_errors)
+
+    if error_attempts_total == 0:
+        logging.info("No attempt-level errors found.")
+        return 0
+
+    for error_type, count in sorted(error_by_type.items(), key=lambda item: (-item[1], item[0])):
+        logging.info("Error type '%s': %d", error_type, count)
+    for category, count in sorted(error_by_category.items(), key=lambda item: (-item[1], item[0])):
+        logging.info("Error category '%s': %d", category, count)
+
+    top_signatures = sorted(error_by_message.items(), key=lambda item: (-item[1], item[0]))[:5]
+    for message, count in top_signatures:
+        logging.info("Top error signature (%d): %s", count, message)
+
+    capped_top_examples = max(1, int(top_examples))
+    ranked_examples = sorted(per_example_rows, key=lambda row: (-row[0], row[1]))[:capped_top_examples]
+    for error_count, example_id, max_attempt, final_status in ranked_examples:
+        logging.info(
+            "Example %s -> errors=%d, max_attempt=%d, final_status=%s",
+            example_id,
+            error_count,
+            max_attempt,
+            final_status,
+        )
+
+    return 0
+
+
 def load_existing_output_predictions(
     output_path: str,
 ) -> Tuple[List[str], Dict[str, Prediction], int, int, int]:
@@ -2697,6 +2824,85 @@ class OpenAIConnector:
 
             return metadata or None
 
+        def read_api_field(value: Any, key: str) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                return value.get(key)
+            attr_value = getattr(value, key, None)
+            if attr_value is not None:
+                return attr_value
+            model_extra = getattr(value, "model_extra", None)
+            if isinstance(model_extra, dict):
+                return model_extra.get(key)
+            return None
+
+        def extract_text_content(content_obj: Any) -> str:
+            if content_obj is None:
+                return ""
+            if isinstance(content_obj, str):
+                return content_obj
+            if isinstance(content_obj, list):
+                chunks: List[str] = []
+                for item in content_obj:
+                    segment_text = read_api_field(item, "text")
+                    if segment_text is None:
+                        segment_text = read_api_field(item, "output_text")
+                    if segment_text is None and isinstance(item, str):
+                        segment_text = item
+                    if segment_text is not None:
+                        chunks.append(str(segment_text))
+                return "".join(chunks)
+            return str(content_obj)
+
+        def format_chat_response_diagnostic(
+            response_obj: Any,
+            first_choice_obj: Any = None,
+            choices_count: Optional[int] = None,
+        ) -> str:
+            if choices_count is None:
+                raw_choices = read_api_field(response_obj, "choices")
+                if isinstance(raw_choices, list):
+                    choices_count = len(raw_choices)
+            return (
+                f"id={read_api_field(response_obj, 'id')!r}, "
+                f"model={read_api_field(response_obj, 'model')!r}, "
+                f"choices_count={choices_count if choices_count is not None else 'unknown'}, "
+                f"finish_reason={read_api_field(first_choice_obj, 'finish_reason')!r}"
+            )
+
+        def extract_chat_completion_text_and_logprobs(
+            response_obj: Any,
+        ) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
+            choices_obj = read_api_field(response_obj, "choices")
+            if not isinstance(choices_obj, list):
+                raise ValueError(
+                    "Malformed chat completion response: 'choices' is missing or not a list "
+                    f"({format_chat_response_diagnostic(response_obj)})."
+                )
+            if not choices_obj:
+                raise ValueError(
+                    "Malformed chat completion response: 'choices' is empty "
+                    f"({format_chat_response_diagnostic(response_obj, choices_count=0)})."
+                )
+
+            first_choice = choices_obj[0]
+            message_obj = read_api_field(first_choice, "message")
+            message_content_obj = (
+                read_api_field(message_obj, "content") if message_obj is not None else None
+            )
+            if message_content_obj is None:
+                message_content_obj = read_api_field(first_choice, "text")
+            message_text = extract_text_content(message_content_obj)
+            if not message_text.strip():
+                raise ValueError(
+                    "Malformed chat completion response: first choice contains no textual content "
+                    f"({format_chat_response_diagnostic(response_obj, first_choice, len(choices_obj))})."
+                )
+
+            token_logprobs = collect_logprobs(read_api_field(first_choice, "logprobs"))
+            return message_text, token_logprobs
+
         def complete_with_responses_api() -> CompletionResult:
             request_args = {
                 "model": request_model,
@@ -2883,12 +3089,11 @@ class OpenAIConnector:
                         request_args.pop("top_logprobs", None)
                         continue
                     raise
-            message = response.choices[0].message.content or ""
+            message, token_logprobs = extract_chat_completion_text_and_logprobs(response)
             usage = getattr(response, "usage", None)
             prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
             completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
             total_tokens = getattr(usage, "total_tokens", None) if usage else None
-            token_logprobs = collect_logprobs(getattr(response.choices[0], "logprobs", None))
             usage_metadata = collect_usage_metadata(response, usage)
             sent_controls, final_rejected_controls = finalize_control_state(request_args)
             return CompletionResult(
@@ -2950,16 +3155,11 @@ class OpenAIConnector:
                 response = self._client.ChatCompletion.create(**request_args)
             else:
                 raise
-        content = response["choices"][0]["message"]["content"]
+        content, token_logprobs = extract_chat_completion_text_and_logprobs(response)
         usage = response.get("usage", {}) if isinstance(response, dict) else {}
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
         total_tokens = usage.get("total_tokens")
-        logprobs_obj = None
-        choice = response["choices"][0]
-        if isinstance(choice, dict):
-            logprobs_obj = choice.get("logprobs")
-        token_logprobs = collect_logprobs(logprobs_obj)
         usage_metadata = collect_usage_metadata(response, usage)
         sent_controls, final_rejected_controls = finalize_control_state(request_args)
         return CompletionResult(
@@ -3928,6 +4128,7 @@ def classify_example(
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
             )
             empty_response_error = is_empty_model_response_error(exc)
+            malformed_response_error = is_malformed_model_response_error(exc)
             if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
                 # Give the model deterministic feedback about why the previous output was rejected.
                 validator_patch_message = {
@@ -3941,6 +4142,9 @@ def classify_example(
                 }
             if "status" not in log_entry:
                 log_entry["status"] = "error"
+            log_entry["error_type"] = exc.__class__.__name__
+            if malformed_response_error:
+                log_entry["error_category"] = "malformed_provider_response"
             log_entry["error"] = str(exc)
             interaction_logs.append(log_entry)
             logging.warning(
@@ -3999,6 +4203,32 @@ def classify_example(
             "Provider returned empty model responses after retries for "
             f"example {example.example_id}: {detail}"
         ) from last_error
+    if is_malformed_model_response_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        logging.error(
+            "Provider returned malformed completion payload for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence. Detail: %s",
+            example.example_id,
+            max_retries,
+            detail,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_provider_response_error",
+            validator_reason=detail,
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+        ), interaction_logs
     if isinstance(last_error, RequestedControlRejectedError):
         raise last_error
     raise RuntimeError(f"Failed to classify example {example.example_id}") from last_error
@@ -4862,6 +5092,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             "(or <SLUG>_ACCESS_TOKEN) and <SLUG>_BASE_URL."
         ),
     )
+    parser.add_argument(
+        "--summarize-log-errors",
+        dest="summarize_log_errors",
+        help=(
+            "Path to a prompt log JSON file (*.log) produced by this benchmark. "
+            "Prints a compact attempt/error summary and exits."
+        ),
+    )
+    parser.add_argument(
+        "--summarize-log-errors-top",
+        type=int,
+        default=20,
+        help="Maximum number of per-example error rows shown by --summarize-log-errors.",
+    )
 
     args = parser.parse_args(argv)
     if args.system_prompt_b64:
@@ -4875,14 +5119,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+    if args.update_models and args.summarize_log_errors:
+        parser.error("--summarize-log-errors and --update-models cannot be used together.")
     if args.update_models:
         return update_model_catalog(args.models_providers, args.models_output)
+    if args.summarize_log_errors:
+        return summarize_prompt_log_errors(
+            args.summarize_log_errors,
+            top_examples=args.summarize_log_errors_top,
+        )
 
     if not args.input:
-        parser.error("--input is required unless --update-models is specified.")
+        parser.error("--input is required unless --update-models or --summarize-log-errors is specified.")
 
     if not args.model:
-        parser.error("--model is required unless --update-models is specified.")
+        parser.error("--model is required unless --update-models or --summarize-log-errors is specified.")
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
     if args.create_gemini_cache and args.gemini_cached_content:
