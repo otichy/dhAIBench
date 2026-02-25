@@ -101,6 +101,7 @@ Use provider-specific controls when you need tighter control over model "thinkin
 - `--effort {low,medium,high,max}` for Claude-style effort (`effort` in the request payload).
 - `--prompt_cache_key KEY` for OpenAI-style prompt-cache routing (when supported by the provider).
 - `--gemini_cached_content RESOURCE_NAME` for Gemini context caching via `extra_body.google.cached_content` on Gemini OpenAI-compatible endpoints.
+- `--requesty_auto_cache` for Requesty auto-caching via `extra_body.requesty.auto_cache`.
 
 These flags are optional and can be omitted to leave model defaults unchanged.
 Use `--strict_control_acceptance` to fail examples when requested controls are rejected or stripped from the final successful request payload.
@@ -189,7 +190,7 @@ Running the agent creates:
 
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), and token usage statistics. Confidence is included when the model supplies a valid value; entries that violated the span contract omit it.
 - A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
-  The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, `verbosity`, `prompt_cache_key`, and `gemini_cached_content` controls when used.
+  The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, `verbosity`, `prompt_cache_key`, `gemini_cached_content`, and `requesty_auto_cache` controls when used.
   It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.

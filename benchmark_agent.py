@@ -166,7 +166,7 @@ def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[st
 
 def compute_request_control_summary(
     log_records: Iterable[Dict[str, Any]],
-    configured_controls: Dict[str, Optional[str]],
+    configured_controls: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Aggregate request-control acceptance telemetry from prompt logs."""
     control_keys = (
@@ -176,6 +176,7 @@ def compute_request_control_summary(
         "verbosity",
         "prompt_cache_key",
         "gemini_cached_content",
+        "requesty_auto_cache",
     )
     per_control: Dict[str, Dict[str, Any]] = {
         key: {
@@ -823,10 +824,12 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     "google": {"api_key_var": "GOOGLE_API_KEY", "api_base_var": "GOOGLE_BASE_URL"},
     "huggingface": {"api_key_var": "HF_API_KEY", "api_base_var": "HF_BASE_URL"},
     "e-infra": {"api_key_var": "E-INFRA_API_KEY", "api_base_var": "E-INFRA_BASE_URL"},
+    "requesty": {"api_key_var": "REQUESTY_API_KEY", "api_base_var": "REQUESTY_BASE_URL"},
 }
 
 PROVIDER_BASE_FALLBACKS: Dict[str, str] = {
     "openai": "https://api.openai.com/v1",
+    "requesty": "https://router.requesty.ai/v1",
 }
 
 
@@ -882,6 +885,8 @@ def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
         if re.search(r"/v\d+(?:beta\d*)?$", trimmed, re.IGNORECASE):
             return f"{trimmed}/openai"
         return f"{trimmed}/v1beta/openai"
+    if trimmed.endswith("/openapi"):
+        return trimmed
     if not re.search(r"/v\d+(?:beta\d*)?$", trimmed, re.IGNORECASE):
         trimmed = f"{trimmed}/v1"
     return trimmed
@@ -1430,6 +1435,7 @@ class OpenAIConnector:
         effort: Optional[str],
         prompt_cache_key: Optional[str],
         gemini_cached_content: Optional[str],
+        requesty_auto_cache: Optional[bool],
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
@@ -1442,7 +1448,18 @@ class OpenAIConnector:
         normalized_gemini_cached_content = (
             str(gemini_cached_content).strip() if gemini_cached_content is not None else ""
         ) or None
+        normalized_requesty_auto_cache: Optional[bool] = None
+        if isinstance(requesty_auto_cache, bool):
+            normalized_requesty_auto_cache = requesty_auto_cache
+        elif requesty_auto_cache is not None:
+            normalized_requesty_auto_cache = str(requesty_auto_cache).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
         is_gemini_target = self._provider == "google" or "gemini" in model_key
+        is_requesty_target = self._provider == "requesty"
         requested_controls: Dict[str, str] = {}
         rejected_controls: Dict[str, str] = {}
         translated_thinking_level: Optional[str] = None
@@ -1459,6 +1476,10 @@ class OpenAIConnector:
             requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
         if normalized_gemini_cached_content and is_gemini_target:
             requested_controls["gemini_cached_content"] = normalized_gemini_cached_content
+        if normalized_requesty_auto_cache is not None and is_requesty_target:
+            requested_controls["requesty_auto_cache"] = (
+                "true" if normalized_requesty_auto_cache else "false"
+            )
 
         def control_key_for_param(param_name: str) -> Optional[str]:
             if (
@@ -1481,6 +1502,9 @@ class OpenAIConnector:
                 "cached_content": "gemini_cached_content",
                 "gemini_cached_content": "gemini_cached_content",
                 "google_cached_content": "gemini_cached_content",
+                "requesty_auto_cache": "requesty_auto_cache",
+                "requesty.autocache": "requesty_auto_cache",
+                "requesty.auto_cache": "requesty_auto_cache",
                 "text_verbosity": "verbosity",
             }
             return mapping.get(param_name)
@@ -1520,6 +1544,9 @@ class OpenAIConnector:
                 "cachedcontent": "cached_content",
                 "cached_content": "cached_content",
                 "google_cached_content": "cached_content",
+                "requestyautocache": "requesty_auto_cache",
+                "requesty_auto_cache": "requesty_auto_cache",
+                "requesty_autocache": "requesty_auto_cache",
             }
             if normalized in alias_map:
                 return alias_map[normalized]
@@ -1656,6 +1683,9 @@ class OpenAIConnector:
             if "cached_content" in text or "cached content" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "cached_content"
+            if ("requesty" in text and ("auto_cache" in text or "auto cache" in text or "autocache" in text)):
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return "requesty_auto_cache"
             return None
 
         def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
@@ -1707,6 +1737,20 @@ class OpenAIConnector:
                 extra_body["extra_body"] = gemini_inner
             if extra_body:
                 request_args["extra_body"] = extra_body
+
+        def apply_requesty_controls(request_args: Dict[str, Any]) -> None:
+            if not is_requesty_target or normalized_requesty_auto_cache is None:
+                return
+            extra_body: Dict[str, Any] = {}
+            existing_extra = request_args.get("extra_body")
+            if isinstance(existing_extra, dict):
+                extra_body.update(existing_extra)
+            requesty_payload = extra_body.get("requesty")
+            if not isinstance(requesty_payload, dict):
+                requesty_payload = {}
+            requesty_payload["auto_cache"] = bool(normalized_requesty_auto_cache)
+            extra_body["requesty"] = requesty_payload
+            request_args["extra_body"] = extra_body
 
         def remove_request_parameter(request_args: Dict[str, Any], param_name: str) -> bool:
             removed = False
@@ -1760,6 +1804,13 @@ class OpenAIConnector:
                     if "reasoning" in extra_body:
                         extra_body.pop("reasoning", None)
                         removed = True
+                if param_name in {"requesty_auto_cache", "requesty.autocache", "requesty.auto_cache"}:
+                    requesty_payload = extra_body.get("requesty")
+                    if isinstance(requesty_payload, dict) and "auto_cache" in requesty_payload:
+                        requesty_payload.pop("auto_cache", None)
+                        removed = True
+                        if not requesty_payload:
+                            extra_body.pop("requesty", None)
                 if not extra_body:
                     request_args.pop("extra_body", None)
             text_payload = request_args.get("text")
@@ -1821,6 +1872,11 @@ class OpenAIConnector:
                     sent["thinking_level"] = str(top_level_thinking_cfg["thinking_level"])
                 if extra_body.get("cached_content") is not None:
                     sent["gemini_cached_content"] = str(extra_body["cached_content"])
+                requesty_payload = extra_body.get("requesty")
+                if isinstance(requesty_payload, dict) and requesty_payload.get("auto_cache") is not None:
+                    sent["requesty_auto_cache"] = (
+                        "true" if bool(requesty_payload["auto_cache"]) else "false"
+                    )
 
                 gemini_inner = extra_body.get("extra_body")
                 if isinstance(gemini_inner, dict):
@@ -1999,6 +2055,7 @@ class OpenAIConnector:
             if normalized_prompt_cache_key:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
+            apply_requesty_controls(request_args)
             for unsupported in self._responses_unsupported_params.get(model_key, set()):
                 if remove_request_parameter(request_args, unsupported):
                     mark_control_rejected(unsupported, "previously_rejected")
@@ -2115,6 +2172,7 @@ class OpenAIConnector:
             if normalized_prompt_cache_key:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
+            apply_requesty_controls(request_args)
             for unsupported in self._chat_unsupported_params.get(model_key, set()):
                 if remove_request_parameter(request_args, unsupported):
                     mark_control_rejected(unsupported, "previously_rejected")
@@ -2200,6 +2258,8 @@ class OpenAIConnector:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             if normalized_gemini_cached_content:
                 mark_control_rejected("cached_content", "legacy_sdk_ignored")
+            if normalized_requesty_auto_cache is not None and is_requesty_target:
+                mark_control_rejected("requesty_auto_cache", "legacy_sdk_ignored")
             if reasoning_effort or thinking_level or effort:
                 mark_control_rejected("reasoning", "legacy_sdk_ignored")
                 mark_control_rejected("thinkingLevel", "legacy_sdk_ignored")
@@ -2842,6 +2902,7 @@ def classify_example(
     cache_padding_tokens_estimate: int = 0,
     prompt_cache_key: Optional[str] = None,
     gemini_cached_content: Optional[str] = None,
+    requesty_auto_cache: Optional[bool] = None,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
     prompt_artifacts = build_prompt_artifacts(
@@ -2913,6 +2974,7 @@ def classify_example(
                 effort=effort,
                 prompt_cache_key=prompt_cache_key,
                 gemini_cached_content=gemini_cached_content,
+                requesty_auto_cache=requesty_auto_cache,
             )
             raw = result.text
             latest_raw_response = raw
@@ -3480,6 +3542,7 @@ def process_dataset(
                         cache_padding_tokens_estimate=cache_padding_tokens_estimate,
                         prompt_cache_key=args.prompt_cache_key,
                         gemini_cached_content=args.gemini_cached_content,
+                        requesty_auto_cache=args.requesty_auto_cache,
                     )
                 except ProviderQuotaExceededError as exc:
                     halted_by_quota = True
@@ -3641,6 +3704,7 @@ def process_dataset(
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
         "gemini_cached_content": args.gemini_cached_content,
+        "requesty_auto_cache": args.requesty_auto_cache,
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
@@ -3928,6 +3992,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--requesty_auto_cache",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable/disable Requesty automatic caching by sending "
+            "extra_body.requesty.auto_cache. "
+            "Only used when --provider requesty."
+        ),
+    )
+    parser.add_argument(
         "--create_gemini_cache",
         action="store_true",
         help=(
@@ -4119,6 +4193,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     env_map = parse_env_file(".env")
 
     provider = (args.provider or "openai").lower()
+    if args.requesty_auto_cache is not None and provider != "requesty":
+        logging.warning(
+            "--requesty_auto_cache is set but provider is %s; this control is ignored unless --provider requesty.",
+            provider,
+        )
+        args.requesty_auto_cache = None
     discovered_provider_defaults = discover_provider_defaults(env_map)
     provider_defaults = discovered_provider_defaults.get(provider) or infer_provider_defaults(provider)
     if args.api_key_var is None:
@@ -4134,6 +4214,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
         "gemini_cached_content": args.gemini_cached_content,
+        "requesty_auto_cache": args.requesty_auto_cache,
     }
     active_requested_controls = {
         key: value for key, value in requested_control_flags.items() if value is not None
@@ -4235,6 +4316,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             logging.warning(
                 "--gemini_cached_content is set but target does not look like Gemini; this control may be ignored."
             )
+    if args.requesty_auto_cache is not None:
+        logging.info(
+            "Requesty auto cache configured: %s",
+            "enabled" if args.requesty_auto_cache else "disabled",
+        )
 
     created_cache_name: Optional[str] = None
     if args.create_gemini_cache:
@@ -4324,6 +4410,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     cache_pad_target_tokens=args.cache_pad_target_tokens,
                     prompt_cache_key=args.prompt_cache_key,
                     gemini_cached_content=args.gemini_cached_content,
+                    requesty_auto_cache=args.requesty_auto_cache,
                     max_retries=args.max_retries,
                 )
             )
@@ -4412,4 +4499,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
