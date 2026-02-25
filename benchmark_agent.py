@@ -1055,8 +1055,13 @@ def resolve_vertex_bootstrap_token(
     return None
 
 
-def resolve_vertex_token_refresh_interval_seconds(env_map: Dict[str, str]) -> int:
+def resolve_vertex_token_refresh_interval_seconds(
+    env_map: Dict[str, str],
+    override_seconds: Optional[int] = None,
+) -> int:
     """Resolve Vertex token refresh interval from env with sane defaults."""
+    if override_seconds is not None:
+        return max(60, int(override_seconds))
     raw_value = (
         resolve_env_value("VERTEX_ACCESS_TOKEN_REFRESH_SECONDS", env_map)
         or resolve_env_value("VERTEX_TOKEN_REFRESH_SECONDS", env_map)
@@ -1068,8 +1073,13 @@ def resolve_vertex_token_refresh_interval_seconds(env_map: Dict[str, str]) -> in
     return parsed
 
 
-def resolve_vertex_auto_adc_login(env_map: Dict[str, str]) -> bool:
+def resolve_vertex_auto_adc_login(
+    env_map: Dict[str, str],
+    override_value: Optional[bool] = None,
+) -> bool:
     """Resolve whether missing ADC should trigger interactive gcloud login."""
+    if override_value is not None:
+        return bool(override_value)
     raw_value = resolve_env_value("VERTEX_AUTO_ADC_LOGIN", env_map)
     parsed = parse_optional_bool(raw_value)
     if parsed is None:
@@ -1080,6 +1090,8 @@ def resolve_vertex_auto_adc_login(env_map: Dict[str, str]) -> bool:
 def build_vertex_access_token_provider(
     env_map: Dict[str, str],
     initial_token: Optional[str],
+    auto_adc_login_override: Optional[bool] = None,
+    refresh_interval_seconds_override: Optional[int] = None,
 ) -> VertexAccessTokenProvider:
     """Create a Vertex token provider configured via env vars."""
     refresh_command = resolve_env_value("VERTEX_ACCESS_TOKEN_COMMAND", env_map)
@@ -1088,8 +1100,14 @@ def build_vertex_access_token_provider(
     adc_login_command = resolve_env_value("VERTEX_ADC_LOGIN_COMMAND", env_map)
     if is_placeholder_value(adc_login_command):
         adc_login_command = None
-    refresh_interval_seconds = resolve_vertex_token_refresh_interval_seconds(env_map)
-    auto_adc_login = resolve_vertex_auto_adc_login(env_map)
+    refresh_interval_seconds = resolve_vertex_token_refresh_interval_seconds(
+        env_map,
+        override_seconds=refresh_interval_seconds_override,
+    )
+    auto_adc_login = resolve_vertex_auto_adc_login(
+        env_map,
+        override_value=auto_adc_login_override,
+    )
     return VertexAccessTokenProvider(
         initial_token=initial_token,
         refresh_command=refresh_command,
@@ -4624,6 +4642,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--vertex_auto_adc_login",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable/disable automatic one-time ADC login for Vertex when credentials "
+            "are missing (browser-based gcloud auth flow). "
+            "Only used when --provider vertex."
+        ),
+    )
+    parser.add_argument(
+        "--vertex_access_token_refresh_seconds",
+        type=int,
+        default=None,
+        help=(
+            "Override Vertex access-token refresh interval in seconds. "
+            "Only used when --provider vertex."
+        ),
+    )
+    parser.add_argument(
         "--create_gemini_cache",
         action="store_true",
         help=(
@@ -4822,6 +4859,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             provider,
         )
         args.requesty_auto_cache = None
+    if args.vertex_auto_adc_login is not None and provider != "vertex":
+        logging.warning(
+            "--vertex_auto_adc_login is set but provider is %s; this control is ignored unless --provider vertex.",
+            provider,
+        )
+        args.vertex_auto_adc_login = None
+    if args.vertex_access_token_refresh_seconds is not None:
+        if args.vertex_access_token_refresh_seconds <= 0:
+            parser.error("--vertex_access_token_refresh_seconds must be > 0.")
+        if provider != "vertex":
+            logging.warning(
+                "--vertex_access_token_refresh_seconds is set but provider is %s; this control is ignored unless --provider vertex.",
+                provider,
+            )
+            args.vertex_access_token_refresh_seconds = None
     discovered_provider_defaults = discover_provider_defaults(env_map)
     provider_defaults = discovered_provider_defaults.get(provider) or infer_provider_defaults(provider)
     if args.api_key_var is None:
@@ -4879,7 +4931,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     api_key = resolve_env_value(args.api_key_var, env_map)
     if provider == "vertex":
         bootstrap_token = resolve_vertex_bootstrap_token(args.api_key_var, env_map)
-        access_token_provider = build_vertex_access_token_provider(env_map, bootstrap_token)
+        access_token_provider = build_vertex_access_token_provider(
+            env_map,
+            bootstrap_token,
+            auto_adc_login_override=args.vertex_auto_adc_login,
+            refresh_interval_seconds_override=args.vertex_access_token_refresh_seconds,
+        )
         try:
             api_key = access_token_provider.get_token(force_refresh=True)
             logging.info("Vertex provider auth initialized with auto-refreshing access token.")

@@ -695,6 +695,24 @@
                   <span class="hint">Leave blank to use the provider default endpoint variable.</span>
                 </label>
               </div>
+              <div id="vertex-auth-options" class="grid" style="display:none">
+                <label class="inline">
+                  <input type="checkbox" id="vertex_auto_adc_login" name="vertex_auto_adc_login" checked />
+                  <span>Auto-launch Vertex ADC login if missing</span>
+                </label>
+                <label
+                  >Vertex Token Refresh Seconds
+                  <input
+                    type="number"
+                    min="60"
+                    step="1"
+                    id="vertex_access_token_refresh_seconds"
+                    name="vertex_access_token_refresh_seconds"
+                    value="3300"
+                  />
+                  <span class="hint">How often the access token is refreshed before expiry (default: 3300).</span>
+                </label>
+              </div>
               <label class="inline">
                 <input type="checkbox" id="calibration" name="calibration" />
                 <span>Enable calibration plot</span>
@@ -793,6 +811,8 @@
                           [--prompt_cache_key PROMPT_CACHE_KEY]
                           [--gemini_cached_content GEMINI_CACHED_CONTENT]
                           [--requesty_auto_cache | --no-requesty_auto_cache]
+                          [--vertex_auto_adc_login | --no-vertex_auto_adc_login]
+                          [--vertex_access_token_refresh_seconds VERTEX_ACCESS_TOKEN_REFRESH_SECONDS]
                           [--enable_cot] [--no_explanation]
                           [--logprobs | --no-logprobs] [--calibration]
                           [--api_key_var API_KEY_VAR]
@@ -885,6 +905,13 @@ options:
                         Enable/disable Requesty automatic caching by sending
                         extra_body.requesty.auto_cache. Only used when
                         --provider requesty.
+  --vertex_auto_adc_login, --no-vertex_auto_adc_login
+                        Enable/disable automatic one-time ADC login for
+                        Vertex when credentials are missing (browser-based
+                        gcloud auth flow). Only used when --provider vertex.
+  --vertex_access_token_refresh_seconds VERTEX_ACCESS_TOKEN_REFRESH_SECONDS
+                        Override Vertex access-token refresh interval in
+                        seconds. Only used when --provider vertex.
   --enable_cot          If set, encourages the model to reason step-by-step
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
@@ -989,6 +1016,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       const copyButton = document.getElementById("copy-button");
       const resetButton = document.getElementById("reset-button");
       const providerSelect = document.getElementById("provider");
+      const vertexAuthOptions = document.getElementById("vertex-auth-options");
       const apiKeyVarInput = document.getElementById("api_key_var");
       const apiBaseVarInput = document.getElementById("api_base_var");
       const refreshModelsButton = document.getElementById("refresh-models-button");
@@ -1027,6 +1055,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         cache_pad_target_tokens: "0",
         prompt_cache_key: "",
         requesty_auto_cache: false,
+        vertex_auto_adc_login: true,
+        vertex_access_token_refresh_seconds: "3300",
         gemini_cached_content: "",
         create_gemini_cache: false,
         gemini_cache_ttl: "3600",
@@ -1113,6 +1143,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
         requesty_auto_cache:
           "Enable Requesty auto caching by adding --requesty_auto_cache (maps to extra_body.requesty.auto_cache).",
+        vertex_auto_adc_login:
+          "If enabled for Vertex, automatically launches `gcloud auth application-default login` once when ADC is missing.",
+        vertex_access_token_refresh_seconds:
+          "Vertex access-token refresh interval in seconds (default: 3300).",
         gemini_cached_content:
           "Optional Gemini context-cache resource name sent as --gemini_cached_content (Gemini OpenAI-compatible endpoints).",
         create_gemini_cache:
@@ -1731,6 +1765,13 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         document.getElementById("gemini_cache_manual").style.display = createEnabled ? "none" : "";
       }
 
+      function updateProviderSpecificOptions(provider) {
+        const isVertex = provider === "vertex";
+        if (vertexAuthOptions) {
+          vertexAuthOptions.style.display = isVertex ? "" : "none";
+        }
+      }
+
       function buildCommand() {
         const data = new FormData(form);
         const args = ["python", "benchmark_agent.py"];
@@ -1760,6 +1801,20 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const provider = data.get("provider");
         if (provider && provider !== defaultValues.provider) {
           args.push("--provider", provider);
+        }
+        if (provider === "vertex") {
+          const vertexAutoAdcLogin = Boolean(data.get("vertex_auto_adc_login"));
+          if (!vertexAutoAdcLogin) {
+            args.push("--no-vertex_auto_adc_login");
+          }
+          const vertexRefreshSeconds =
+            data.get("vertex_access_token_refresh_seconds")?.toString().trim() ?? "";
+          if (
+            vertexRefreshSeconds &&
+            vertexRefreshSeconds !== defaultValues.vertex_access_token_refresh_seconds
+          ) {
+            args.push("--vertex_access_token_refresh_seconds", vertexRefreshSeconds);
+          }
         }
 
         const temperature = data.get("temperature")?.trim();
@@ -2042,6 +2097,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           syncProvidersFromCatalog();
           updatePlaceholdersForProvider(providerSelect.value);
           updateModelOptionsForProvider(providerSelect.value);
+          updateProviderSpecificOptions(providerSelect.value);
           handleFormChange();
           setRefreshStatus("Provider and model list refreshed.");
         } catch (error) {
@@ -2050,6 +2106,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           syncProvidersFromCatalog();
           updatePlaceholdersForProvider(providerSelect.value);
           updateModelOptionsForProvider(providerSelect.value);
+          updateProviderSpecificOptions(providerSelect.value);
           setRefreshStatus(
             "Could not reload config_models.js; showing the currently loaded catalog.",
             true
@@ -2221,6 +2278,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         modelInput.value = "";
         updatePlaceholdersForProvider(providerSelect.value);
         updateModelOptionsForProvider(providerSelect.value);
+        updateProviderSpecificOptions(providerSelect.value);
         handleFormChange();
       }
 
@@ -2230,6 +2288,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       applyInputHoverHelp();
       updatePlaceholdersForProvider(providerSelect.value);
       updateModelOptionsForProvider(providerSelect.value);
+      updateProviderSpecificOptions(providerSelect.value);
 
       form.addEventListener("input", handleFormChange);
       copyButton.addEventListener("click", copyCommand);
@@ -2254,6 +2313,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         modelInput.value = "";
         updatePlaceholdersForProvider(providerSelect.value);
         updateModelOptionsForProvider(providerSelect.value);
+        updateProviderSpecificOptions(providerSelect.value);
         handleFormChange();
       });
       if (modelClearButton) {
@@ -2265,6 +2325,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       }
 
       isInitializing = false;
+      updateProviderSpecificOptions(providerSelect.value);
       handleFormChange();
     </script>
   </body>
