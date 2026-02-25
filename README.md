@@ -68,7 +68,7 @@ python benchmark_agent.py ^
 
 On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
-When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
+When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<provider>_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
 
 ### System Prompts and Encoding
@@ -144,9 +144,19 @@ Set `VERTEX_BASE_URL` to the OpenAI-compatible Vertex endpoint, for example:
 
 `https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi`
 
-When `--update-models` is used, the agent first tries `<VERTEX_BASE_URL>/models`. If that endpoint is not
+When `--update-models` is used, the agent first tries `<MODELS_BASE_URL>/models`, where:
+
+- `<MODELS_BASE_URL>` is `VERTEX_MODELS_BASE_URL` when set.
+- Otherwise, it falls back to `VERTEX_BASE_URL`.
+
+If that endpoint is not
 available (404 on some Vertex configurations), it automatically falls back to
 `https://aiplatform.googleapis.com/v1beta1/publishers/google/models` and normalizes those IDs for the catalog.
+
+This allows using separate Vertex endpoints for runtime and catalog updates, e.g.:
+
+- `VERTEX_BASE_URL=https://aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/global/endpoints/openapi`
+- `VERTEX_MODELS_BASE_URL=https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi`
 
 ## Validation contract (optional)
 

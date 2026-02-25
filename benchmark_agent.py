@@ -792,22 +792,29 @@ def render_validator_retry_message(
     return compact[: max_chars].rstrip()
 
 
-def build_default_output_filename(input_path: str, model: str, timestamp_tag: str) -> str:
+def build_default_output_filename(
+    input_path: str,
+    provider: str,
+    model: str,
+    timestamp_tag: str,
+) -> str:
     """Construct the default output filename for an input dataset."""
     base_name = os.path.splitext(os.path.basename(input_path))[0]
+    provider_slug = sanitize_model_identifier(provider)
     model_slug = sanitize_model_identifier(model)
-    return f"{base_name}_out_{model_slug}_{timestamp_tag}.csv"
+    return f"{base_name}_out_{provider_slug}_{model_slug}_{timestamp_tag}.csv"
 
 
 def resolve_output_path(
     input_path: str,
+    provider: str,
     model: str,
     output_argument: Optional[str],
     timestamp_tag: str,
     multiple_inputs: bool,
 ) -> str:
     """Determine the output path for an input file."""
-    filename = build_default_output_filename(input_path, model, timestamp_tag)
+    filename = build_default_output_filename(input_path, provider, model, timestamp_tag)
     if output_argument:
         resolved_argument = os.path.expanduser(output_argument)
         treat_as_directory = (
@@ -1678,8 +1685,14 @@ def update_model_catalog(
         for provider_slug, defaults in sorted(available_provider_defaults.items()):
             api_base = normalize_api_base(provider_slug, resolve_env_value(defaults["api_base_var"], env_map))
             if not api_base:
-                continue
+                if provider_slug != "vertex":
+                    continue
             if provider_slug == "vertex":
+                vertex_models_api_base = normalize_api_base(
+                    "vertex", resolve_env_value("VERTEX_MODELS_BASE_URL", env_map)
+                )
+                if not api_base and not vertex_models_api_base:
+                    continue
                 selected.append(provider_slug)
                 continue
             api_key = resolve_env_value(defaults["api_key_var"], env_map)
@@ -1711,8 +1724,30 @@ def update_model_catalog(
         api_key_var = defaults["api_key_var"]
         api_base_var = defaults["api_base_var"]
         api_base = normalize_api_base(provider_slug, resolve_env_value(api_base_var, env_map))
-        if not api_base:
-            logging.warning("Skipping provider %s; missing API base URL in %s (.env first, env fallback).", provider_slug, api_base_var)
+        models_api_base = api_base
+        models_api_base_var = api_base_var
+        if provider_slug == "vertex":
+            vertex_models_api_base = normalize_api_base(
+                "vertex", resolve_env_value("VERTEX_MODELS_BASE_URL", env_map)
+            )
+            if vertex_models_api_base:
+                models_api_base = vertex_models_api_base
+                models_api_base_var = "VERTEX_MODELS_BASE_URL"
+                if api_base and api_base != models_api_base:
+                    logging.info(
+                        "Using Vertex models base URL from %s for catalog retrieval: %s "
+                        "(runtime base in %s remains %s).",
+                        models_api_base_var,
+                        models_api_base,
+                        api_base_var,
+                        api_base,
+                    )
+        if not models_api_base:
+            logging.warning(
+                "Skipping provider %s; missing API base URL in %s (.env first, env fallback).",
+                provider_slug,
+                models_api_base_var,
+            )
             continue
         token_provider: Optional[AccessTokenProvider] = None
         api_key = resolve_env_value(api_key_var, env_map)
@@ -1738,12 +1773,16 @@ def update_model_catalog(
         if is_placeholder_value(api_key):
             logging.warning("Skipping provider %s; missing API key in %s (.env first, env fallback).", provider_slug, api_key_var)
             continue
-        models, error = fetch_provider_models(provider_slug, api_key, api_base, token_provider=token_provider)
+        models, error = fetch_provider_models(
+            provider_slug, api_key, models_api_base, token_provider=token_provider
+        )
         catalog[provider_slug] = {
             "models": models,
-            "api_base": api_base,
+            "api_base": api_base or models_api_base,
+            "models_api_base": models_api_base,
             "api_key_var": api_key_var,
             "api_base_var": api_base_var,
+            "models_api_base_var": models_api_base_var,
             "error": error,
             "timestamp": utc_timestamp(),
         }
@@ -2086,7 +2125,6 @@ class OpenAIConnector:
         is_requesty_target = self._provider == "requesty"
         requested_controls: Dict[str, str] = {}
         rejected_controls: Dict[str, str] = {}
-        translated_thinking_level: Optional[str] = None
 
         if reasoning_effort:
             requested_controls["reasoning_effort"] = reasoning_effort
@@ -2106,13 +2144,6 @@ class OpenAIConnector:
             )
 
         def control_key_for_param(param_name: str) -> Optional[str]:
-            if (
-                param_name in {"reasoning", "reasoning_effort"}
-                and is_gemini_target
-                and thinking_level
-                and not reasoning_effort
-            ):
-                return "thinking_level"
             mapping = {
                 "reasoning": "reasoning_effort",
                 "reasoning_effort": "reasoning_effort",
@@ -2313,7 +2344,6 @@ class OpenAIConnector:
             return None
 
         def apply_reasoning_controls(request_args: Dict[str, Any]) -> None:
-            nonlocal translated_thinking_level
             extra_body: Dict[str, Any] = {}
             existing_extra = request_args.get("extra_body")
             if isinstance(existing_extra, dict):
@@ -2325,11 +2355,9 @@ class OpenAIConnector:
                     extra_body["reasoning"] = {"effort": reasoning_effort}
             if thinking_level:
                 if is_gemini_target:
-                    # Google OpenAI-compat supports reasoning_effort; map thinking_level to it.
-                    request_args["reasoning_effort"] = thinking_level
-                    translated_thinking_level = thinking_level
                     # Google-specific params must be nested under extra_body["extra_body"]["google"]
                     # so they appear as {"extra_body": {"google": {...}}} in the HTTP request body.
+                    # thinking_level should be expressed via google.thinking_config, not reasoning_effort.
                     gemini_inner = extra_body.get("extra_body")
                     if not isinstance(gemini_inner, dict):
                         gemini_inner = {}
@@ -2455,8 +2483,6 @@ class OpenAIConnector:
 
             if request_args.get("reasoning_effort") is not None:
                 sent["reasoning_effort"] = str(request_args["reasoning_effort"])
-                if translated_thinking_level is not None:
-                    sent["thinking_level"] = translated_thinking_level
 
             reasoning_payload = request_args.get("reasoning")
             if isinstance(reasoning_payload, dict):
@@ -2521,6 +2547,20 @@ class OpenAIConnector:
                     sent["verbosity"] = str(text_payload["verbosity"])
 
             return sent
+
+        def finalize_control_state(
+            request_args: Dict[str, Any],
+        ) -> Tuple[Dict[str, str], Dict[str, str]]:
+            sent_controls = collect_sent_controls(request_args)
+            # Rejections can be recorded on an earlier failed attempt and then recovered
+            # by retrying with an alternate representation. Strict acceptance should apply
+            # to the final successful payload only.
+            final_rejected_controls = {
+                key: reason
+                for key, reason in rejected_controls.items()
+                if key not in sent_controls
+            }
+            return sent_controls, final_rejected_controls
 
         def collect_logprobs(logprobs_obj: Any) -> Optional[List[Dict[str, Any]]]:
             entries: List[Dict[str, Any]] = []
@@ -2764,6 +2804,7 @@ class OpenAIConnector:
 
             usage_metadata = collect_usage_metadata(response, usage)
 
+            sent_controls, final_rejected_controls = finalize_control_state(request_args)
             return CompletionResult(
                 text="".join(texts),
                 prompt_tokens=prompt_tokens,
@@ -2772,8 +2813,8 @@ class OpenAIConnector:
                 token_logprobs=token_logprobs or None,
                 usage_metadata=usage_metadata,
                 request_controls_requested=dict(requested_controls),
-                request_controls_sent=collect_sent_controls(request_args),
-                request_controls_rejected=dict(rejected_controls),
+                request_controls_sent=sent_controls,
+                request_controls_rejected=final_rejected_controls,
             )
 
         if self.client_type == "chat_v1":
@@ -2849,6 +2890,7 @@ class OpenAIConnector:
             total_tokens = getattr(usage, "total_tokens", None) if usage else None
             token_logprobs = collect_logprobs(getattr(response.choices[0], "logprobs", None))
             usage_metadata = collect_usage_metadata(response, usage)
+            sent_controls, final_rejected_controls = finalize_control_state(request_args)
             return CompletionResult(
                 text=message,
                 prompt_tokens=prompt_tokens,
@@ -2857,8 +2899,8 @@ class OpenAIConnector:
                 token_logprobs=token_logprobs,
                 usage_metadata=usage_metadata,
                 request_controls_requested=dict(requested_controls),
-                request_controls_sent=collect_sent_controls(request_args),
-                request_controls_rejected=dict(rejected_controls),
+                request_controls_sent=sent_controls,
+                request_controls_rejected=final_rejected_controls,
             )
         if self.client_type == "responses_v1":
             return complete_with_responses_api()
@@ -2919,6 +2961,7 @@ class OpenAIConnector:
             logprobs_obj = choice.get("logprobs")
         token_logprobs = collect_logprobs(logprobs_obj)
         usage_metadata = collect_usage_metadata(response, usage)
+        sent_controls, final_rejected_controls = finalize_control_state(request_args)
         return CompletionResult(
             text=content or "",
             prompt_tokens=prompt_tokens,
@@ -2927,8 +2970,8 @@ class OpenAIConnector:
             token_logprobs=token_logprobs,
             usage_metadata=usage_metadata,
             request_controls_requested=dict(requested_controls),
-            request_controls_sent=collect_sent_controls(request_args),
-            request_controls_rejected=dict(rejected_controls),
+            request_controls_sent=sent_controls,
+            request_controls_rejected=final_rejected_controls,
         )
 
 
@@ -4496,7 +4539,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional output CSV path or directory. When omitted, defaults to "
-            "<input>_out_<model>_<timestamp>.csv alongside each input file. "
+            "<input>_out_<provider>_<model>_<timestamp>.csv alongside each input file. "
             "If the resolved output CSV already exists, the run resumes from the first ID "
             "not present in that file."
         ),
@@ -4545,11 +4588,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--thinking_level",
-        choices=["low", "medium", "high"],
+        choices=["minimal", "low", "medium", "high"],
         default=None,
         help=(
-            "Optional Gemini thinking level. "
-            "Sent as reasoning_effort for Gemini OpenAI-compatible targets."
+            "Optional Gemini thinking level (minimal applies to Gemini Flash models). "
+            "Sent via extra_body.google.thinking_config for Gemini OpenAI-compatible targets."
         ),
     )
     parser.add_argument(
@@ -5125,6 +5168,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for resolved_input in input_paths:
             output_path = resolve_output_path(
                 resolved_input,
+                provider,
                 args.model,
                 args.output,
                 timestamp_tag,

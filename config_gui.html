@@ -657,6 +657,7 @@
                       >Gemini Thinking Level
                       <select id="thinking_level" name="thinking_level">
                         <option value="" selected>(omit)</option>
+                        <option value="minimal">Minimal (Flash only)</option>
                         <option value="low">Low</option>
                         <option value="medium">Medium</option>
                         <option value="high">High</option>
@@ -800,7 +801,7 @@
                           [--service_tier {standard,flex,priority}]
                           [--verbosity {low,medium,high}]
                           [--reasoning_effort {low,medium,high,xhigh}]
-                          [--thinking_level {low,medium,high}]
+                          [--thinking_level {minimal,low,medium,high}]
                           [--effort {low,medium,high,max}]
                           [--strict_control_acceptance]
                           [--provider PROVIDER]
@@ -839,7 +840,7 @@ options:
   --labels LABELS       Optional path to CSV file that provides ground-truth
                         labels (ID;truth).
   --output OUTPUT       Optional output CSV path or directory. When omitted,
-                        defaults to &lt;input&gt;_out_&lt;model&gt;_&lt;timestamp&gt;.csv
+                        defaults to &lt;input&gt;_out_&lt;provider&gt;_&lt;model&gt;_&lt;timestamp&gt;.csv
                         alongside each input file. If the resolved output CSV
                         already exists, the run resumes from the first ID not
                         present in that file.
@@ -862,9 +863,10 @@ options:
                         Optional reasoning effort level. Sent as
                         reasoning.effort for OpenAI-style models and as
                         reasoning_effort for Gemini targets.
-  --thinking_level {low,medium,high}
-                        Optional Gemini thinking level. Sent as
-                        reasoning_effort for Gemini OpenAI-compatible
+  --thinking_level {minimal,low,medium,high}
+                        Optional Gemini thinking level (minimal applies
+                        to Gemini Flash models). Sent as
+                        extra_body.google.thinking_config for Gemini OpenAI-compatible
                         targets.
   --effort {low,medium,high,max}
                         Optional Claude effort level. Sent as effort when
@@ -1130,7 +1132,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         verbosity:
           "GPT output verbosity level (low, medium, high). Maps to verbosity in Chat Completions and text.verbosity in Responses API.",
         thinking_level:
-          "Gemini thinking level (low, medium, high). For Gemini targets this maps to reasoning_effort.",
+          "Gemini thinking level (minimal, low, medium, high). Minimal applies only to Gemini Flash models. For Gemini targets this maps to extra_body.google.thinking_config.",
         effort: "Claude effort control (low, medium, high, max). Adds --effort.",
         strict_control_acceptance:
           "Abort examples where requested controls are rejected or omitted from the final successful request.",
