@@ -44,6 +44,7 @@ MANDATORY_SYSTEM_APPEND = (
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_CACHE_PADDING_TOKENS = 200_000
 TOKEN_CHAR_ESTIMATE_RATIO = 4.0
 CACHE_PADDING_PREFIX = "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN"
@@ -486,6 +487,23 @@ def is_empty_model_response_error(exc: BaseException) -> bool:
         "empty response",
         "response was empty",
         "no output text",
+    )
+    return any(marker in text for marker in markers)
+
+
+def is_request_timeout_error(exc: BaseException) -> bool:
+    """Best-effort detection for transport/request timeout failures."""
+    class_name = exc.__class__.__name__.strip().lower()
+    if "timeout" in class_name:
+        return True
+    text = str(exc).strip().lower()
+    if not text:
+        return False
+    markers = (
+        "timed out",
+        "timeout",
+        "readtimeout",
+        "connecttimeout",
     )
     return any(marker in text for marker in markers)
 
@@ -1938,11 +1956,12 @@ def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
             error_type = str(attempt.get("error_type", "")).strip() or infer_error_type(error_message)
             error_category = str(attempt.get("error_category", "")).strip()
             if not error_category:
-                error_category = (
-                    "malformed_provider_response"
-                    if is_malformed_model_response_error(ValueError(error_message))
-                    else "uncategorized"
-                )
+                if is_request_timeout_error(TimeoutError(error_message)):
+                    error_category = "request_timeout"
+                elif is_malformed_model_response_error(ValueError(error_message)):
+                    error_category = "malformed_provider_response"
+                else:
+                    error_category = "uncategorized"
             error_by_type[error_type] += 1
             error_by_category[error_category] += 1
             error_by_message[error_message] += 1
@@ -2120,6 +2139,7 @@ class OpenAIConnector:
         base_url: Optional[str] = None,
         provider: str = "openai",
         request_interval_ms: int = 0,
+        request_timeout_seconds: Optional[float] = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         access_token_provider: Optional[AccessTokenProvider] = None,
     ) -> None:
         self.client_type: str
@@ -2129,6 +2149,15 @@ class OpenAIConnector:
         self._responses_unsupported_params: Dict[str, set[str]] = {}
         self._logged_vertex_model_normalizations: set[str] = set()
         self._min_request_interval_seconds = max(0, request_interval_ms) / 1000.0
+        parsed_timeout: Optional[float] = None
+        if request_timeout_seconds is not None:
+            try:
+                parsed_timeout = float(request_timeout_seconds)
+            except (TypeError, ValueError):
+                parsed_timeout = DEFAULT_REQUEST_TIMEOUT_SECONDS
+            if parsed_timeout <= 0:
+                parsed_timeout = None
+        self._request_timeout_seconds = parsed_timeout
         self._last_request_started_at: Optional[float] = None
         self._access_token_provider = access_token_provider
         self._current_api_key = api_key
@@ -2139,6 +2168,8 @@ class OpenAIConnector:
             kwargs: Dict[str, Any] = {"api_key": self._current_api_key}
             if base_url:
                 kwargs["base_url"] = base_url
+            if self._request_timeout_seconds is not None:
+                kwargs["timeout"] = self._request_timeout_seconds
             self._client = OpenAI(**kwargs)
             if hasattr(self._client, "chat") and hasattr(self._client.chat, "completions"):
                 self.client_type = "chat_v1"
@@ -2908,6 +2939,8 @@ class OpenAIConnector:
                 "model": request_model,
                 "input": messages,
             }
+            if self._request_timeout_seconds is not None:
+                request_args["timeout"] = self._request_timeout_seconds
             if include_logprobs:
                 request_args["logprobs"] = True
             if temperature is not None:
@@ -3030,6 +3063,8 @@ class OpenAIConnector:
                 "model": request_model,
                 "messages": messages,
             }
+            if self._request_timeout_seconds is not None:
+                request_args["timeout"] = self._request_timeout_seconds
             if include_logprobs:
                 request_args["logprobs"] = True
                 request_args["top_logprobs"] = 1
@@ -3115,6 +3150,8 @@ class OpenAIConnector:
                 "model": request_model,
                 "messages": messages,
             }
+            if self._request_timeout_seconds is not None:
+                request_args["request_timeout"] = self._request_timeout_seconds
             if include_logprobs:
                 request_args["logprobs"] = True
                 request_args["top_logprobs"] = 1
@@ -4128,6 +4165,7 @@ def classify_example(
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
             )
             empty_response_error = is_empty_model_response_error(exc)
+            timeout_error = is_request_timeout_error(exc)
             malformed_response_error = is_malformed_model_response_error(exc)
             if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
                 # Give the model deterministic feedback about why the previous output was rejected.
@@ -4143,7 +4181,9 @@ def classify_example(
             if "status" not in log_entry:
                 log_entry["status"] = "error"
             log_entry["error_type"] = exc.__class__.__name__
-            if malformed_response_error:
+            if timeout_error:
+                log_entry["error_category"] = "request_timeout"
+            elif malformed_response_error:
                 log_entry["error_category"] = "malformed_provider_response"
             log_entry["error"] = str(exc)
             interaction_logs.append(log_entry)
@@ -4203,6 +4243,32 @@ def classify_example(
             "Provider returned empty model responses after retries for "
             f"example {example.example_id}: {detail}"
         ) from last_error
+    if is_request_timeout_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        logging.error(
+            "Provider request timed out for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence. Detail: %s",
+            example.example_id,
+            max_retries,
+            detail,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_request_timeout",
+            validator_reason=detail,
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+        ), interaction_logs
     if is_malformed_model_response_error(last_error):
         detail = str(last_error).strip() or last_error.__class__.__name__
         logging.error(
@@ -5017,6 +5083,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--request_timeout_seconds",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        help=(
+            "Per-request timeout in seconds for provider API calls. "
+            "Use 0 or a negative value to disable timeout."
+        ),
+    )
+    parser.add_argument(
         "--validator_cmd",
         default=None,
         help=(
@@ -5136,6 +5211,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--model is required unless --update-models or --summarize-log-errors is specified.")
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
+    if args.request_timeout_seconds is not None and not math.isfinite(args.request_timeout_seconds):
+        parser.error("--request_timeout_seconds must be a finite number.")
     if args.create_gemini_cache and args.gemini_cached_content:
         parser.error(
             "--create_gemini_cache and --gemini_cached_content are mutually exclusive. "
@@ -5283,6 +5360,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         logging.info("Explanations disabled; model will only return labels and confidences.")
     if not args.logprobs:
         logging.info("Logprobs disabled; token-level probability estimates will be unavailable.")
+    if args.request_timeout_seconds is not None and args.request_timeout_seconds > 0:
+        logging.info("Per-request API timeout set to %.1f seconds.", args.request_timeout_seconds)
+    else:
+        logging.warning("Per-request API timeout is disabled; requests may block for a long time.")
     if args.prompt_layout != "standard":
         logging.info(
             "Prompt layout set to '%s' (cache-optimized payload mode).",
@@ -5371,6 +5452,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         base_url=api_base_url,
         provider=provider,
         request_interval_ms=max(0, args.request_interval_ms),
+        request_timeout_seconds=args.request_timeout_seconds,
         access_token_provider=access_token_provider,
     )
 

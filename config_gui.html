@@ -686,6 +686,18 @@
                   <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
                 </label>
                 <label
+                  >Request Timeout (seconds)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    id="request_timeout_seconds"
+                    name="request_timeout_seconds"
+                    value="30.0"
+                  />
+                  <span class="hint">Per-request API timeout. Set 0 to disable timeout (not recommended).</span>
+                </label>
+                <label
                   >API Key/Token Environment Variable
                   <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
                   <span class="hint">Leave blank to use the provider default.</span>
@@ -821,6 +833,7 @@
                           [--max_retries MAX_RETRIES]
                           [--retry_delay RETRY_DELAY]
                           [--request_interval_ms REQUEST_INTERVAL_MS]
+                          [--request_timeout_seconds REQUEST_TIMEOUT_SECONDS]
                           [--validator_cmd VALIDATOR_CMD]
                           [--validator_args VALIDATOR_ARGS]
                           [--validator_timeout VALIDATOR_TIMEOUT]
@@ -936,6 +949,9 @@ options:
   --request_interval_ms REQUEST_INTERVAL_MS
                         Minimum delay in milliseconds between outgoing API
                         requests. Use 0 to disable request pacing.
+  --request_timeout_seconds REQUEST_TIMEOUT_SECONDS
+                        Per-request timeout in seconds for provider API calls.
+                        Use 0 or a negative value to disable timeout.
   --validator_cmd VALIDATOR_CMD
                         Optional path to an NDJSON validator
                         executable/script. When provided, the agent will
@@ -1052,6 +1068,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         logprobs: true,
         strict_control_acceptance: false,
         request_interval_ms: "0",
+        request_timeout_seconds: "30.0",
         few_shot_examples: "0",
         prompt_layout: "standard",
         cache_pad_target_tokens: "0",
@@ -1126,6 +1143,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
         top_k: "Optional top-k sampling parameter, if your provider supports it.",
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
+        request_timeout_seconds:
+          "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
         reasoning_effort:
           "Reasoning effort level (low, medium, high, xhigh). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
@@ -1837,6 +1856,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const requestIntervalMs = data.get("request_interval_ms")?.trim();
         if (requestIntervalMs && requestIntervalMs !== defaultValues.request_interval_ms) {
           args.push("--request_interval_ms", requestIntervalMs);
+        }
+
+        const requestTimeoutSeconds = data.get("request_timeout_seconds")?.toString().trim() ?? "";
+        if (requestTimeoutSeconds && requestTimeoutSeconds !== defaultValues.request_timeout_seconds) {
+          args.push("--request_timeout_seconds", requestTimeoutSeconds);
         }
 
         const serviceTier = data.get("service_tier");
