@@ -24,11 +24,12 @@ import sys
 import time
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
@@ -48,6 +49,10 @@ TOKEN_CHAR_ESTIMATE_RATIO = 4.0
 CACHE_PADDING_PREFIX = "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN"
 CACHE_PADDING_TOKEN = " cachepad"
 CACHE_PADDING_SUFFIX = "\nCACHE_PAD_END"
+VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND = "gcloud auth application-default print-access-token"
+VERTEX_DEFAULT_ACCESS_TOKEN_REFRESH_SECONDS = 3300
+VERTEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300
+VERTEX_DEFAULT_ADC_LOGIN_COMMAND = "gcloud auth application-default login"
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -523,6 +528,162 @@ def parse_optional_float(value: Any) -> Optional[float]:
     return number
 
 
+def parse_optional_bool(value: Any) -> Optional[bool]:
+    """Parse an optional boolean-like value."""
+    text = "" if value is None else str(value).strip().lower()
+    if not text:
+        return None
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+class AccessTokenProvider(Protocol):
+    """Protocol for providers capable of returning short-lived auth tokens."""
+
+    def get_token(self, force_refresh: bool = False) -> str:
+        ...
+
+
+class VertexAccessTokenProvider:
+    """Refresh Vertex OAuth access tokens via a shell command."""
+
+    def __init__(
+        self,
+        initial_token: Optional[str],
+        refresh_command: Optional[str] = None,
+        refresh_interval_seconds: int = VERTEX_DEFAULT_ACCESS_TOKEN_REFRESH_SECONDS,
+        auto_adc_login: bool = True,
+        adc_login_command: Optional[str] = None,
+    ) -> None:
+        normalized_initial = (initial_token or "").strip()
+        self._token: Optional[str] = normalized_initial or None
+        # Unknown age for externally supplied token: force an early refresh attempt.
+        self._expires_at_epoch: Optional[float] = 0.0 if self._token else None
+        self._refresh_command = (
+            (refresh_command or VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND).strip()
+            or VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND
+        )
+        self._refresh_interval_seconds = max(60, int(refresh_interval_seconds))
+        self._auto_adc_login = bool(auto_adc_login)
+        self._adc_login_command = (
+            (adc_login_command or VERTEX_DEFAULT_ADC_LOGIN_COMMAND).strip()
+            or VERTEX_DEFAULT_ADC_LOGIN_COMMAND
+        )
+        self._attempted_adc_login = False
+        self._warned_static_fallback = False
+
+    def _extract_subprocess_error_text(self, exc: subprocess.CalledProcessError) -> str:
+        stdout = str(exc.stdout or "").strip()
+        stderr = str(exc.stderr or "").strip()
+        pieces = [piece for piece in (stderr, stdout, str(exc)) if piece]
+        return " | ".join(pieces).lower()
+
+    def _looks_like_missing_adc(self, exc: subprocess.CalledProcessError) -> bool:
+        text = self._extract_subprocess_error_text(exc)
+        indicators = (
+            "default credentials were not found",
+            "application default credentials",
+            "run `gcloud auth application-default login`",
+            "run 'gcloud auth application-default login'",
+            "gcloud.auth.application-default.print-access-token",
+        )
+        return any(marker in text for marker in indicators)
+
+    def _can_attempt_interactive_adc_login(self) -> bool:
+        return bool(self._auto_adc_login and sys.stdin.isatty() and sys.stdout.isatty())
+
+    def _attempt_adc_login(self) -> bool:
+        if self._attempted_adc_login:
+            return False
+        if not self._can_attempt_interactive_adc_login():
+            return False
+        self._attempted_adc_login = True
+        logging.warning(
+            "Vertex Application Default Credentials are missing. Launching interactive login: %s",
+            self._adc_login_command,
+        )
+        try:
+            subprocess.run(self._adc_login_command, shell=True, check=True)
+            logging.info("Vertex ADC login completed. Retrying access-token refresh.")
+            return True
+        except Exception as login_exc:  # noqa: BLE001
+            logging.error("Vertex ADC interactive login failed: %s", login_exc)
+            return False
+
+    def _refresh_from_command(self) -> str:
+        completed = subprocess.run(
+            self._refresh_command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        stdout = (completed.stdout or "").strip()
+        if not stdout:
+            stderr = (completed.stderr or "").strip()
+            raise RuntimeError(
+                "Vertex token refresh command returned no token output."
+                + (f" stderr: {stderr}" if stderr else "")
+            )
+        token = stdout.splitlines()[-1].strip()
+        if not token:
+            raise RuntimeError("Vertex token refresh command returned an empty token line.")
+        self._token = token
+        self._expires_at_epoch = time.time() + self._refresh_interval_seconds
+        return token
+
+    def get_token(self, force_refresh: bool = False) -> str:
+        now = time.time()
+        if not force_refresh and self._token:
+            if self._expires_at_epoch is None:
+                return self._token
+            if now < (self._expires_at_epoch - VERTEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS):
+                return self._token
+
+        try:
+            return self._refresh_from_command()
+        except subprocess.CalledProcessError as exc:
+            if self._looks_like_missing_adc(exc) and self._attempt_adc_login():
+                try:
+                    return self._refresh_from_command()
+                except Exception:  # noqa: BLE001
+                    pass
+            if self._token:
+                self._expires_at_epoch = None
+                if not self._warned_static_fallback:
+                    logging.warning(
+                        "Unable to refresh Vertex access token automatically (%s). "
+                        "Continuing with the currently configured token.",
+                        exc,
+                    )
+                    self._warned_static_fallback = True
+                return self._token
+            raise RuntimeError(
+                "Unable to obtain a Vertex access token. "
+                "Run `gcloud auth application-default login` and ensure the refresh "
+                f"command works: {self._refresh_command}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            if self._token:
+                self._expires_at_epoch = None
+                if not self._warned_static_fallback:
+                    logging.warning(
+                        "Unable to refresh Vertex access token automatically (%s). "
+                        "Continuing with the currently configured token.",
+                        exc,
+                    )
+                    self._warned_static_fallback = True
+                return self._token
+            raise RuntimeError(
+                "Unable to obtain a Vertex access token. "
+                "Run `gcloud auth application-default login` and ensure the refresh "
+                f"command works: {self._refresh_command}"
+            ) from exc
+
+
 def extract_json_object(text: str) -> Dict[str, Any]:
     """Extract and parse the first JSON object from a string."""
     text = text.strip()
@@ -825,6 +986,7 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     "huggingface": {"api_key_var": "HF_API_KEY", "api_base_var": "HF_BASE_URL"},
     "e-infra": {"api_key_var": "E-INFRA_API_KEY", "api_base_var": "E-INFRA_BASE_URL"},
     "requesty": {"api_key_var": "REQUESTY_API_KEY", "api_base_var": "REQUESTY_BASE_URL"},
+    "vertex": {"api_key_var": "VERTEX_ACCESS_TOKEN", "api_base_var": "VERTEX_BASE_URL"},
 }
 
 PROVIDER_BASE_FALLBACKS: Dict[str, str] = {
@@ -850,12 +1012,12 @@ def infer_provider_defaults(provider_slug: str) -> Dict[str, str]:
 
 
 def discover_provider_defaults(env_map: Dict[str, str]) -> Dict[str, Dict[str, str]]:
-    """Discover provider env-var mappings from known defaults plus *_API_KEY keys."""
+    """Discover provider env-var mappings from known defaults plus *_API_KEY/*_ACCESS_TOKEN keys."""
     discovered: Dict[str, Dict[str, str]] = {
         slug: dict(defaults) for slug, defaults in PROVIDER_DEFAULTS.items()
     }
 
-    key_pattern = re.compile(r"^([A-Z0-9][A-Z0-9_-]*)_API_KEY$")
+    key_pattern = re.compile(r"^([A-Z0-9][A-Z0-9_-]*)_(API_KEY|ACCESS_TOKEN)$")
     candidate_keys = set(env_map.keys()) | set(os.environ.keys())
     for key in candidate_keys:
         match = key_pattern.match(str(key))
@@ -873,12 +1035,84 @@ def discover_provider_defaults(env_map: Dict[str, str]) -> Dict[str, Dict[str, s
     return discovered
 
 
+def resolve_vertex_bootstrap_token(
+    api_key_var: Optional[str],
+    env_map: Dict[str, str],
+) -> Optional[str]:
+    """Resolve Vertex token value from configured var, then legacy fallback vars."""
+    primary = resolve_env_value(api_key_var, env_map)
+    if not is_placeholder_value(primary):
+        return primary
+    legacy = resolve_env_value("VERTEX_API_KEY", env_map)
+    if not is_placeholder_value(legacy):
+        logging.info(
+            "Using legacy VERTEX_API_KEY value as Vertex access token bootstrap."
+        )
+        return legacy
+    alternate = resolve_env_value("VERTEX_ACCESS_TOKEN", env_map)
+    if not is_placeholder_value(alternate):
+        return alternate
+    return None
+
+
+def resolve_vertex_token_refresh_interval_seconds(env_map: Dict[str, str]) -> int:
+    """Resolve Vertex token refresh interval from env with sane defaults."""
+    raw_value = (
+        resolve_env_value("VERTEX_ACCESS_TOKEN_REFRESH_SECONDS", env_map)
+        or resolve_env_value("VERTEX_TOKEN_REFRESH_SECONDS", env_map)
+        or resolve_env_value("VERTEX_ACCESS_TOKEN_TTL_SECONDS", env_map)
+    )
+    parsed = parse_optional_int(raw_value)
+    if parsed is None or parsed <= 0:
+        return VERTEX_DEFAULT_ACCESS_TOKEN_REFRESH_SECONDS
+    return parsed
+
+
+def resolve_vertex_auto_adc_login(env_map: Dict[str, str]) -> bool:
+    """Resolve whether missing ADC should trigger interactive gcloud login."""
+    raw_value = resolve_env_value("VERTEX_AUTO_ADC_LOGIN", env_map)
+    parsed = parse_optional_bool(raw_value)
+    if parsed is None:
+        return True
+    return parsed
+
+
+def build_vertex_access_token_provider(
+    env_map: Dict[str, str],
+    initial_token: Optional[str],
+) -> VertexAccessTokenProvider:
+    """Create a Vertex token provider configured via env vars."""
+    refresh_command = resolve_env_value("VERTEX_ACCESS_TOKEN_COMMAND", env_map)
+    if is_placeholder_value(refresh_command):
+        refresh_command = None
+    adc_login_command = resolve_env_value("VERTEX_ADC_LOGIN_COMMAND", env_map)
+    if is_placeholder_value(adc_login_command):
+        adc_login_command = None
+    refresh_interval_seconds = resolve_vertex_token_refresh_interval_seconds(env_map)
+    auto_adc_login = resolve_vertex_auto_adc_login(env_map)
+    return VertexAccessTokenProvider(
+        initial_token=initial_token,
+        refresh_command=refresh_command,
+        refresh_interval_seconds=refresh_interval_seconds,
+        auto_adc_login=auto_adc_login,
+        adc_login_command=adc_login_command,
+    )
+
+
 def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
     """Ensure the API base ends with a version segment."""
     candidate = (api_base or PROVIDER_BASE_FALLBACKS.get(provider, "")).strip()
     if not candidate:
         return None
     trimmed = candidate.rstrip("/")
+    if provider == "vertex":
+        if re.search(r"/endpoints/openapi$", trimmed, re.IGNORECASE):
+            return trimmed
+        if re.search(r"/projects/[^/]+/locations/[^/]+/endpoints$", trimmed, re.IGNORECASE):
+            return f"{trimmed}/openapi"
+        if re.search(r"/projects/[^/]+/locations/[^/]+$", trimmed, re.IGNORECASE):
+            return f"{trimmed}/endpoints/openapi"
+        return trimmed
     if provider == "google":
         if re.search(r"/openai$", trimmed, re.IGNORECASE):
             return trimmed
@@ -894,6 +1128,44 @@ def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
 
 def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) -> Tuple[List[str], Optional[str]]:
     """Normalize provider model payloads into a list of model IDs."""
+    if provider == "vertex":
+        model_items: Any = payload.get("data")
+        if not isinstance(model_items, list):
+            model_items = payload.get("publisherModels")
+        if not isinstance(model_items, list):
+            model_items = payload.get("models")
+        if isinstance(model_items, list):
+            models: List[str] = []
+            for item in model_items:
+                if isinstance(item, str):
+                    candidate = item.strip()
+                    if candidate:
+                        models.append(candidate)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                identifier = item.get("id")
+                if not isinstance(identifier, str) or not identifier.strip():
+                    identifier = item.get("name")
+                if isinstance(identifier, str) and identifier.strip():
+                    normalized = identifier.strip()
+                    # Vertex publisher list returns values like
+                    # "publishers/google/models/gemini-2.5-pro"; keep the short model id.
+                    marker = "/models/"
+                    lowered = normalized.lower()
+                    marker_index = lowered.rfind(marker)
+                    if marker_index >= 0:
+                        normalized = normalized[marker_index + len(marker) :]
+                    normalized = normalized.strip("/")
+                    if normalized:
+                        models.append(normalized)
+            models = sorted(set(models))
+            if not models:
+                logging.warning("Provider %s returned an empty model list.", provider)
+            else:
+                logging.info("Fetched %d models for provider %s.", len(models), provider)
+            return models, None
+
     items = payload.get("data")
     if isinstance(items, list):
         models: List[str] = []
@@ -915,7 +1187,88 @@ def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) 
     return [], "Unexpected response schema"
 
 
-def _fetch_models_with_curl(endpoint: str, api_key: str, provider: str) -> Tuple[List[str], Optional[str]]:
+def _extract_vertex_project_id(api_base: str) -> Optional[str]:
+    """Extract Vertex project id from api base URL."""
+    match = re.search(r"/projects/([^/]+)/", api_base)
+    if not match:
+        return None
+    project_id = match.group(1).strip()
+    return project_id or None
+
+
+def _vertex_publisher_models_endpoint(api_base: str) -> str:
+    """Build Vertex publisher models endpoint from current api base."""
+    parsed = urllib.parse.urlparse(api_base)
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or "aiplatform.googleapis.com"
+    return f"{scheme}://{netloc}/v1beta1/publishers/google/models"
+
+
+def _fetch_vertex_publisher_models(
+    api_base: str,
+    auth_token: str,
+) -> Tuple[List[str], Optional[str]]:
+    """Fetch Vertex publisher models via the v1beta1 endpoint."""
+    endpoint = _vertex_publisher_models_endpoint(api_base)
+    project_id = _extract_vertex_project_id(api_base)
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "application/json",
+    }
+    if project_id:
+        headers["x-goog-user-project"] = project_id
+
+    models: List[str] = []
+    next_page_token: Optional[str] = None
+    max_pages = 20
+    pages_fetched = 0
+
+    while pages_fetched < max_pages:
+        page_endpoint = endpoint
+        if next_page_token:
+            separator = "&" if "?" in endpoint else "?"
+            page_endpoint = f"{endpoint}{separator}pageToken={urllib.parse.quote(next_page_token)}"
+        request = urllib.request.Request(page_endpoint, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            message = f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+            logging.error(
+                "Failed Vertex publisher model listing at %s: %s",
+                page_endpoint,
+                message,
+            )
+            return [], message
+        except urllib.error.URLError as exc:
+            message = str(exc)
+            logging.error("Connection error for Vertex publisher model listing: %s", message)
+            return [], message
+        except json.JSONDecodeError as exc:
+            logging.error("Malformed JSON from Vertex publisher model listing (%s): %s", page_endpoint, exc)
+            return [], "Invalid JSON response"
+
+        page_models, parse_error = _parse_model_payload(payload, "vertex", page_endpoint)
+        if parse_error:
+            return [], parse_error
+        models.extend(page_models)
+
+        token_value = payload.get("nextPageToken") if isinstance(payload, dict) else None
+        if isinstance(token_value, str) and token_value.strip():
+            next_page_token = token_value.strip()
+            pages_fetched += 1
+            continue
+        break
+
+    return sorted(set(models)), None
+
+
+def _fetch_models_with_curl(
+    endpoint: str,
+    api_key: str,
+    provider: str,
+) -> Tuple[List[str], Optional[str]]:
     """Fallback to curl when Python lacks SSL support for HTTPS."""
     headers = [
         ("Authorization", f"Bearer {api_key}"),
@@ -950,39 +1303,73 @@ def _fetch_models_with_curl(endpoint: str, api_key: str, provider: str) -> Tuple
     return [], combined_error
 
 
-def fetch_provider_models(provider: str, api_key: str, api_base: str) -> Tuple[List[str], Optional[str]]:
+def fetch_provider_models(
+    provider: str,
+    api_key: str,
+    api_base: str,
+    token_provider: Optional[AccessTokenProvider] = None,
+) -> Tuple[List[str], Optional[str]]:
     """Fetch available models for a provider using raw HTTP."""
-    endpoint = f"{api_base}/models"
-    request = urllib.request.Request(
-        endpoint,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
-        message = f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
-        logging.error("Failed to fetch models for provider %s: %s", provider, message)
-        return [], message
-    except urllib.error.URLError as exc:
-        message = str(exc)
-        logging.error("Connection error while fetching models for provider %s: %s", provider, message)
-        # If Python lacks SSL support, urllib cannot handle HTTPS. Fall back to curl if available.
-        if "unknown url type: https" in message.lower():
-            logging.warning(
-                "Python SSL support appears to be missing; trying curl fallback for provider %s.", provider
-            )
-            return _fetch_models_with_curl(endpoint, api_key, provider)
-        return [], message
-    except json.JSONDecodeError as exc:
-        logging.error("Malformed JSON response from provider %s (%s): %s", provider, endpoint, exc)
-        return [], "Invalid JSON response"
+    endpoint = f"{api_base.rstrip('/')}/models"
 
-    return _parse_model_payload(payload, provider, endpoint)
+    def maybe_fetch_vertex_fallback(auth_token: str) -> Optional[Tuple[List[str], Optional[str]]]:
+        if provider != "vertex":
+            return None
+        logging.info(
+            "Falling back to Vertex publisher model listing endpoint (v1beta1/publishers/google/models)."
+        )
+        return _fetch_vertex_publisher_models(api_base, auth_token)
+
+    max_attempts = 2 if token_provider is not None else 1
+    for attempt_index in range(max_attempts):
+        auth_token = api_key
+        if token_provider is not None:
+            auth_token = token_provider.get_token(force_refresh=(attempt_index > 0))
+        request = urllib.request.Request(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return _parse_model_payload(payload, provider, endpoint)
+        except urllib.error.HTTPError as exc:
+            if provider == "vertex" and exc.code == 404:
+                fallback_result = maybe_fetch_vertex_fallback(auth_token)
+                if fallback_result is not None:
+                    return fallback_result
+            if token_provider is not None and exc.code in {401, 403} and attempt_index == 0:
+                logging.warning(
+                    "Authentication failed while fetching models for provider %s; refreshing token and retrying once.",
+                    provider,
+                )
+                continue
+            detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            message = f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+            logging.error("Failed to fetch models for provider %s: %s", provider, message)
+            if provider == "vertex" and exc.code == 403 and "quota project" in message.lower():
+                logging.error(
+                    "Vertex ADC requires a quota project. Run: gcloud auth application-default set-quota-project <PROJECT_ID>"
+                )
+            return [], message
+        except urllib.error.URLError as exc:
+            message = str(exc)
+            logging.error("Connection error while fetching models for provider %s: %s", provider, message)
+            # If Python lacks SSL support, urllib cannot handle HTTPS. Fall back to curl if available.
+            if "unknown url type: https" in message.lower():
+                logging.warning(
+                    "Python SSL support appears to be missing; trying curl fallback for provider %s.", provider
+                )
+                return _fetch_models_with_curl(endpoint, auth_token, provider)
+            return [], message
+        except json.JSONDecodeError as exc:
+            logging.error("Malformed JSON response from provider %s (%s): %s", provider, endpoint, exc)
+            return [], "Invalid JSON response"
+
+    return [], "Unable to fetch models after token refresh retries"
 
 
 def _gemini_caching_base_url(api_base_url: Optional[str]) -> str:
@@ -1002,6 +1389,140 @@ def _gemini_caching_base_url(api_base_url: Optional[str]) -> str:
     return trimmed
 
 
+def _extract_vertex_project_location_prefix(api_base_url: Optional[str]) -> Optional[str]:
+    """Extract Vertex project/location prefix from API base."""
+    if not api_base_url:
+        return None
+    trimmed = api_base_url.rstrip("/")
+    match = re.search(r"/v\d+(?:beta\d*)?/(projects/[^/]+/locations/[^/]+)", trimmed)
+    if match:
+        value = match.group(1).strip().strip("/")
+        return value or None
+    return None
+
+
+def _is_vertex_gemini_caching_target(api_base_url: Optional[str]) -> bool:
+    """Return True when api_base_url looks like a Vertex OpenAI endpoint."""
+    if not api_base_url:
+        return False
+    trimmed = api_base_url.rstrip("/")
+    lowered = trimmed.lower()
+    if "/endpoints/openapi" in lowered and "/projects/" in lowered and "/locations/" in lowered:
+        return True
+    return False
+
+
+def _vertex_gemini_caching_root_url(api_base_url: Optional[str]) -> str:
+    """Convert Vertex OpenAI base URL into Vertex Gemini cache root URL."""
+    if not api_base_url:
+        raise RuntimeError("Vertex cache root URL requires an API base URL.")
+    trimmed = api_base_url.rstrip("/")
+    lowered = trimmed.lower()
+    marker = "/endpoints/openapi"
+    marker_index = lowered.rfind(marker)
+    if marker_index >= 0:
+        return trimmed[:marker_index]
+    return trimmed
+
+
+def _extract_vertex_quota_project(api_base_url: Optional[str]) -> Optional[str]:
+    """Extract Vertex project id for x-goog-user-project header."""
+    if not api_base_url:
+        return None
+    match = re.search(r"/projects/([^/]+)/", api_base_url.rstrip("/"))
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def _normalize_vertex_cache_model(api_base_url: Optional[str], model: str) -> str:
+    """Normalize model name for Vertex cache API (expects full resource path)."""
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        return normalized_model
+    if normalized_model.startswith("projects/"):
+        return normalized_model
+
+    prefix = _extract_vertex_project_location_prefix(api_base_url)
+    if not prefix:
+        return normalized_model
+
+    if normalized_model.startswith("publishers/"):
+        return f"{prefix}/{normalized_model}"
+    if normalized_model.startswith("models/"):
+        return f"{prefix}/publishers/google/{normalized_model}"
+    return f"{prefix}/publishers/google/models/{normalized_model}"
+
+
+def normalize_model_for_provider(provider: str, model: str) -> str:
+    """Normalize provider-specific model aliases into API-accepted identifiers."""
+    normalized = str(model or "").strip()
+    if not normalized:
+        return normalized
+    provider_slug = (provider or "").strip().lower()
+    if provider_slug != "vertex":
+        return normalized
+
+    # Vertex OpenAPI endpoint expects "<publisher>/<model>".
+    if normalized.startswith("projects/"):
+        match = re.search(r"/publishers/([^/]+)/models/([^/]+)$", normalized)
+        if match:
+            return f"{match.group(1)}/{match.group(2)}"
+        return normalized
+    if "/" not in normalized:
+        return f"google/{normalized}"
+    return normalized
+
+
+def build_run_model_details(
+    provider: str,
+    requested_model: str,
+    api_base_url: Optional[str],
+    api_key_var: Optional[str],
+    api_base_var: Optional[str],
+    gemini_cached_content: Optional[str],
+) -> Dict[str, Any]:
+    """Build run-level model metadata stored in log and metrics outputs."""
+    provider_slug = (provider or "").strip().lower()
+    normalized_request_model = normalize_model_for_provider(provider_slug, requested_model)
+    details: Dict[str, Any] = {
+        "provider": provider_slug,
+        "model_requested": str(requested_model or "").strip(),
+        "model_for_requests": normalized_request_model,
+        "api_base_url": api_base_url or "",
+        "api_key_var": str(api_key_var or "").strip(),
+        "api_base_var": str(api_base_var or "").strip(),
+        "chat_completions_endpoint": (
+            f"{api_base_url.rstrip('/')}/chat/completions" if api_base_url else ""
+        ),
+    }
+    if provider_slug == "vertex":
+        details["vertex_cache_model"] = _normalize_vertex_cache_model(
+            api_base_url, requested_model
+        )
+    if gemini_cached_content:
+        details["gemini_cached_content"] = str(gemini_cached_content).strip()
+    return details
+
+
+def upsert_prompt_log_run_metadata(
+    log_records: List[Dict[str, Any]],
+    model_details: Dict[str, Any],
+) -> None:
+    """Insert or update a run-metadata record in the prompt log list."""
+    metadata_record = {
+        "record_type": "run_metadata",
+        "timestamp": utc_timestamp(),
+        "model_details": model_details,
+    }
+    for index, entry in enumerate(log_records):
+        if isinstance(entry, dict) and entry.get("record_type") == "run_metadata":
+            log_records[index] = metadata_record
+            return
+    log_records.insert(0, metadata_record)
+
+
 def create_gemini_cached_content(
     api_key: str,
     api_base_url: Optional[str],
@@ -1015,11 +1536,22 @@ def create_gemini_cached_content(
     Returns the resource name, e.g. ``cachedContents/abc123``.
     Raises ``RuntimeError`` on API errors.
     """
-    base = _gemini_caching_base_url(api_base_url)
-    endpoint = f"{base}/cachedContents?key={api_key}"
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    model_for_request = model
+    if _is_vertex_gemini_caching_target(api_base_url):
+        base = _vertex_gemini_caching_root_url(api_base_url)
+        endpoint = f"{base}/cachedContents"
+        headers["Authorization"] = f"Bearer {api_key}"
+        quota_project = _extract_vertex_quota_project(api_base_url)
+        if quota_project:
+            headers["x-goog-user-project"] = quota_project
+        model_for_request = _normalize_vertex_cache_model(api_base_url, model)
+    else:
+        base = _gemini_caching_base_url(api_base_url)
+        endpoint = f"{base}/cachedContents?key={api_key}"
     body = json.dumps(
         {
-            "model": model,
+            "model": model_for_request,
             "systemInstruction": {"parts": [{"text": system_prompt}]},
             "ttl": f"{ttl_seconds}s",
         },
@@ -1028,7 +1560,7 @@ def create_gemini_cached_content(
     request = urllib.request.Request(
         endpoint,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -1060,11 +1592,27 @@ def delete_gemini_cached_content(
     :func:`create_gemini_cached_content`, e.g. ``cachedContents/abc123``.
     Returns ``True`` on success, ``False`` on failure (logs a warning).
     """
-    base = _gemini_caching_base_url(api_base_url)
-    # cache_name may or may not include a leading slash relative to base
     name_path = cache_name.lstrip("/")
-    endpoint = f"{base}/{name_path}?key={api_key}"
-    request = urllib.request.Request(endpoint, method="DELETE")
+    headers: Dict[str, str] = {}
+    if _is_vertex_gemini_caching_target(api_base_url):
+        base = _vertex_gemini_caching_root_url(api_base_url)
+        if name_path.startswith("projects/"):
+            # Build absolute resource URL using the same host/version as base.
+            root_match = re.match(r"^(https?://[^/]+)/(v\d+(?:beta\d*)?)/", base.rstrip("/"))
+            if root_match:
+                endpoint = f"{root_match.group(1)}/{root_match.group(2)}/{name_path}"
+            else:
+                endpoint = f"{base}/{name_path}"
+        else:
+            endpoint = f"{base}/{name_path}"
+        headers["Authorization"] = f"Bearer {api_key}"
+        quota_project = _extract_vertex_quota_project(api_base_url)
+        if quota_project:
+            headers["x-goog-user-project"] = quota_project
+    else:
+        base = _gemini_caching_base_url(api_base_url)
+        endpoint = f"{base}/{name_path}?key={api_key}"
+    request = urllib.request.Request(endpoint, headers=headers, method="DELETE")
     try:
         with urllib.request.urlopen(request, timeout=60):
             pass
@@ -1110,11 +1658,14 @@ def update_model_catalog(
     else:
         selected = []
         for provider_slug, defaults in sorted(available_provider_defaults.items()):
-            api_key = resolve_env_value(defaults["api_key_var"], env_map)
-            if is_placeholder_value(api_key):
-                continue
             api_base = normalize_api_base(provider_slug, resolve_env_value(defaults["api_base_var"], env_map))
             if not api_base:
+                continue
+            if provider_slug == "vertex":
+                selected.append(provider_slug)
+                continue
+            api_key = resolve_env_value(defaults["api_key_var"], env_map)
+            if is_placeholder_value(api_key):
                 continue
             selected.append(provider_slug)
 
@@ -1141,15 +1692,35 @@ def update_model_catalog(
             )
         api_key_var = defaults["api_key_var"]
         api_base_var = defaults["api_base_var"]
-        api_key = resolve_env_value(api_key_var, env_map)
-        if is_placeholder_value(api_key):
-            logging.warning("Skipping provider %s; missing API key in %s (.env first, env fallback).", provider_slug, api_key_var)
-            continue
         api_base = normalize_api_base(provider_slug, resolve_env_value(api_base_var, env_map))
         if not api_base:
             logging.warning("Skipping provider %s; missing API base URL in %s (.env first, env fallback).", provider_slug, api_base_var)
             continue
-        models, error = fetch_provider_models(provider_slug, api_key, api_base)
+        token_provider: Optional[AccessTokenProvider] = None
+        api_key = resolve_env_value(api_key_var, env_map)
+        if provider_slug == "vertex":
+            bootstrap_token = resolve_vertex_bootstrap_token(api_key_var, env_map)
+            token_provider = build_vertex_access_token_provider(env_map, bootstrap_token)
+            try:
+                api_key = token_provider.get_token(force_refresh=True)
+            except RuntimeError as exc:
+                if is_placeholder_value(bootstrap_token):
+                    logging.warning(
+                        "Skipping provider %s; unable to obtain Vertex access token: %s",
+                        provider_slug,
+                        exc,
+                    )
+                    continue
+                api_key = bootstrap_token
+                logging.warning(
+                    "Provider %s will use static bootstrap token because refresh failed: %s",
+                    provider_slug,
+                    exc,
+                )
+        if is_placeholder_value(api_key):
+            logging.warning("Skipping provider %s; missing API key in %s (.env first, env fallback).", provider_slug, api_key_var)
+            continue
+        models, error = fetch_provider_models(provider_slug, api_key, api_base, token_provider=token_provider)
         catalog[provider_slug] = {
             "models": models,
             "api_base": api_base,
@@ -1365,19 +1936,23 @@ class OpenAIConnector:
         base_url: Optional[str] = None,
         provider: str = "openai",
         request_interval_ms: int = 0,
+        access_token_provider: Optional[AccessTokenProvider] = None,
     ) -> None:
         self.client_type: str
         self._provider = (provider or "openai").strip().lower()
         self._chat_incompatible_models: set[str] = set()
         self._chat_unsupported_params: Dict[str, set[str]] = {}
         self._responses_unsupported_params: Dict[str, set[str]] = {}
+        self._logged_vertex_model_normalizations: set[str] = set()
         self._min_request_interval_seconds = max(0, request_interval_ms) / 1000.0
         self._last_request_started_at: Optional[float] = None
+        self._access_token_provider = access_token_provider
+        self._current_api_key = api_key
         try:
             from openai import OpenAI
 
             # Newer SDK (>= 1.0)
-            kwargs: Dict[str, Any] = {"api_key": api_key}
+            kwargs: Dict[str, Any] = {"api_key": self._current_api_key}
             if base_url:
                 kwargs["base_url"] = base_url
             self._client = OpenAI(**kwargs)
@@ -1391,7 +1966,7 @@ class OpenAIConnector:
             try:
                 import openai  # type: ignore
 
-                openai.api_key = api_key
+                openai.api_key = self._current_api_key
                 if base_url:
                     if hasattr(openai, "base_url"):
                         openai.base_url = base_url  # type: ignore[attr-defined]
@@ -1402,6 +1977,27 @@ class OpenAIConnector:
                 raise RuntimeError(
                     "OpenAI Python SDK not installed. Install `openai` package."
                 ) from exc
+
+    def _apply_api_key_to_client(self, api_key: str) -> None:
+        self._current_api_key = api_key
+        if self.client_type in {"chat_v1", "responses_v1"}:
+            try:
+                setattr(self._client, "api_key", api_key)
+            except Exception:  # noqa: BLE001
+                logging.debug("Unable to set api_key dynamically on OpenAI client instance.")
+        elif self.client_type == "legacy":
+            self._client.api_key = api_key
+
+    def _refresh_access_token_if_needed(self, force_refresh: bool = False) -> None:
+        if self._access_token_provider is None:
+            return
+        token = self._access_token_provider.get_token(force_refresh=force_refresh)
+        if token != self._current_api_key:
+            self._apply_api_key_to_client(token)
+
+    def _normalize_model_for_provider(self, model: str) -> str:
+        """Normalize provider-specific model aliases into API-accepted identifiers."""
+        return normalize_model_for_provider(self._provider, model)
 
     def _throttle_request_if_needed(self) -> None:
         """Sleep if needed to maintain minimum spacing between outgoing API requests."""
@@ -1441,7 +2037,17 @@ class OpenAIConnector:
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
-        model_key = model.strip().lower()
+        request_model = self._normalize_model_for_provider(model)
+        if self._provider == "vertex" and request_model != str(model or "").strip():
+            normalization_key = f"{model}=>{request_model}"
+            if normalization_key not in self._logged_vertex_model_normalizations:
+                logging.info(
+                    "Vertex model alias normalized from %s to %s for OpenAPI requests.",
+                    model,
+                    request_model,
+                )
+                self._logged_vertex_model_normalizations.add(normalization_key)
+        model_key = request_model.strip().lower()
         normalized_prompt_cache_key = (
             str(prompt_cache_key).strip() if prompt_cache_key is not None else ""
         ) or None
@@ -2035,7 +2641,7 @@ class OpenAIConnector:
 
         def complete_with_responses_api() -> CompletionResult:
             request_args = {
-                "model": model,
+                "model": request_model,
                 "input": messages,
             }
             if include_logprobs:
@@ -2062,6 +2668,7 @@ class OpenAIConnector:
 
             while True:
                 try:
+                    self._refresh_access_token_if_needed()
                     self._throttle_request_if_needed()
                     response = self._client.responses.create(**request_args)
                     break
@@ -2077,7 +2684,7 @@ class OpenAIConnector:
                         logging.info(
                             "Responses API rejected parameter '%s' for model %s; retrying without it.",
                             unsupported_param,
-                            model,
+                            request_model,
                         )
                         continue
                     if "logprobs" in request_args:
@@ -2155,7 +2762,7 @@ class OpenAIConnector:
             if hasattr(self._client, "responses") and model_key in self._chat_incompatible_models:
                 return complete_with_responses_api()
             request_args = {
-                "model": model,
+                "model": request_model,
                 "messages": messages,
             }
             if include_logprobs:
@@ -2179,6 +2786,7 @@ class OpenAIConnector:
 
             while True:
                 try:
+                    self._refresh_access_token_if_needed()
                     self._throttle_request_if_needed()
                     response = self._client.chat.completions.create(**request_args)
                     break
@@ -2187,7 +2795,7 @@ class OpenAIConnector:
                         self._chat_incompatible_models.add(model_key)
                         logging.info(
                             "Model %s is not chat-completions compatible; retrying with Responses API.",
-                            model,
+                            request_model,
                         )
                         return complete_with_responses_api()
                     unsupported_param = extract_unsupported_parameter(exc) or infer_known_unsupported_parameter(exc)
@@ -2202,7 +2810,7 @@ class OpenAIConnector:
                         logging.info(
                             "Chat Completions rejected parameter '%s' for model %s; retrying without it.",
                             unsupported_param,
-                            model,
+                            request_model,
                         )
                         if unsupported_param == "logprobs":
                             request_args.pop("top_logprobs", None)
@@ -2239,7 +2847,7 @@ class OpenAIConnector:
         # Legacy SDK path
         try:
             request_args = {
-                "model": model,
+                "model": request_model,
                 "messages": messages,
             }
             if include_logprobs:
@@ -2267,6 +2875,7 @@ class OpenAIConnector:
                 logging.debug(
                     "Reasoning/thinking effort controls are ignored in legacy OpenAI SDK mode."
                 )
+            self._refresh_access_token_if_needed()
             self._throttle_request_if_needed()
             response = self._client.ChatCompletion.create(**request_args)
         except Exception as exc:  # noqa: BLE001
@@ -2276,6 +2885,7 @@ class OpenAIConnector:
                 warn_logprob_retry(exc)
                 request_args.pop("logprobs", None)
                 request_args.pop("top_logprobs", None)
+                self._refresh_access_token_if_needed()
                 self._throttle_request_if_needed()
                 response = self._client.ChatCompletion.create(**request_args)
             else:
@@ -3341,6 +3951,7 @@ def process_dataset(
     include_explanation: bool,
     calibration_enabled: bool,
     label_map: Optional[Dict[str, str]],
+    resolved_api_base_url: Optional[str],
     validator_client: Optional[ValidatorClient] = None,
 ) -> Tuple[int, int, int, bool]:
     """Run the full evaluation pipeline for a single dataset."""
@@ -3486,6 +4097,16 @@ def process_dataset(
         log_records = load_existing_prompt_log(log_path)
     else:
         log_records = []
+
+    run_model_details = build_run_model_details(
+        provider=args.provider,
+        requested_model=args.model,
+        api_base_url=resolved_api_base_url,
+        api_key_var=args.api_key_var,
+        api_base_var=args.api_base_var,
+        gemini_cached_content=args.gemini_cached_content,
+    )
+    upsert_prompt_log_run_metadata(log_records, run_model_details)
 
     def flush_prompt_log() -> None:
         with open(log_path, "w", encoding="utf-8") as log_handle:
@@ -3723,6 +4344,7 @@ def process_dataset(
     metrics: Dict[str, Any] = {}
     if evaluated_truths:
         metrics = compute_metrics(evaluated_truths, evaluated_preds)
+        metrics["model_details"] = run_model_details
         metrics["prompt_layout"] = args.prompt_layout
         metrics["cache_padding"] = cache_padding_summary
         metrics.update(prompt_time_window)
@@ -3935,7 +4557,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help=(
             "Model provider identifier used to look up default credentials. "
             "Known providers are preconfigured; custom providers are inferred from "
-            "<PROVIDER>_API_KEY and <PROVIDER>_BASE_URL."
+            "<PROVIDER>_API_KEY (or <PROVIDER>_ACCESS_TOKEN) and <PROVIDER>_BASE_URL."
         ),
     )
     prompt_group = parser.add_mutually_exclusive_group()
@@ -4056,7 +4678,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--api_key_var",
         default=None,
-        help="Environment variable name that stores the API key.",
+        help="Environment variable name that stores the API key or access token.",
     )
     parser.add_argument(
         "--api_base_var",
@@ -4156,7 +4778,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         nargs="+",
         help=(
             "Optional list of provider slugs to update when --update-models is specified. "
-            "Custom slugs are allowed; env vars are inferred as <SLUG>_API_KEY and <SLUG>_BASE_URL."
+            "Custom slugs are allowed; env vars are inferred as <SLUG>_API_KEY "
+            "(or <SLUG>_ACCESS_TOKEN) and <SLUG>_BASE_URL."
         ),
     )
 
@@ -4252,10 +4875,26 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 1
 
+    access_token_provider: Optional[AccessTokenProvider] = None
     api_key = resolve_env_value(args.api_key_var, env_map)
+    if provider == "vertex":
+        bootstrap_token = resolve_vertex_bootstrap_token(args.api_key_var, env_map)
+        access_token_provider = build_vertex_access_token_provider(env_map, bootstrap_token)
+        try:
+            api_key = access_token_provider.get_token(force_refresh=True)
+            logging.info("Vertex provider auth initialized with auto-refreshing access token.")
+        except RuntimeError as exc:
+            if is_placeholder_value(bootstrap_token):
+                logging.error("Unable to obtain Vertex access token: %s", exc)
+                return 1
+            api_key = bootstrap_token
+            logging.warning(
+                "Vertex token refresh is unavailable; continuing with static token from env. Details: %s",
+                exc,
+            )
     if is_placeholder_value(api_key):
         logging.error(
-            "API key not found. Ensure %s is defined in .env or the environment.",
+            "API credential not found. Ensure %s is defined in .env or the environment.",
             args.api_key_var,
         )
         return 1
@@ -4381,6 +5020,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         base_url=api_base_url,
         provider=provider,
         request_interval_ms=max(0, args.request_interval_ms),
+        access_token_provider=access_token_provider,
     )
 
     validator_client: Optional[ValidatorClient] = None
@@ -4441,6 +5081,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 include_explanation=include_explanation,
                 calibration_enabled=calibration_enabled,
                 label_map=label_map,
+                resolved_api_base_url=api_base_url,
                 validator_client=validator_client,
             )
             aggregate_prompt_tokens += prompt_tokens

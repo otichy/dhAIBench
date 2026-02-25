@@ -46,7 +46,7 @@ When `--labels` is provided, supply a second CSV with `ID;truth` columns. The sc
 
 ## Usage
 
-1. Populate `.env` or export environment variables so the agent can locate your API key. By default it reads `OPENAI_API_KEY` (and `OPENAI_BASE_URL` when targeting non-default endpoints). For custom providers, the agent also detects `<PROVIDER>_API_KEY` and `<PROVIDER>_BASE_URL` automatically (for example `REQUESTY_API_KEY` / `REQUESTY_BASE_URL`). You can always override the variable names with `--api_key_var` and `--api_base_var`.
+1. Populate `.env` or export environment variables so the agent can locate your API key/token. By default it reads `OPENAI_API_KEY` (and `OPENAI_BASE_URL` when targeting non-default endpoints). For custom providers, the agent also detects `<PROVIDER>_API_KEY` or `<PROVIDER>_ACCESS_TOKEN` and `<PROVIDER>_BASE_URL` automatically (for example `REQUESTY_API_KEY` / `REQUESTY_BASE_URL`). You can always override the variable names with `--api_key_var` and `--api_base_var`.
 2. Prepare an input dataset (see `example_input.csv` for reference).
 3. Run the benchmark (append as many CSVs as you like after `--input`; omit `--output` to use the automatic filenames):
 
@@ -128,6 +128,25 @@ python benchmark_agent.py --update-models
 
 The command reads provider credentials from `.env` (or your environment), queries each `/models` endpoint, and writes
 the catalog to `config_models.js`. Use `--models-providers` to update a subset or `--models-output` to control the path.
+
+### Vertex Provider Auth
+
+For `--provider vertex`, use Google Cloud OAuth access tokens (not static API keys):
+
+- Default token env var: `VERTEX_ACCESS_TOKEN` (legacy `VERTEX_API_KEY` is still accepted as a fallback).
+- Auto-refresh command: `VERTEX_ACCESS_TOKEN_COMMAND` (default: `gcloud auth application-default print-access-token`).
+- Refresh interval: `VERTEX_ACCESS_TOKEN_REFRESH_SECONDS` (default: `3300`, ~55 minutes).
+- If ADC is missing, the agent can auto-launch browser login once via `gcloud auth application-default login`.
+  Control this with `VERTEX_AUTO_ADC_LOGIN` (`true` by default) and optionally override
+  the login command with `VERTEX_ADC_LOGIN_COMMAND`.
+
+Set `VERTEX_BASE_URL` to the OpenAI-compatible Vertex endpoint, for example:
+
+`https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi`
+
+When `--update-models` is used, the agent first tries `<VERTEX_BASE_URL>/models`. If that endpoint is not
+available (404 on some Vertex configurations), it automatically falls back to
+`https://aiplatform.googleapis.com/v1beta1/publishers/google/models` and normalizes those IDs for the catalog.
 
 ## Validation contract (optional)
 

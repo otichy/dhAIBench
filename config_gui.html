@@ -488,6 +488,7 @@
                     <option value="anthropic">Anthropic (OpenAI proxy)</option>
                     <option value="cohere">Cohere (OpenAI proxy)</option>
                     <option value="google">Google (OpenAI proxy)</option>
+                    <option value="vertex">Vertex AI (OpenAI proxy)</option>
                     <option value="huggingface">Hugging Face (OpenAI proxy)</option>
                     <option value="e-infra">E-INFRA (OpenAI proxy)</option>
                     <option value="requesty">Requesty (OpenAI proxy)</option>
@@ -684,7 +685,7 @@
                   <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
                 </label>
                 <label
-                  >API Key Environment Variable
+                  >API Key/Token Environment Variable
                   <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
                   <span class="hint">Leave blank to use the provider default.</span>
                 </label>
@@ -853,8 +854,8 @@ options:
                         not present in the final successful request payload.
   --provider PROVIDER   Model provider identifier used to look up default
                         credentials. Known providers are preconfigured; custom
-                        providers are inferred from &lt;PROVIDER&gt;_API_KEY and
-                        &lt;PROVIDER&gt;_BASE_URL.
+                        providers are inferred from &lt;PROVIDER&gt;_API_KEY (or
+                        &lt;PROVIDER&gt;_ACCESS_TOKEN) and &lt;PROVIDER&gt;_BASE_URL.
   --system_prompt SYSTEM_PROMPT
                         System prompt injected into the chat completion.
   --system_prompt_b64 SYSTEM_PROMPT_B64
@@ -893,7 +894,8 @@ options:
   --calibration         Generate a calibration plot using the model's
                         confidences.
   --api_key_var API_KEY_VAR
-                        Environment variable name that stores the API key.
+                        Environment variable name that stores the API key or
+                        access token.
   --api_base_var API_BASE_VAR
                         Environment variable name that stores the API base
                         URL.
@@ -943,8 +945,8 @@ options:
   --models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]
                         Optional list of provider slugs to update when
                         --update-models is specified. Custom slugs are
-                        allowed; env vars are inferred as &lt;SLUG&gt;_API_KEY and
-                        &lt;SLUG&gt;_BASE_URL.
+                        allowed; env vars are inferred as &lt;SLUG&gt;_API_KEY (or
+                        &lt;SLUG&gt;_ACCESS_TOKEN) and &lt;SLUG&gt;_BASE_URL.
 
 Tip: this GUI is a command builder. You can still edit any generated CLI flag manually before running.</pre>
         </details>
@@ -1053,6 +1055,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         },
         cohere: { apiKeyVar: "COHERE_API_KEY", apiBaseVar: "COHERE_BASE_URL" },
         google: { apiKeyVar: "GOOGLE_API_KEY", apiBaseVar: "GOOGLE_BASE_URL" },
+        vertex: {
+          apiKeyVar: "VERTEX_ACCESS_TOKEN",
+          apiBaseVar: "VERTEX_BASE_URL",
+        },
         huggingface: {
           apiKeyVar: "HF_API_KEY",
           apiBaseVar: "HF_BASE_URL",
@@ -1071,6 +1077,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         anthropic: "Anthropic (OpenAI proxy)",
         cohere: "Cohere (OpenAI proxy)",
         google: "Google (OpenAI proxy)",
+        vertex: "Vertex AI (OpenAI proxy)",
         huggingface: "Hugging Face (OpenAI proxy)",
         "e-infra": "E-INFRA (OpenAI proxy)",
         requesty: "Requesty (OpenAI proxy)",
@@ -1116,7 +1123,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
         output_path: "Optional output CSV file path, or output directory when running multiple inputs. Set an existing output file to resume.",
-        api_key_var: "Environment variable that stores the API key used for this run.",
+        api_key_var: "Environment variable that stores the API key or access token used for this run.",
         api_base_var: "Environment variable containing the provider base URL.",
         calibration: "Generate calibration outputs in addition to regular metrics.",
         validator_enable: "Enable external validator roundtrip and retry logic.",
