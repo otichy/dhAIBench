@@ -131,29 +131,71 @@ the catalog to `config_models.js`. Use `--models-providers` to update a subset o
 
 ### Vertex Provider Auth
 
-For `--provider vertex`, use Google Cloud OAuth access tokens (not static API keys):
+For `--provider vertex`, authentication is OAuth access-token based (Bearer token), not static vendor API keys.
 
-- Default token env var: `VERTEX_ACCESS_TOKEN` (legacy `VERTEX_API_KEY` is still accepted as a fallback).
-- Auto-refresh command: `VERTEX_ACCESS_TOKEN_COMMAND` (default: `gcloud auth application-default print-access-token`).
-- Refresh interval: `VERTEX_ACCESS_TOKEN_REFRESH_SECONDS` (default: `3300`, ~55 minutes).
-- If ADC is missing, the agent can auto-launch browser login once via `gcloud auth application-default login`.
-  Control this with `VERTEX_AUTO_ADC_LOGIN` (`true` by default) and optionally override
-  the login command with `VERTEX_ADC_LOGIN_COMMAND`.
+Auth inputs and runtime behavior:
+
+- `VERTEX_ACCESS_TOKEN_COMMAND` provides fresh tokens (default: `gcloud auth application-default print-access-token`).
+- `VERTEX_ACCESS_TOKEN` is an optional bootstrap/fallback token (legacy `VERTEX_API_KEY` is also accepted).
+- The agent tries token refresh at startup and then refreshes periodically (`VERTEX_ACCESS_TOKEN_REFRESH_SECONDS`, default `3300`, minimum enforced `60`).
+- If refresh fails but a bootstrap token exists, the run continues with that token and logs a warning.
+- If refresh fails and no bootstrap token exists, the run exits with an auth error.
+- Missing-ADC auto-login is one-time and interactive-only: it runs only when stdin/stdout are TTYs.
+  Control with `VERTEX_AUTO_ADC_LOGIN` (default `true`) or CLI `--vertex_auto_adc_login` / `--no-vertex_auto_adc_login`.
+  Override command with `VERTEX_ADC_LOGIN_COMMAND` (default: `gcloud auth application-default login`).
 
 Set `VERTEX_BASE_URL` to the OpenAI-compatible Vertex endpoint, for example:
 
 `https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi`
+
+#### Browser-capable machine (local workstation)
+
+Recommended setup (lets the agent refresh tokens automatically):
+
+```bash
+VERTEX_BASE_URL=https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi
+VERTEX_AUTO_ADC_LOGIN=true
+VERTEX_ACCESS_TOKEN_COMMAND=gcloud auth application-default print-access-token
+```
+
+- On first run, if ADC is missing, the agent can launch `gcloud auth application-default login`.
+- If you get a Vertex 403 mentioning quota project, set it once:
+  `gcloud auth application-default set-quota-project <PROJECT_ID>`.
+- This same auth flow is used for normal benchmarking and `--update-models`.
+
+#### CLI-only / remote terminal (no local browser)
+
+Use a non-interactive setup and disable browser auto-login:
+
+```bash
+VERTEX_AUTO_ADC_LOGIN=false
+```
+
+Then use one of these approaches:
+
+- Provide a non-interactive `VERTEX_ACCESS_TOKEN_COMMAND` that prints a token to stdout (token must be on the last output line).
+- Pre-provision ADC on that machine (or its runtime identity) so the default refresh command works without browser prompts.
+- As a fallback, set `VERTEX_ACCESS_TOKEN` to a short-lived token manually (the run can continue on this token if refresh is unavailable).
+
+CLI equivalents:
+
+- `--no-vertex_auto_adc_login` disables browser-based auto-login.
+- `--vertex_access_token_refresh_seconds N` overrides refresh cadence for this run.
+
+#### Vertex model catalog endpoint notes (`--update-models`)
 
 When `--update-models` is used, the agent first tries `<MODELS_BASE_URL>/models`, where:
 
 - `<MODELS_BASE_URL>` is `VERTEX_MODELS_BASE_URL` when set.
 - Otherwise, it falls back to `VERTEX_BASE_URL`.
 
-If that endpoint is not
-available (404 on some Vertex configurations), it automatically falls back to
-`https://aiplatform.googleapis.com/v1beta1/publishers/google/models` and normalizes those IDs for the catalog.
+If `/models` returns 404 (common on some Vertex OpenAI endpoints), it automatically falls back to:
 
-This allows using separate Vertex endpoints for runtime and catalog updates, e.g.:
+`https://aiplatform.googleapis.com/v1beta1/publishers/google/models`
+
+and normalizes returned IDs for `config_models.js`.
+
+This allows separate runtime and catalog endpoints, for example:
 
 - `VERTEX_BASE_URL=https://aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/global/endpoints/openapi`
 - `VERTEX_MODELS_BASE_URL=https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/us-central1/endpoints/openapi`

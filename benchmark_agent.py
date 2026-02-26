@@ -5544,7 +5544,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             else:
                 logging.info("Deleting auto-created Gemini cache: %s", created_cache_name)
-                delete_gemini_cached_content(api_key, api_base_url, created_cache_name)
+                delete_api_key = api_key
+                # Vertex cache deletion requires a valid OAuth access token; refresh at teardown
+                # so long runs do not attempt cleanup with an expired startup token.
+                if access_token_provider is not None and _is_vertex_gemini_caching_target(api_base_url):
+                    try:
+                        delete_api_key = access_token_provider.get_token(force_refresh=True)
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning(
+                            "Unable to refresh access token for Gemini cache deletion; "
+                            "falling back to previously configured token. Details: %s",
+                            exc,
+                        )
+                delete_gemini_cached_content(delete_api_key, api_base_url, created_cache_name)
 
     if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
         total_token_usage = (
