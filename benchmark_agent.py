@@ -44,6 +44,7 @@ MANDATORY_SYSTEM_APPEND = (
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
+RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS: Tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_CACHE_PADDING_TOKENS = 200_000
 TOKEN_CHAR_ESTIMATE_RATIO = 4.0
@@ -475,6 +476,35 @@ def is_quota_or_rate_limit_error(exc: BaseException) -> bool:
         "quota",
     )
     return any(marker in text for marker in indicators)
+
+
+def is_retryable_resource_exhausted_error(exc: BaseException) -> bool:
+    """Detect transient provider-side resource exhaustion worth retrying with long backoff."""
+    status_code: Optional[int] = None
+    for attr_name in ("status_code", "status", "http_status", "code"):
+        raw_value = getattr(exc, attr_name, None)
+        if raw_value is None:
+            continue
+        try:
+            status_code = int(str(raw_value).strip())
+            break
+        except (TypeError, ValueError):
+            continue
+
+    text = str(exc).strip().lower()
+    if not text:
+        return status_code == 429
+
+    if "resource exhausted" in text or "resource has been exhausted" in text:
+        return True
+    if "resource_exhausted" in text:
+        return True
+
+    if status_code == 429 and (
+        "too many requests" in text or "rate limit" in text or "try again later" in text
+    ):
+        return True
+    return False
 
 
 def is_empty_model_response_error(exc: BaseException) -> bool:
@@ -2170,6 +2200,9 @@ class OpenAIConnector:
                 kwargs["base_url"] = base_url
             if self._request_timeout_seconds is not None:
                 kwargs["timeout"] = self._request_timeout_seconds
+            # Keep retry policy centralized in classify_example so backoff behavior
+            # is deterministic across providers (not SDK-version dependent).
+            kwargs["max_retries"] = 0
             self._client = OpenAI(**kwargs)
             if hasattr(self._client, "chat") and hasattr(self._client.chat, "completions"):
                 self.client_type = "chat_v1"
@@ -3836,8 +3869,12 @@ def classify_example(
     latest_total_tokens: Optional[int] = None
     validation_failures = 0
     interaction_logs: List[Dict[str, Any]] = []
+    resource_exhausted_retry_step = 0
 
-    for attempt in range(1, max_retries + 1):
+    attempt = 0
+    while True:
+        attempt += 1
+        attempt_max_for_telemetry = max(max_retries, attempt)
         messages = list(base_messages)
         if validator_patch_message is not None:
             messages.append(validator_patch_message)
@@ -3848,7 +3885,7 @@ def classify_example(
                 "Prompt for example %s (attempt %d/%d):\n%s",
                 example.example_id,
                 attempt,
-                max_retries,
+                attempt_max_for_telemetry,
                 prompt_snapshot,
             )
 
@@ -3991,7 +4028,7 @@ def classify_example(
                     "expected_node_echo": expected_node_echo,
                     "expected_span_source": expected_span_source,
                 }
-                if validation_failures >= 3 or attempt == max_retries:
+                if validation_failures >= 3 or attempt >= max_retries:
                     logging.error(
                         "Validation failed %d time(s) for example %s; accepting last response but withholding confidence.",
                         validation_failures,
@@ -4008,7 +4045,7 @@ def classify_example(
                     "type": "validate",
                     "schema_version": 1,
                     "request_id": request_id,
-                    "attempt": {"index": attempt, "max": max_retries},
+                    "attempt": {"index": attempt, "max": attempt_max_for_telemetry},
                     "example": {
                         "id": example.example_id,
                         "left_context": example.left_context,
@@ -4164,6 +4201,7 @@ def classify_example(
             strict_control_error = (
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
             )
+            resource_exhausted_error = is_retryable_resource_exhausted_error(exc)
             empty_response_error = is_empty_model_response_error(exc)
             timeout_error = is_request_timeout_error(exc)
             malformed_response_error = is_malformed_model_response_error(exc)
@@ -4181,20 +4219,41 @@ def classify_example(
             if "status" not in log_entry:
                 log_entry["status"] = "error"
             log_entry["error_type"] = exc.__class__.__name__
-            if timeout_error:
+            if resource_exhausted_error:
+                log_entry["error_category"] = "resource_exhausted"
+            elif timeout_error:
                 log_entry["error_category"] = "request_timeout"
             elif malformed_response_error:
                 log_entry["error_category"] = "malformed_provider_response"
             log_entry["error"] = str(exc)
             interaction_logs.append(log_entry)
+            attempt_limit = (
+                len(RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS) + 1
+                if resource_exhausted_error
+                else max_retries
+            )
             logging.warning(
                 "Attempt %d/%d failed for example %s: %s",
                 attempt,
-                max_retries,
+                attempt_limit,
                 example.example_id,
                 exc,
             )
             if strict_control_error:
+                break
+            if resource_exhausted_error:
+                if resource_exhausted_retry_step < len(RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS):
+                    wait_seconds = RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS[resource_exhausted_retry_step]
+                    resource_exhausted_retry_step += 1
+                    logging.warning(
+                        "Resource exhausted for example %s; retry %d/%d in %.0f seconds.",
+                        example.example_id,
+                        resource_exhausted_retry_step,
+                        len(RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS),
+                        wait_seconds,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
                 break
             if attempt < max_retries:
                 if empty_response_error:
@@ -4206,6 +4265,8 @@ def classify_example(
                     time.sleep(EMPTY_RESPONSE_RETRY_DELAY_SECONDS)
                 else:
                     time.sleep(retry_delay)
+                continue
+            break
 
     assert last_error is not None
     if isinstance(last_error, json.JSONDecodeError):
@@ -5065,7 +5126,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--max_retries",
         type=int,
         default=3,
-        help="Maximum number of retry attempts per example on API errors.",
+        help=(
+            "Maximum number of retry attempts per example on API errors. "
+            "Vertex/Gemini RESOURCE_EXHAUSTED (HTTP 429) uses a fixed backoff ladder "
+            "of 5/15/30/60/120 seconds before the run stops."
+        ),
     )
     parser.add_argument(
         "--retry_delay",
