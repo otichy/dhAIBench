@@ -606,7 +606,11 @@
                         name="gemini_cache_ttl"
                         value="3600"
                       />
-                      <span class="hint">How long to keep the cache (default: 3600 = 1 hour). The run must complete within this window.</span>
+                      <span class="hint">How long to keep the cache (default: 3600 = 1 hour). With auto-update enabled, TTL is refreshed during long runs.</span>
+                    </label>
+                    <label class="inline">
+                      <input type="checkbox" id="gemini_cache_ttl_autoupdate" name="gemini_cache_ttl_autoupdate" checked />
+                      <span>Auto-refresh cache TTL during run (recommended)</span>
                     </label>
                     <label class="inline">
                       <input type="checkbox" id="keep_gemini_cache" name="keep_gemini_cache" />
@@ -1079,6 +1083,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         gemini_cached_content: "",
         create_gemini_cache: false,
         gemini_cache_ttl: "3600",
+        gemini_cache_ttl_autoupdate: true,
         keep_gemini_cache: false,
         service_tier: "standard",
         include_explanations: true,
@@ -1174,6 +1179,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           "Automatically create a Gemini CachedContent from the system prompt before the run and delete it afterward.",
         gemini_cache_ttl:
           "Time-to-live in seconds for the auto-created Gemini cache (default: 3600 = 1 hour).",
+        gemini_cache_ttl_autoupdate:
+          "When enabled, auto-refreshes cache TTL during long runs to avoid expiration.",
         keep_gemini_cache:
           "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
@@ -1927,6 +1934,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           const geminiCacheTtl = data.get("gemini_cache_ttl")?.toString().trim() ?? "";
           if (geminiCacheTtl && Number(geminiCacheTtl) !== 3600) {
             args.push("--gemini_cache_ttl", geminiCacheTtl);
+          }
+          if (!data.get("gemini_cache_ttl_autoupdate")) {
+            args.push("--no-gemini_cache_ttl_autoupdate");
           }
           if (data.get("keep_gemini_cache")) {
             args.push("--keep_gemini_cache");

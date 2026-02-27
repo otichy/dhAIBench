@@ -29,7 +29,7 @@ import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
@@ -46,6 +46,8 @@ MANDATORY_SYSTEM_APPEND = (
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
 RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS: Tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+GEMINI_CACHE_TTL_AUTOUPDATE_LEAD_SECONDS = 3600
+GEMINI_CACHE_TTL_AUTOUPDATE_MIN_INTERVAL_SECONDS = 300
 MAX_CACHE_PADDING_TOKENS = 200_000
 TOKEN_CHAR_ESTIMATE_RATIO = 4.0
 CACHE_PADDING_PREFIX = "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN"
@@ -130,6 +132,18 @@ def format_duration_human(total_seconds: float) -> str:
     if minutes:
         return f"{minutes}m {seconds:02d}s"
     return f"{seconds}s"
+
+
+def compute_gemini_cache_ttl_refresh_interval_seconds(ttl_seconds: int) -> int:
+    """Compute when to refresh Gemini cache TTL next.
+
+    For TTL values above one hour, refresh one hour before expiration.
+    For shorter TTL values, refresh at half-life (but no more often than every 5 minutes).
+    """
+    ttl = max(1, int(ttl_seconds))
+    if ttl > GEMINI_CACHE_TTL_AUTOUPDATE_LEAD_SECONDS:
+        return ttl - GEMINI_CACHE_TTL_AUTOUPDATE_LEAD_SECONDS
+    return max(GEMINI_CACHE_TTL_AUTOUPDATE_MIN_INTERVAL_SECONDS, ttl // 2)
 
 
 def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1608,6 +1622,37 @@ def upsert_prompt_log_run_metadata(
     log_records.insert(0, metadata_record)
 
 
+def _build_gemini_cache_resource_endpoint_and_headers(
+    api_key: str,
+    api_base_url: Optional[str],
+    cache_name: str,
+) -> Tuple[str, Dict[str, str]]:
+    """Resolve absolute cache-resource endpoint and auth headers."""
+    name_path = cache_name.lstrip("/")
+    headers: Dict[str, str] = {}
+
+    if _is_vertex_gemini_caching_target(api_base_url):
+        base = _vertex_gemini_caching_root_url(api_base_url)
+        if name_path.startswith("projects/"):
+            # Build absolute resource URL using the same host/version as base.
+            root_match = re.match(r"^(https?://[^/]+)/(v\d+(?:beta\d*)?)/", base.rstrip("/"))
+            if root_match:
+                endpoint = f"{root_match.group(1)}/{root_match.group(2)}/{name_path}"
+            else:
+                endpoint = f"{base}/{name_path}"
+        else:
+            endpoint = f"{base}/{name_path}"
+        headers["Authorization"] = f"Bearer {api_key}"
+        quota_project = _extract_vertex_quota_project(api_base_url)
+        if quota_project:
+            headers["x-goog-user-project"] = quota_project
+        return endpoint, headers
+
+    base = _gemini_caching_base_url(api_base_url)
+    endpoint = f"{base}/{name_path}?key={api_key}"
+    return endpoint, headers
+
+
 def create_gemini_cached_content(
     api_key: str,
     api_base_url: Optional[str],
@@ -1666,6 +1711,60 @@ def create_gemini_cached_content(
     return str(name)
 
 
+def update_gemini_cached_content_ttl(
+    api_key: str,
+    api_base_url: Optional[str],
+    cache_name: str,
+    ttl_seconds: int,
+) -> bool:
+    """Update TTL for an existing Gemini CachedContent resource."""
+    normalized_ttl = int(ttl_seconds)
+    if normalized_ttl <= 0:
+        raise RuntimeError(f"Gemini CachedContent TTL must be > 0, got {ttl_seconds}.")
+
+    endpoint, headers = _build_gemini_cache_resource_endpoint_and_headers(
+        api_key, api_base_url, cache_name
+    )
+    separator = "&" if "?" in endpoint else "?"
+    endpoint_with_mask = f"{endpoint}{separator}updateMask=ttl"
+
+    patch_headers = dict(headers)
+    patch_headers["Content-Type"] = "application/json"
+    payload_variants = (
+        {"ttl": f"{normalized_ttl}s"},
+        {"ttl": {"seconds": str(normalized_ttl), "nanos": 0}},
+    )
+    last_error: Optional[Exception] = None
+
+    for payload in payload_variants:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint_with_mask,
+            data=body,
+            headers=patch_headers,
+            method="PATCH",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60):
+                pass
+            return True
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            last_error = RuntimeError(
+                "Gemini CachedContent TTL update failed: "
+                f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+            )
+            if exc.code in {400, 422}:
+                continue
+            raise last_error from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Gemini CachedContent TTL update failed: {exc}") from exc
+
+    if last_error is not None:
+        raise last_error
+    return False
+
+
 def delete_gemini_cached_content(
     api_key: str,
     api_base_url: Optional[str],
@@ -1677,26 +1776,9 @@ def delete_gemini_cached_content(
     :func:`create_gemini_cached_content`, e.g. ``cachedContents/abc123``.
     Returns ``True`` on success, ``False`` on failure (logs a warning).
     """
-    name_path = cache_name.lstrip("/")
-    headers: Dict[str, str] = {}
-    if _is_vertex_gemini_caching_target(api_base_url):
-        base = _vertex_gemini_caching_root_url(api_base_url)
-        if name_path.startswith("projects/"):
-            # Build absolute resource URL using the same host/version as base.
-            root_match = re.match(r"^(https?://[^/]+)/(v\d+(?:beta\d*)?)/", base.rstrip("/"))
-            if root_match:
-                endpoint = f"{root_match.group(1)}/{root_match.group(2)}/{name_path}"
-            else:
-                endpoint = f"{base}/{name_path}"
-        else:
-            endpoint = f"{base}/{name_path}"
-        headers["Authorization"] = f"Bearer {api_key}"
-        quota_project = _extract_vertex_quota_project(api_base_url)
-        if quota_project:
-            headers["x-goog-user-project"] = quota_project
-    else:
-        base = _gemini_caching_base_url(api_base_url)
-        endpoint = f"{base}/{name_path}?key={api_key}"
+    endpoint, headers = _build_gemini_cache_resource_endpoint_and_headers(
+        api_key, api_base_url, cache_name
+    )
     request = urllib.request.Request(endpoint, headers=headers, method="DELETE")
     try:
         with urllib.request.urlopen(request, timeout=60):
@@ -4371,6 +4453,7 @@ def process_dataset(
     label_map: Optional[Dict[str, str]],
     resolved_api_base_url: Optional[str],
     validator_client: Optional[ValidatorClient] = None,
+    before_example_hook: Optional[Callable[[], None]] = None,
 ) -> Tuple[int, int, int, bool]:
     """Run the full evaluation pipeline for a single dataset."""
     logging.info("Loading dataset from %s", input_path)
@@ -4542,6 +4625,8 @@ def process_dataset(
             for example in examples:
                 if example.example_id in processed_ids:
                     continue
+                if before_example_hook is not None:
+                    before_example_hook()
                 processed_this_run += 1
                 logging.info(
                     "Classifying example %s (%d/%d)",
@@ -5080,6 +5165,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--gemini_cache_ttl_autoupdate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When enabled, automatically refreshes TTL for auto-created Gemini cache "
+            "during long runs to avoid expiration (target: refresh one hour before expiry). "
+            "Only used when --create_gemini_cache is set."
+        ),
+    )
+    parser.add_argument(
         "--keep_gemini_cache",
         action="store_true",
         help=(
@@ -5276,6 +5371,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--model is required unless --update-models or --summarize-log-errors is specified.")
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
+    if args.gemini_cache_ttl <= 0:
+        parser.error("--gemini_cache_ttl must be > 0.")
     if args.request_timeout_seconds is not None and not math.isfinite(args.request_timeout_seconds):
         parser.error("--request_timeout_seconds must be a finite number.")
     if args.create_gemini_cache and args.gemini_cached_content:
@@ -5459,6 +5556,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     created_cache_name: Optional[str] = None
+    before_example_hook: Optional[Callable[[], None]] = None
+    cache_ttl_autoupdate_attempts = 0
+    cache_ttl_autoupdate_successes = 0
     if args.create_gemini_cache:
         is_gemini_target = provider == "google" or "gemini" in str(args.model).strip().lower()
         if not is_gemini_target:
@@ -5511,6 +5611,75 @@ def main(argv: Optional[List[str]] = None) -> int:
         if gemini_cache_preset_padding:
             args._gemini_cache_preset_padding = gemini_cache_preset_padding
             args.cache_pad_target_tokens = 0
+
+        if args.gemini_cache_ttl_autoupdate:
+            refresh_interval_seconds = compute_gemini_cache_ttl_refresh_interval_seconds(
+                args.gemini_cache_ttl
+            )
+            if args.gemini_cache_ttl <= GEMINI_CACHE_TTL_AUTOUPDATE_LEAD_SECONDS:
+                logging.warning(
+                    "Gemini cache TTL autoupdate cannot refresh a full hour early when "
+                    "--gemini_cache_ttl=%d. Refreshing every %d seconds instead.",
+                    args.gemini_cache_ttl,
+                    refresh_interval_seconds,
+                )
+            else:
+                logging.info(
+                    "Gemini cache TTL autoupdate enabled; refreshing every %d seconds "
+                    "(~1 hour before cache expiry).",
+                    refresh_interval_seconds,
+                )
+            next_cache_ttl_refresh_epoch = time.time() + float(refresh_interval_seconds)
+
+            def maybe_refresh_gemini_cache_ttl() -> None:
+                nonlocal next_cache_ttl_refresh_epoch
+                nonlocal cache_ttl_autoupdate_attempts
+                nonlocal cache_ttl_autoupdate_successes
+                if created_cache_name is None:
+                    return
+                now = time.time()
+                if now < next_cache_ttl_refresh_epoch:
+                    return
+
+                cache_ttl_autoupdate_attempts += 1
+                update_api_key = api_key
+                if access_token_provider is not None and _is_vertex_gemini_caching_target(api_base_url):
+                    try:
+                        update_api_key = access_token_provider.get_token(force_refresh=False)
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning(
+                            "Unable to refresh access token for Gemini cache TTL autoupdate; "
+                            "using previously configured token. Details: %s",
+                            exc,
+                        )
+                try:
+                    update_gemini_cached_content_ttl(
+                        update_api_key,
+                        api_base_url,
+                        created_cache_name,
+                        args.gemini_cache_ttl,
+                    )
+                except RuntimeError as exc:
+                    retry_seconds = min(300, max(30, refresh_interval_seconds // 6))
+                    next_cache_ttl_refresh_epoch = now + float(retry_seconds)
+                    logging.warning(
+                        "Failed to auto-refresh Gemini cache TTL for %s: %s. "
+                        "Will retry in %d seconds.",
+                        created_cache_name,
+                        exc,
+                        retry_seconds,
+                    )
+                    return
+
+                cache_ttl_autoupdate_successes += 1
+                next_cache_ttl_refresh_epoch = time.time() + float(refresh_interval_seconds)
+                logging.info(
+                    "Auto-refreshed Gemini cache TTL for %s (update %d).",
+                    created_cache_name,
+                    cache_ttl_autoupdate_successes,
+                )
+
+            before_example_hook = maybe_refresh_gemini_cache_ttl
 
     connector = OpenAIConnector(
         api_key=api_key,
@@ -5582,6 +5751,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 label_map=label_map,
                 resolved_api_base_url=api_base_url,
                 validator_client=validator_client,
+                before_example_hook=before_example_hook,
             )
             aggregate_prompt_tokens += prompt_tokens
             aggregate_completion_tokens += completion_tokens
@@ -5601,6 +5771,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     finally:
         if validator_client is not None:
             validator_client.close()
+        if cache_ttl_autoupdate_attempts > 0:
+            logging.info(
+                "Gemini cache TTL autoupdate summary -> attempts: %d, successes: %d.",
+                cache_ttl_autoupdate_attempts,
+                cache_ttl_autoupdate_successes,
+            )
         if created_cache_name is not None:
             if args.keep_gemini_cache:
                 logging.info(

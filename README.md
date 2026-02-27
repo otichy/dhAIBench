@@ -101,6 +101,9 @@ Use provider-specific controls when you need tighter control over model "thinkin
 - `--effort {low,medium,high,max}` for Claude-style effort (`effort` in the request payload).
 - `--prompt_cache_key KEY` for OpenAI-style prompt-cache routing (when supported by the provider).
 - `--gemini_cached_content RESOURCE_NAME` for Gemini context caching via `extra_body.google.cached_content` on Gemini OpenAI-compatible endpoints.
+- `--create_gemini_cache` to auto-create a Gemini cache from the system prompt for the run.
+- `--gemini_cache_ttl SECONDS` to control TTL for an auto-created Gemini cache.
+- `--gemini_cache_ttl_autoupdate` (default on) to refresh auto-created Gemini cache TTL during long runs; use `--no-gemini_cache_ttl_autoupdate` to disable.
 - `--requesty_auto_cache` for Requesty auto-caching via `extra_body.requesty.auto_cache`.
 
 These flags are optional and can be omitted to leave model defaults unchanged.
