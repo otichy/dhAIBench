@@ -1488,6 +1488,15 @@ def _gemini_caching_base_url(api_base_url: Optional[str]) -> str:
     return trimmed
 
 
+def _is_google_ai_studio_caching_target(api_base_url: Optional[str]) -> bool:
+    """Return True when api_base_url points to Google AI Studio Gemini endpoints."""
+    if not api_base_url:
+        return False
+    parsed = urllib.parse.urlsplit(api_base_url.rstrip("/"))
+    host = (parsed.netloc or "").strip().lower()
+    return host.endswith("generativelanguage.googleapis.com")
+
+
 def _extract_vertex_project_location_prefix(api_base_url: Optional[str]) -> Optional[str]:
     """Extract Vertex project/location prefix from API base."""
     if not api_base_url:
@@ -1552,6 +1561,26 @@ def _normalize_vertex_cache_model(api_base_url: Optional[str], model: str) -> st
     if normalized_model.startswith("models/"):
         return f"{prefix}/publishers/google/{normalized_model}"
     return f"{prefix}/publishers/google/models/{normalized_model}"
+
+
+def _normalize_google_cache_model(model: str) -> str:
+    """Normalize model name for Google Gemini cache API (expects models/*)."""
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        return normalized_model
+    if normalized_model.startswith(("models/", "tunedModels/")):
+        return normalized_model
+    if "/" in normalized_model:
+        normalized_model = normalized_model.split("/")[-1].strip()
+    if not normalized_model:
+        return normalized_model
+    return f"models/{normalized_model}"
+
+
+def _safe_endpoint_for_error(endpoint: str) -> str:
+    """Return endpoint URL without query params (to avoid leaking API keys)."""
+    parsed = urllib.parse.urlsplit(str(endpoint))
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 def normalize_model_for_provider(provider: str, model: str) -> str:
@@ -1679,6 +1708,7 @@ def create_gemini_cached_content(
     else:
         base = _gemini_caching_base_url(api_base_url)
         endpoint = f"{base}/cachedContents?key={api_key}"
+        model_for_request = _normalize_google_cache_model(model)
     body = json.dumps(
         {
             "model": model_for_request,
@@ -1698,8 +1728,22 @@ def create_gemini_cached_content(
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        safe_endpoint = _safe_endpoint_for_error(endpoint)
+        hint = ""
+        if (
+            exc.code == 404
+            and not _is_vertex_gemini_caching_target(api_base_url)
+            and not _is_google_ai_studio_caching_target(api_base_url)
+        ):
+            hint = (
+                " The configured API base does not look like a direct Google/Vertex "
+                "Gemini endpoint that supports CachedContent creation."
+            )
         raise RuntimeError(
-            f"Gemini CachedContent creation failed: HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+            (
+                "Gemini CachedContent creation failed at "
+                f"{safe_endpoint}: HTTP {exc.code} {exc.reason or ''} {detail}{hint}"
+            ).strip()
         ) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Gemini CachedContent creation failed: {exc}") from exc
@@ -5567,6 +5611,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "(provider=%s, model=%s). Aborting.",
                 provider,
                 args.model,
+            )
+            return 1
+        direct_cache_backend = _is_vertex_gemini_caching_target(
+            api_base_url
+        ) or _is_google_ai_studio_caching_target(api_base_url)
+        if not direct_cache_backend:
+            logging.error(
+                "--create_gemini_cache requires a direct Google/Vertex Gemini endpoint for cache "
+                "creation, but api_base_url=%s. Use --provider google/vertex (or a direct Gemini "
+                "base URL), or disable --create_gemini_cache and rely on provider-specific caching.",
+                api_base_url or "<unset>",
             )
             return 1
         system_for_cache = (args.system_prompt or DEFAULT_SYSTEM_PROMPT).rstrip()
