@@ -60,6 +60,7 @@ python benchmark_agent.py ^
   --prompt_layout compact ^
   --reasoning_effort medium ^
   --request_interval_ms 250 ^
+  --threads 4 ^
   --system_prompt "You are a linguistic classifier..." ^
   --enable_cot ^
   --few_shot_examples 5 ^
@@ -70,6 +71,7 @@ On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
 When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<provider>_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
+When `--threads` is greater than `1`, classification requests run concurrently but output rows are still written in input order, so resume behavior remains unchanged.
 
 ### System Prompts and Encoding
 
@@ -249,6 +251,7 @@ python benchmark_agent.py ^
 ### Relevant CLI flags
 
 - `--request_interval_ms`: minimum delay between outgoing API requests in milliseconds (0 disables pacing).
+- `--threads`: number of concurrent worker threads for classification (default `1` = sequential).
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
 - `--validator_timeout`: per-request validator timeout (seconds).

@@ -23,10 +23,12 @@ import shlex
 import sys
 import time
 import subprocess
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple
@@ -648,6 +650,7 @@ class VertexAccessTokenProvider:
         )
         self._attempted_adc_login = False
         self._warned_static_fallback = False
+        self._lock = threading.Lock()
 
     def _extract_subprocess_error_text(self, exc: subprocess.CalledProcessError) -> str:
         stdout = str(exc.stdout or "").strip()
@@ -710,52 +713,53 @@ class VertexAccessTokenProvider:
         return token
 
     def get_token(self, force_refresh: bool = False) -> str:
-        now = time.time()
-        if not force_refresh and self._token:
-            if self._expires_at_epoch is None:
-                return self._token
-            if now < (self._expires_at_epoch - VERTEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS):
-                return self._token
+        with self._lock:
+            now = time.time()
+            if not force_refresh and self._token:
+                if self._expires_at_epoch is None:
+                    return self._token
+                if now < (self._expires_at_epoch - VERTEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS):
+                    return self._token
 
-        try:
-            return self._refresh_from_command()
-        except subprocess.CalledProcessError as exc:
-            if self._looks_like_missing_adc(exc) and self._attempt_adc_login():
-                try:
-                    return self._refresh_from_command()
-                except Exception:  # noqa: BLE001
-                    pass
-            if self._token:
-                self._expires_at_epoch = None
-                if not self._warned_static_fallback:
-                    logging.warning(
-                        "Unable to refresh Vertex access token automatically (%s). "
-                        "Continuing with the currently configured token.",
-                        exc,
-                    )
-                    self._warned_static_fallback = True
-                return self._token
-            raise RuntimeError(
-                "Unable to obtain a Vertex access token. "
-                "Run `gcloud auth application-default login` and ensure the refresh "
-                f"command works: {self._refresh_command}"
-            ) from exc
-        except Exception as exc:  # noqa: BLE001
-            if self._token:
-                self._expires_at_epoch = None
-                if not self._warned_static_fallback:
-                    logging.warning(
-                        "Unable to refresh Vertex access token automatically (%s). "
-                        "Continuing with the currently configured token.",
-                        exc,
-                    )
-                    self._warned_static_fallback = True
-                return self._token
-            raise RuntimeError(
-                "Unable to obtain a Vertex access token. "
-                "Run `gcloud auth application-default login` and ensure the refresh "
-                f"command works: {self._refresh_command}"
-            ) from exc
+            try:
+                return self._refresh_from_command()
+            except subprocess.CalledProcessError as exc:
+                if self._looks_like_missing_adc(exc) and self._attempt_adc_login():
+                    try:
+                        return self._refresh_from_command()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if self._token:
+                    self._expires_at_epoch = None
+                    if not self._warned_static_fallback:
+                        logging.warning(
+                            "Unable to refresh Vertex access token automatically (%s). "
+                            "Continuing with the currently configured token.",
+                            exc,
+                        )
+                        self._warned_static_fallback = True
+                    return self._token
+                raise RuntimeError(
+                    "Unable to obtain a Vertex access token. "
+                    "Run `gcloud auth application-default login` and ensure the refresh "
+                    f"command works: {self._refresh_command}"
+                ) from exc
+            except Exception as exc:  # noqa: BLE001
+                if self._token:
+                    self._expires_at_epoch = None
+                    if not self._warned_static_fallback:
+                        logging.warning(
+                            "Unable to refresh Vertex access token automatically (%s). "
+                            "Continuing with the currently configured token.",
+                            exc,
+                        )
+                        self._warned_static_fallback = True
+                    return self._token
+                raise RuntimeError(
+                    "Unable to obtain a Vertex access token. "
+                    "Run `gcloud auth application-default login` and ensure the refresh "
+                    f"command works: {self._refresh_command}"
+                ) from exc
 
 
 def extract_json_object(text: str) -> Dict[str, Any]:
@@ -2305,6 +2309,9 @@ class OpenAIConnector:
         self._responses_unsupported_params: Dict[str, set[str]] = {}
         self._logged_vertex_model_normalizations: set[str] = set()
         self._min_request_interval_seconds = max(0, request_interval_ms) / 1000.0
+        self._state_lock = threading.RLock()
+        self._pacing_lock = threading.Lock()
+        self._auth_lock = threading.Lock()
         parsed_timeout: Optional[float] = None
         if request_timeout_seconds is not None:
             try:
@@ -2365,9 +2372,10 @@ class OpenAIConnector:
     def _refresh_access_token_if_needed(self, force_refresh: bool = False) -> None:
         if self._access_token_provider is None:
             return
-        token = self._access_token_provider.get_token(force_refresh=force_refresh)
-        if token != self._current_api_key:
-            self._apply_api_key_to_client(token)
+        with self._auth_lock:
+            token = self._access_token_provider.get_token(force_refresh=force_refresh)
+            if token != self._current_api_key:
+                self._apply_api_key_to_client(token)
 
     def _normalize_model_for_provider(self, model: str) -> str:
         """Normalize provider-specific model aliases into API-accepted identifiers."""
@@ -2378,17 +2386,18 @@ class OpenAIConnector:
         if self._min_request_interval_seconds <= 0:
             return
 
-        now = time.perf_counter()
-        if self._last_request_started_at is not None:
-            elapsed = now - self._last_request_started_at
-            remaining = self._min_request_interval_seconds - elapsed
-            if remaining > 0:
-                logging.debug(
-                    "Rate limit pacing active; sleeping %.3fs before next API request.",
-                    remaining,
-                )
-                time.sleep(remaining)
-        self._last_request_started_at = time.perf_counter()
+        with self._pacing_lock:
+            now = time.perf_counter()
+            if self._last_request_started_at is not None:
+                elapsed = now - self._last_request_started_at
+                remaining = self._min_request_interval_seconds - elapsed
+                if remaining > 0:
+                    logging.debug(
+                        "Rate limit pacing active; sleeping %.3fs before next API request.",
+                        remaining,
+                    )
+                    time.sleep(remaining)
+            self._last_request_started_at = time.perf_counter()
 
     def complete(
         self,
@@ -2414,13 +2423,14 @@ class OpenAIConnector:
         request_model = self._normalize_model_for_provider(model)
         if self._provider == "vertex" and request_model != str(model or "").strip():
             normalization_key = f"{model}=>{request_model}"
-            if normalization_key not in self._logged_vertex_model_normalizations:
-                logging.info(
-                    "Vertex model alias normalized from %s to %s for OpenAPI requests.",
-                    model,
-                    request_model,
-                )
-                self._logged_vertex_model_normalizations.add(normalization_key)
+            with self._state_lock:
+                if normalization_key not in self._logged_vertex_model_normalizations:
+                    logging.info(
+                        "Vertex model alias normalized from %s to %s for OpenAPI requests.",
+                        model,
+                        request_model,
+                    )
+                    self._logged_vertex_model_normalizations.add(normalization_key)
         model_key = request_model.strip().lower()
         normalized_prompt_cache_key = (
             str(prompt_cache_key).strip() if prompt_cache_key is not None else ""
@@ -3118,7 +3128,11 @@ class OpenAIConnector:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
-            for unsupported in self._responses_unsupported_params.get(model_key, set()):
+            with self._state_lock:
+                known_responses_unsupported = set(
+                    self._responses_unsupported_params.get(model_key, set())
+                )
+            for unsupported in known_responses_unsupported:
                 if remove_request_parameter(request_args, unsupported):
                     mark_control_rejected(unsupported, "previously_rejected")
 
@@ -3133,9 +3147,10 @@ class OpenAIConnector:
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
                     if unsupported_param and remove_request_parameter(request_args, unsupported_param):
-                        self._responses_unsupported_params.setdefault(model_key, set()).add(
-                            unsupported_param
-                        )
+                        with self._state_lock:
+                            self._responses_unsupported_params.setdefault(model_key, set()).add(
+                                unsupported_param
+                            )
                         mark_control_rejected(unsupported_param, "api_rejected")
                         logging.info(
                             "Responses API rejected parameter '%s' for model %s; retrying without it.",
@@ -3144,7 +3159,8 @@ class OpenAIConnector:
                         )
                         continue
                     if "logprobs" in request_args:
-                        self._responses_unsupported_params.setdefault(model_key, set()).add("logprobs")
+                        with self._state_lock:
+                            self._responses_unsupported_params.setdefault(model_key, set()).add("logprobs")
                         warn_logprob_retry(exc)
                         request_args.pop("logprobs", None)
                         continue
@@ -3216,7 +3232,9 @@ class OpenAIConnector:
             )
 
         if self.client_type == "chat_v1":
-            if hasattr(self._client, "responses") and model_key in self._chat_incompatible_models:
+            with self._state_lock:
+                chat_incompatible = model_key in self._chat_incompatible_models
+            if hasattr(self._client, "responses") and chat_incompatible:
                 return complete_with_responses_api()
             request_args = {
                 "model": request_model,
@@ -3239,7 +3257,9 @@ class OpenAIConnector:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
-            for unsupported in self._chat_unsupported_params.get(model_key, set()):
+            with self._state_lock:
+                known_chat_unsupported = set(self._chat_unsupported_params.get(model_key, set()))
+            for unsupported in known_chat_unsupported:
                 if remove_request_parameter(request_args, unsupported):
                     mark_control_rejected(unsupported, "previously_rejected")
 
@@ -3251,7 +3271,8 @@ class OpenAIConnector:
                     break
                 except Exception as exc:  # noqa: BLE001
                     if hasattr(self._client, "responses") and should_retry_with_responses(exc):
-                        self._chat_incompatible_models.add(model_key)
+                        with self._state_lock:
+                            self._chat_incompatible_models.add(model_key)
                         logging.info(
                             "Model %s is not chat-completions compatible; retrying with Responses API.",
                             request_model,
@@ -3261,11 +3282,12 @@ class OpenAIConnector:
                     if unsupported_param in {"model", "input", "messages"}:
                         raise
                     if unsupported_param and remove_request_parameter(request_args, unsupported_param):
-                        unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
-                        unsupported_params.add(unsupported_param)
+                        with self._state_lock:
+                            unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
+                            unsupported_params.add(unsupported_param)
+                            if unsupported_param == "logprobs":
+                                unsupported_params.add("top_logprobs")
                         mark_control_rejected(unsupported_param, "api_rejected")
-                        if unsupported_param == "logprobs":
-                            unsupported_params.add("top_logprobs")
                         logging.info(
                             "Chat Completions rejected parameter '%s' for model %s; retrying without it.",
                             unsupported_param,
@@ -3275,9 +3297,10 @@ class OpenAIConnector:
                             request_args.pop("top_logprobs", None)
                         continue
                     if "logprobs" in request_args or "top_logprobs" in request_args:
-                        unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
-                        unsupported_params.add("logprobs")
-                        unsupported_params.add("top_logprobs")
+                        with self._state_lock:
+                            unsupported_params = self._chat_unsupported_params.setdefault(model_key, set())
+                            unsupported_params.add("logprobs")
+                            unsupported_params.add("top_logprobs")
                         warn_logprob_retry(exc)
                         request_args.pop("logprobs", None)
                         request_args.pop("top_logprobs", None)
@@ -4517,6 +4540,7 @@ def process_dataset(
     predictions: Dict[str, Prediction] = {}
     halted_by_quota = False
     few_shot_count = max(0, args.few_shot_examples)
+    worker_threads = max(1, int(getattr(args, "threads", 1) or 1))
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_reported_tokens = 0
@@ -4543,7 +4567,7 @@ def process_dataset(
         )
     elif cache_pad_target_tokens > 0:
         logging.info(
-            "Cache padding target enabled at %d shared-prefix tokens. First successful example will calibrate shared-prefix padding.",
+            "Cache padding target enabled at %d shared-prefix tokens.",
             cache_pad_target_tokens,
         )
 
@@ -4616,6 +4640,14 @@ def process_dataset(
     processed_ids = set(predictions.keys())
     processed_in_input = sum(1 for ex in examples if ex.example_id in processed_ids)
     pending_total = len(examples) - processed_in_input
+    pending_examples: List[Example] = []
+    seen_ids_for_pending = set(processed_ids)
+    for example in examples:
+        if example.example_id in seen_ids_for_pending:
+            continue
+        pending_examples.append(example)
+        seen_ids_for_pending.add(example.example_id)
+    pending_total = len(pending_examples)
     if resume_mode:
         if pending_total <= 0:
             logging.info(
@@ -4630,6 +4662,60 @@ def process_dataset(
                     first_pending.example_id,
                     processed_in_input,
                     pending_total,
+                )
+    if (
+        worker_threads > 1
+        and cache_pad_target_tokens > 0
+        and cache_padding_calibration_shared_prefix_tokens is None
+        and pending_examples
+    ):
+        calibration_example = pending_examples[0]
+        calibration_few_shot = select_few_shot_examples(
+            examples, calibration_example.example_id, few_shot_count
+        )
+        calibration_artifacts = build_prompt_artifacts(
+            example=calibration_example,
+            system_prompt=args.system_prompt,
+            enable_cot=args.enable_cot,
+            include_explanation=include_explanation,
+            prompt_layout=args.prompt_layout,
+            few_shot_context=calibration_few_shot,
+            cache_padding_text=cache_padding_text,
+            suppress_system_message=bool(args.gemini_cached_content),
+        )
+        shared_prefix_tokens = calibration_artifacts.shared_prefix_tokens_estimate
+        if shared_prefix_tokens is None:
+            if not cache_padding_missing_prefix_warned:
+                logging.warning(
+                    "Shared-prefix token estimate unavailable; unable to pre-calibrate cache padding."
+                )
+                cache_padding_missing_prefix_warned = True
+        else:
+            cache_padding_missing_prefix_warned = False
+            cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
+            cache_padding_calibration_example_id = calibration_example.example_id
+            required_padding_tokens = estimate_required_cache_padding_tokens(
+                shared_prefix_tokens,
+                cache_pad_target_tokens,
+            )
+            if required_padding_tokens > 0:
+                cache_padding_tokens_estimate = required_padding_tokens
+                cache_padding_text = build_cache_padding_text(required_padding_tokens)
+                logging.info(
+                    "Pre-calibrated cache padding from example %s for multithreaded run: shared_prefix_tokens~%d, target=%d, applying +%d padding units.",
+                    calibration_example.example_id,
+                    shared_prefix_tokens,
+                    cache_pad_target_tokens,
+                    cache_padding_tokens_estimate,
+                )
+            else:
+                cache_padding_tokens_estimate = 0
+                cache_padding_text = None
+                logging.info(
+                    "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
+                    calibration_example.example_id,
+                    shared_prefix_tokens,
+                    cache_pad_target_tokens,
                 )
 
     if resume_mode:
@@ -4665,167 +4751,301 @@ def process_dataset(
         if not resume_mode:
             writer.writeheader()
         processed_this_run = 0
-        try:
-            for example in examples:
-                if example.example_id in processed_ids:
-                    continue
-                if before_example_hook is not None:
-                    before_example_hook()
-                processed_this_run += 1
-                logging.info(
-                    "Classifying example %s (%d/%d)",
-                    example.example_id,
-                    processed_this_run,
-                    pending_total,
-                )
-                few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-                padding_active_for_example = bool(cache_padding_text)
-                try:
-                    prediction, attempt_logs = classify_example(
-                        connector=connector,
-                        example=example,
-                        model=args.model,
-                        temperature=args.temperature,
-                        top_p=args.top_p,
-                        top_k=args.top_k,
-                        verbosity=args.verbosity,
-                        service_tier=args.service_tier,
-                        include_logprobs=args.logprobs,
-                        reasoning_effort=args.reasoning_effort,
-                        thinking_level=args.thinking_level,
-                        effort=args.effort,
-                        system_prompt=args.system_prompt,
-                        enable_cot=args.enable_cot,
-                        include_explanation=include_explanation,
-                        prompt_layout=args.prompt_layout,
-                        few_shot_context=few_shot_context,
-                        max_retries=args.max_retries,
-                        retry_delay=args.retry_delay,
-                        validator_client=validator_client,
-                        validator_prompt_max_candidates=args.validator_prompt_max_candidates,
-                        validator_prompt_max_chars=args.validator_prompt_max_chars,
-                        validator_exhausted_policy=args.validator_exhausted_policy,
-                        strict_control_acceptance=args.strict_control_acceptance,
-                        cache_padding_text=cache_padding_text,
-                        cache_padding_tokens_estimate=cache_padding_tokens_estimate,
-                        prompt_cache_key=args.prompt_cache_key,
-                        gemini_cached_content=args.gemini_cached_content,
-                        requesty_auto_cache=args.requesty_auto_cache,
-                    )
-                except ProviderQuotaExceededError as exc:
-                    halted_by_quota = True
-                    logging.error(
-                        "%s",
-                        exc,
-                    )
-                    logging.error(
-                        "Stopping dataset early due to provider quota/rate limit exhaustion. "
-                        "Partial outputs were saved and can be resumed later."
-                    )
-                    break
-                except ProviderEmptyResponseError as exc:
-                    halted_by_quota = True
-                    logging.error(
-                        "%s",
-                        exc,
-                    )
-                    logging.error(
-                        "Stopping dataset early due to repeated empty model responses. "
-                        "Partial outputs were saved and can be resumed later."
-                    )
-                    break
-                predictions[example.example_id] = prediction
-                if padding_active_for_example:
-                    cache_padding_applied_examples += 1
-                if prediction.prompt_tokens is not None:
-                    total_prompt_tokens += prediction.prompt_tokens
-                if prediction.completion_tokens is not None:
-                    total_completion_tokens += prediction.completion_tokens
-                if prediction.total_tokens is not None:
-                    total_reported_tokens += prediction.total_tokens
 
-                if cache_pad_target_tokens > 0:
-                    if cache_padding_calibration_shared_prefix_tokens is None:
-                        shared_prefix_tokens = prediction.shared_prefix_tokens_estimate
-                        if shared_prefix_tokens is None:
-                            if not cache_padding_missing_prefix_warned:
-                                logging.warning(
-                                    "Shared-prefix token estimate unavailable; waiting to calibrate cache padding."
-                                )
-                                cache_padding_missing_prefix_warned = True
+        def classify_single_example(
+            example: Example,
+            progress_index: int,
+        ) -> Tuple[Prediction, List[Dict[str, Any]], bool]:
+            if before_example_hook is not None:
+                before_example_hook()
+            logging.info(
+                "Classifying example %s (%d/%d)",
+                example.example_id,
+                progress_index,
+                pending_total,
+            )
+            few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+            padding_text_for_example = cache_padding_text
+            padding_tokens_for_example = cache_padding_tokens_estimate
+            padding_active_for_example = bool(padding_text_for_example)
+            prediction, attempt_logs = classify_example(
+                connector=connector,
+                example=example,
+                model=args.model,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=args.top_k,
+                verbosity=args.verbosity,
+                service_tier=args.service_tier,
+                include_logprobs=args.logprobs,
+                reasoning_effort=args.reasoning_effort,
+                thinking_level=args.thinking_level,
+                effort=args.effort,
+                system_prompt=args.system_prompt,
+                enable_cot=args.enable_cot,
+                include_explanation=include_explanation,
+                prompt_layout=args.prompt_layout,
+                few_shot_context=few_shot_context,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+                validator_client=validator_client,
+                validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                validator_prompt_max_chars=args.validator_prompt_max_chars,
+                validator_exhausted_policy=args.validator_exhausted_policy,
+                strict_control_acceptance=args.strict_control_acceptance,
+                cache_padding_text=padding_text_for_example,
+                cache_padding_tokens_estimate=padding_tokens_for_example,
+                prompt_cache_key=args.prompt_cache_key,
+                gemini_cached_content=args.gemini_cached_content,
+                requesty_auto_cache=args.requesty_auto_cache,
+            )
+            return prediction, attempt_logs, padding_active_for_example
+
+        def commit_prediction(
+            example: Example,
+            prediction: Prediction,
+            attempt_logs: List[Dict[str, Any]],
+            padding_active_for_example: bool,
+        ) -> None:
+            nonlocal total_prompt_tokens
+            nonlocal total_completion_tokens
+            nonlocal total_reported_tokens
+            nonlocal cache_padding_applied_examples
+            nonlocal cache_padding_text
+            nonlocal cache_padding_tokens_estimate
+            nonlocal cache_padding_calibration_shared_prefix_tokens
+            nonlocal cache_padding_calibration_example_id
+            nonlocal cache_padding_missing_prefix_warned
+            predictions[example.example_id] = prediction
+            if padding_active_for_example:
+                cache_padding_applied_examples += 1
+            if prediction.prompt_tokens is not None:
+                total_prompt_tokens += prediction.prompt_tokens
+            if prediction.completion_tokens is not None:
+                total_completion_tokens += prediction.completion_tokens
+            if prediction.total_tokens is not None:
+                total_reported_tokens += prediction.total_tokens
+
+            if cache_pad_target_tokens > 0:
+                if cache_padding_calibration_shared_prefix_tokens is None:
+                    shared_prefix_tokens = prediction.shared_prefix_tokens_estimate
+                    if shared_prefix_tokens is None:
+                        if not cache_padding_missing_prefix_warned:
+                            logging.warning(
+                                "Shared-prefix token estimate unavailable; waiting to calibrate cache padding."
+                            )
+                            cache_padding_missing_prefix_warned = True
+                    else:
+                        cache_padding_missing_prefix_warned = False
+                        cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
+                        cache_padding_calibration_example_id = example.example_id
+                        required_padding_tokens = estimate_required_cache_padding_tokens(
+                            shared_prefix_tokens,
+                            cache_pad_target_tokens,
+                        )
+                        if required_padding_tokens > 0:
+                            cache_padding_tokens_estimate = required_padding_tokens
+                            cache_padding_text = build_cache_padding_text(required_padding_tokens)
+                            logging.info(
+                                "Calibrated cache padding from example %s: shared_prefix_tokens~%d, target=%d, applying +%d padding units to subsequent prompts.",
+                                example.example_id,
+                                shared_prefix_tokens,
+                                cache_pad_target_tokens,
+                                cache_padding_tokens_estimate,
+                            )
                         else:
-                            cache_padding_missing_prefix_warned = False
-                            cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
-                            cache_padding_calibration_example_id = example.example_id
-                            required_padding_tokens = estimate_required_cache_padding_tokens(
+                            cache_padding_tokens_estimate = 0
+                            cache_padding_text = None
+                            logging.info(
+                                "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
+                                example.example_id,
                                 shared_prefix_tokens,
                                 cache_pad_target_tokens,
                             )
-                            if required_padding_tokens > 0:
-                                cache_padding_tokens_estimate = required_padding_tokens
-                                cache_padding_text = build_cache_padding_text(required_padding_tokens)
-                                logging.info(
-                                    "Calibrated cache padding from example %s: shared_prefix_tokens~%d, target=%d, applying +%d padding units to subsequent prompts.",
-                                    example.example_id,
-                                    shared_prefix_tokens,
-                                    cache_pad_target_tokens,
-                                    cache_padding_tokens_estimate,
-                                )
-                            else:
-                                cache_padding_tokens_estimate = 0
-                                cache_padding_text = None
-                                logging.info(
-                                    "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
-                                    example.example_id,
-                                    shared_prefix_tokens,
-                                    cache_pad_target_tokens,
-                                )
 
-                log_records.append(
-                    {
-                        "example_id": example.example_id,
-                        "attempts": attempt_logs,
-                        "final_prediction": {
-                            "label": prediction.label,
-                            "confidence": prediction.confidence,
-                            "explanation": prediction.explanation,
-                            "truth": example.truth,
-                            "validator_status": prediction.validator_status,
-                            "validator_reason": prediction.validator_reason,
-                        },
-                    }
-                )
-
-                confidence_str = (
-                    f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
-                )
-                row = {
-                    "ID": example.example_id,
-                    "leftContext": example.left_context,
-                    "node": example.node,
-                    "rightContext": example.right_context,
-                    "info": example.info,
-                    "truth": example.truth or "",
-                    "prediction": prediction.label,
-                    "explanation": prediction.explanation,
-                    "confidence": confidence_str,
-                    "nodeEcho": prediction.node_echo or "",
-                    "spanSource": prediction.span_source or "",
-                    "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
-                    "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
-                    "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
-                    "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
-                    "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
-                    "validatorStatus": prediction.validator_status or "",
-                    "validatorReason": prediction.validator_reason or "",
+            log_records.append(
+                {
+                    "example_id": example.example_id,
+                    "attempts": attempt_logs,
+                    "final_prediction": {
+                        "label": prediction.label,
+                        "confidence": prediction.confidence,
+                        "explanation": prediction.explanation,
+                        "truth": example.truth,
+                        "validator_status": prediction.validator_status,
+                        "validator_reason": prediction.validator_reason,
+                    },
                 }
-                for field in extra_field_order:
-                    row[field] = example.extras.get(field, "")
-                row_to_write = {field: row.get(field, "") for field in writer_fieldnames}
-                writer.writerow(row_to_write)
-                handle.flush()
-                flush_prompt_log()
-                processed_ids.add(example.example_id)
+            )
+
+            confidence_str = (
+                f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
+            )
+            row = {
+                "ID": example.example_id,
+                "leftContext": example.left_context,
+                "node": example.node,
+                "rightContext": example.right_context,
+                "info": example.info,
+                "truth": example.truth or "",
+                "prediction": prediction.label,
+                "explanation": prediction.explanation,
+                "confidence": confidence_str,
+                "nodeEcho": prediction.node_echo or "",
+                "spanSource": prediction.span_source or "",
+                "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
+                "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
+                "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
+                "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
+                "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
+                "validatorStatus": prediction.validator_status or "",
+                "validatorReason": prediction.validator_reason or "",
+            }
+            for field in extra_field_order:
+                row[field] = example.extras.get(field, "")
+            row_to_write = {field: row.get(field, "") for field in writer_fieldnames}
+            writer.writerow(row_to_write)
+            handle.flush()
+            flush_prompt_log()
+            processed_ids.add(example.example_id)
+
+        try:
+            if worker_threads <= 1 or len(pending_examples) <= 1:
+                for example in pending_examples:
+                    processed_this_run += 1
+                    try:
+                        prediction, attempt_logs, padding_active_for_example = classify_single_example(
+                            example,
+                            processed_this_run,
+                        )
+                    except ProviderQuotaExceededError as exc:
+                        halted_by_quota = True
+                        logging.error("%s", exc)
+                        logging.error(
+                            "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                            "Partial outputs were saved and can be resumed later."
+                        )
+                        break
+                    except ProviderEmptyResponseError as exc:
+                        halted_by_quota = True
+                        logging.error("%s", exc)
+                        logging.error(
+                            "Stopping dataset early due to repeated empty model responses. "
+                            "Partial outputs were saved and can be resumed later."
+                        )
+                        break
+                    commit_prediction(
+                        example,
+                        prediction,
+                        attempt_logs,
+                        padding_active_for_example,
+                    )
+            else:
+                thread_count = min(worker_threads, len(pending_examples))
+                max_in_flight = max(thread_count * 2, thread_count)
+                logging.info(
+                    "Classifying %d pending example(s) using %d worker threads (max in flight: %d).",
+                    len(pending_examples),
+                    thread_count,
+                    max_in_flight,
+                )
+                future_to_order: Dict[
+                    Future[Tuple[Prediction, List[Dict[str, Any]], bool]],
+                    int,
+                ] = {}
+                buffered_results: Dict[int, Tuple[Prediction, List[Dict[str, Any]], bool]] = {}
+                next_submit_order = 0
+                next_write_order = 0
+                submitted_total = 0
+                terminal_order: Optional[int] = None
+                terminal_exception: Optional[Exception] = None
+                halt_message_logged = False
+
+                def submit_available(executor: ThreadPoolExecutor) -> None:
+                    nonlocal next_submit_order
+                    nonlocal submitted_total
+                    while (
+                        terminal_order is None
+                        and next_submit_order < len(pending_examples)
+                        and len(future_to_order) < max_in_flight
+                    ):
+                        example = pending_examples[next_submit_order]
+                        submitted_total += 1
+                        future = executor.submit(
+                            classify_single_example,
+                            example,
+                            submitted_total,
+                        )
+                        future_to_order[future] = next_submit_order
+                        next_submit_order += 1
+
+                with ThreadPoolExecutor(max_workers=thread_count) as executor:
+                    submit_available(executor)
+                    while future_to_order:
+                        done, _ = wait(
+                            list(future_to_order.keys()),
+                            return_when=FIRST_COMPLETED,
+                        )
+                        for completed_future in done:
+                            order = future_to_order.pop(completed_future)
+                            try:
+                                buffered_results[order] = completed_future.result()
+                            except ProviderQuotaExceededError as exc:
+                                halted_by_quota = True
+                                if terminal_order is None or order < terminal_order:
+                                    terminal_order = order
+                                    terminal_exception = exc
+                                if not halt_message_logged:
+                                    logging.error("%s", exc)
+                                    logging.error(
+                                        "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                                        "Partial outputs were saved and can be resumed later."
+                                    )
+                                    halt_message_logged = True
+                            except ProviderEmptyResponseError as exc:
+                                halted_by_quota = True
+                                if terminal_order is None or order < terminal_order:
+                                    terminal_order = order
+                                    terminal_exception = exc
+                                if not halt_message_logged:
+                                    logging.error("%s", exc)
+                                    logging.error(
+                                        "Stopping dataset early due to repeated empty model responses. "
+                                        "Partial outputs were saved and can be resumed later."
+                                    )
+                                    halt_message_logged = True
+                            except Exception as exc:  # noqa: BLE001
+                                if terminal_order is None or order < terminal_order:
+                                    terminal_order = order
+                                    terminal_exception = exc
+
+                        if terminal_order is not None:
+                            for future, order in list(future_to_order.items()):
+                                if order >= terminal_order and future.cancel():
+                                    future_to_order.pop(future)
+                            for order in list(buffered_results.keys()):
+                                if order >= terminal_order:
+                                    buffered_results.pop(order, None)
+
+                        while next_write_order in buffered_results:
+                            prediction, attempt_logs, padding_active_for_example = buffered_results.pop(
+                                next_write_order
+                            )
+                            example = pending_examples[next_write_order]
+                            processed_this_run += 1
+                            commit_prediction(
+                                example,
+                                prediction,
+                                attempt_logs,
+                                padding_active_for_example,
+                            )
+                            next_write_order += 1
+
+                        if terminal_order is None:
+                            submit_available(executor)
+
+                if terminal_exception is not None and not halted_by_quota:
+                    raise terminal_exception
         finally:
             flush_prompt_log()
 
@@ -5139,7 +5359,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=0,
         help=(
             "Optional shared-prefix token target for cache padding. "
-            "If >0, the first successful example calibrates shared-prefix length; "
+            "If >0, shared-prefix length is calibrated from early prompt structure; "
             "subsequent prompts are padded toward this shared-prefix target."
         ),
     )
@@ -5296,6 +5516,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help=(
+            "Number of concurrent worker threads used to classify examples. "
+            "Use 1 to keep sequential processing."
+        ),
+    )
+    parser.add_argument(
         "--validator_cmd",
         default=None,
         help=(
@@ -5419,6 +5648,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--gemini_cache_ttl must be > 0.")
     if args.request_timeout_seconds is not None and not math.isfinite(args.request_timeout_seconds):
         parser.error("--request_timeout_seconds must be a finite number.")
+    if args.threads <= 0:
+        parser.error("--threads must be > 0.")
     if args.create_gemini_cache and args.gemini_cached_content:
         parser.error(
             "--create_gemini_cache and --gemini_cached_content are mutually exclusive. "
@@ -5570,6 +5801,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         logging.info("Per-request API timeout set to %.1f seconds.", args.request_timeout_seconds)
     else:
         logging.warning("Per-request API timeout is disabled; requests may block for a long time.")
+    if args.threads > 1:
+        logging.info(
+            "Multithreaded mode enabled with %d threads; output rows remain in input order.",
+            args.threads,
+        )
     if args.prompt_layout != "standard":
         logging.info(
             "Prompt layout set to '%s' (cache-optimized payload mode).",
@@ -5587,8 +5823,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
     if args.prompt_cache_key:
         logging.info("Prompt cache key configured: %s", args.prompt_cache_key)
+        if args.threads > 1:
+            logging.info(
+                "Prompt cache key is shared across threads; stable shared prefixes can reuse cache entries."
+            )
     if args.gemini_cached_content:
         logging.info("Gemini cached content configured: %s", args.gemini_cached_content)
+        if args.threads > 1:
+            logging.info("Gemini cached content resource will be reused across all worker threads.")
         if not (provider == "google" or "gemini" in str(args.model).strip().lower()):
             logging.warning(
                 "--gemini_cached_content is set but target does not look like Gemini; this control may be ignored."
@@ -5598,6 +5840,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Requesty auto cache configured: %s",
             "enabled" if args.requesty_auto_cache else "disabled",
         )
+        if args.threads > 1:
+            logging.info("Requesty auto-cache setting will be applied consistently across threads.")
 
     created_cache_name: Optional[str] = None
     before_example_hook: Optional[Callable[[], None]] = None
@@ -5685,54 +5929,56 @@ def main(argv: Optional[List[str]] = None) -> int:
                     refresh_interval_seconds,
                 )
             next_cache_ttl_refresh_epoch = time.time() + float(refresh_interval_seconds)
+            cache_ttl_lock = threading.Lock()
 
             def maybe_refresh_gemini_cache_ttl() -> None:
                 nonlocal next_cache_ttl_refresh_epoch
                 nonlocal cache_ttl_autoupdate_attempts
                 nonlocal cache_ttl_autoupdate_successes
-                if created_cache_name is None:
-                    return
-                now = time.time()
-                if now < next_cache_ttl_refresh_epoch:
-                    return
+                with cache_ttl_lock:
+                    if created_cache_name is None:
+                        return
+                    now = time.time()
+                    if now < next_cache_ttl_refresh_epoch:
+                        return
 
-                cache_ttl_autoupdate_attempts += 1
-                update_api_key = api_key
-                if access_token_provider is not None and _is_vertex_gemini_caching_target(api_base_url):
+                    cache_ttl_autoupdate_attempts += 1
+                    update_api_key = api_key
+                    if access_token_provider is not None and _is_vertex_gemini_caching_target(api_base_url):
+                        try:
+                            update_api_key = access_token_provider.get_token(force_refresh=False)
+                        except Exception as exc:  # noqa: BLE001
+                            logging.warning(
+                                "Unable to refresh access token for Gemini cache TTL autoupdate; "
+                                "using previously configured token. Details: %s",
+                                exc,
+                            )
                     try:
-                        update_api_key = access_token_provider.get_token(force_refresh=False)
-                    except Exception as exc:  # noqa: BLE001
-                        logging.warning(
-                            "Unable to refresh access token for Gemini cache TTL autoupdate; "
-                            "using previously configured token. Details: %s",
-                            exc,
+                        update_gemini_cached_content_ttl(
+                            update_api_key,
+                            api_base_url,
+                            created_cache_name,
+                            args.gemini_cache_ttl,
                         )
-                try:
-                    update_gemini_cached_content_ttl(
-                        update_api_key,
-                        api_base_url,
-                        created_cache_name,
-                        args.gemini_cache_ttl,
-                    )
-                except RuntimeError as exc:
-                    retry_seconds = min(300, max(30, refresh_interval_seconds // 6))
-                    next_cache_ttl_refresh_epoch = now + float(retry_seconds)
-                    logging.warning(
-                        "Failed to auto-refresh Gemini cache TTL for %s: %s. "
-                        "Will retry in %d seconds.",
-                        created_cache_name,
-                        exc,
-                        retry_seconds,
-                    )
-                    return
+                    except RuntimeError as exc:
+                        retry_seconds = min(300, max(30, refresh_interval_seconds // 6))
+                        next_cache_ttl_refresh_epoch = now + float(retry_seconds)
+                        logging.warning(
+                            "Failed to auto-refresh Gemini cache TTL for %s: %s. "
+                            "Will retry in %d seconds.",
+                            created_cache_name,
+                            exc,
+                            retry_seconds,
+                        )
+                        return
 
-                cache_ttl_autoupdate_successes += 1
-                next_cache_ttl_refresh_epoch = time.time() + float(refresh_interval_seconds)
-                logging.info(
-                    "Auto-refreshed Gemini cache TTL for %s (update %d).",
-                    created_cache_name,
-                    cache_ttl_autoupdate_successes,
-                )
+                    cache_ttl_autoupdate_successes += 1
+                    next_cache_ttl_refresh_epoch = time.time() + float(refresh_interval_seconds)
+                    logging.info(
+                        "Auto-refreshed Gemini cache TTL for %s (update %d).",
+                        created_cache_name,
+                        cache_ttl_autoupdate_successes,
+                    )
 
             before_example_hook = maybe_refresh_gemini_cache_ttl
 

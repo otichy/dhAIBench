@@ -537,6 +537,11 @@
                   <input type="number" min="0" step="1" id="request_interval_ms" name="request_interval_ms" value="0" />
                 </label>
                 <label
+                  >Threads
+                  <input type="number" min="1" step="1" id="threads" name="threads" value="1" />
+                  <span class="hint">Concurrent worker threads for classification. Output order remains aligned with input.</span>
+                </label>
+                <label
                   >OpenAI Service Tier
                   <select id="service_tier" name="service_tier">
                     <option value="standard" selected>Standard (omit)</option>
@@ -837,6 +842,7 @@
                           [--max_retries MAX_RETRIES]
                           [--retry_delay RETRY_DELAY]
                           [--request_interval_ms REQUEST_INTERVAL_MS]
+                          [--threads THREADS]
                           [--request_timeout_seconds REQUEST_TIMEOUT_SECONDS]
                           [--validator_cmd VALIDATOR_CMD]
                           [--validator_args VALIDATOR_ARGS]
@@ -909,9 +915,9 @@ options:
                         improve cache reuse.
   --cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS
                         Optional shared-prefix token target for cache padding.
-                        If >0, the first successful example calibrates
-                        shared-prefix length; subsequent prompts are padded
-                        toward this shared-prefix target.
+                        If >0, shared-prefix length is calibrated from early
+                        prompt structure; subsequent prompts are padded toward
+                        this shared-prefix target.
   --prompt_cache_key PROMPT_CACHE_KEY
                         Optional provider cache-routing key (when supported)
                         to improve prompt-cache hit consistency for stable
@@ -953,6 +959,8 @@ options:
   --request_interval_ms REQUEST_INTERVAL_MS
                         Minimum delay in milliseconds between outgoing API
                         requests. Use 0 to disable request pacing.
+  --threads THREADS     Number of concurrent worker threads used to classify
+                        examples. Use 1 to keep sequential processing.
   --request_timeout_seconds REQUEST_TIMEOUT_SECONDS
                         Per-request timeout in seconds for provider API calls.
                         Use 0 or a negative value to disable timeout.
@@ -1072,6 +1080,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         logprobs: true,
         strict_control_acceptance: false,
         request_interval_ms: "0",
+        threads: "1",
         request_timeout_seconds: "30.0",
         few_shot_examples: "0",
         prompt_layout: "standard",
@@ -1148,6 +1157,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
         top_k: "Optional top-k sampling parameter, if your provider supports it.",
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
+        threads: "Number of concurrent worker threads. Output rows are still written in input order.",
         request_timeout_seconds:
           "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
@@ -1863,6 +1873,11 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const requestIntervalMs = data.get("request_interval_ms")?.trim();
         if (requestIntervalMs && requestIntervalMs !== defaultValues.request_interval_ms) {
           args.push("--request_interval_ms", requestIntervalMs);
+        }
+
+        const threads = data.get("threads")?.toString().trim() ?? "";
+        if (threads && threads !== defaultValues.threads) {
+          args.push("--threads", threads);
         }
 
         const requestTimeoutSeconds = data.get("request_timeout_seconds")?.toString().trim() ?? "";
