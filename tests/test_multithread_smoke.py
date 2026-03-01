@@ -25,6 +25,12 @@ def _read_output_ids(path: str) -> List[str]:
         return [str(row.get("ID", "")) for row in reader]
 
 
+def _read_json_log(path: str) -> List[Dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = ba.json.load(handle)
+    return payload if isinstance(payload, list) else []
+
+
 def _build_args(threads: int) -> argparse.Namespace:
     return argparse.Namespace(
         few_shot_examples=0,
@@ -117,6 +123,7 @@ class MultithreadSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "output.csv")
+            log_path = os.path.splitext(output_path)[0] + ".log"
             _write_input_csv(input_path, ids)
 
             with patch.object(ba, "classify_example", side_effect=stub):
@@ -131,9 +138,25 @@ class MultithreadSmokeTests(unittest.TestCase):
                     resolved_api_base_url=None,
                     validator_client=None,
                     before_example_hook=None,
+                    run_command="python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
+                    run_command_argv=[
+                        "benchmark_agent.py",
+                        "--threads",
+                        "4",
+                        "--input",
+                        "input.csv",
+                        "--model",
+                        "gpt-4o-mini",
+                    ],
                 )
 
             output_ids = _read_output_ids(output_path)
+            log_records = _read_json_log(log_path)
+            run_command_records = [
+                record
+                for record in log_records
+                if isinstance(record, dict) and record.get("record_type") == "run_command"
+            ]
             self.assertFalse(halted)
             self.assertEqual(output_ids, ids)
             self.assertEqual(len(call_records), len(ids))
@@ -143,6 +166,15 @@ class MultithreadSmokeTests(unittest.TestCase):
             )
             self.assertTrue(all(record["gemini_cached_content"] is None for record in call_records))
             self.assertTrue(all(record["requesty_auto_cache"] is True for record in call_records))
+            self.assertEqual(len(run_command_records), 1)
+            self.assertEqual(
+                run_command_records[0].get("reason"),
+                "initial_run",
+            )
+            self.assertEqual(
+                run_command_records[0].get("command"),
+                "python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
+            )
 
     def test_resume_keeps_order_and_processes_only_missing_ids(self) -> None:
         ids = ["id1", "id2", "id3", "id4", "id5"]
@@ -152,6 +184,7 @@ class MultithreadSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "output.csv")
+            log_path = os.path.splitext(output_path)[0] + ".log"
             _write_input_csv(input_path, ids)
 
             with open(output_path, "w", encoding="utf-8", newline="") as handle:
@@ -159,6 +192,22 @@ class MultithreadSmokeTests(unittest.TestCase):
                 writer.writerow(["ID", "prediction"])
                 writer.writerow(["id1", "existing_label_1"])
                 writer.writerow(["id2", "existing_label_2"])
+            with open(log_path, "w", encoding="utf-8") as handle:
+                ba.json.dump(
+                    [
+                        {
+                            "record_type": "run_command",
+                            "timestamp": ba.utc_timestamp(),
+                            "resume_mode": False,
+                            "reason": "initial_run",
+                            "command": "python benchmark_agent.py --threads 1 --input input.csv --model old-model",
+                            "argv": ["benchmark_agent.py", "--threads", "1", "--input", "input.csv", "--model", "old-model"],
+                        }
+                    ],
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
 
             with patch.object(ba, "classify_example", side_effect=stub):
                 _, _, _, halted = ba.process_dataset(
@@ -172,14 +221,39 @@ class MultithreadSmokeTests(unittest.TestCase):
                     resolved_api_base_url=None,
                     validator_client=None,
                     before_example_hook=None,
+                    run_command="python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
+                    run_command_argv=[
+                        "benchmark_agent.py",
+                        "--threads",
+                        "3",
+                        "--input",
+                        "input.csv",
+                        "--model",
+                        "gpt-4o-mini",
+                    ],
                 )
 
             output_ids = _read_output_ids(output_path)
+            log_records = _read_json_log(log_path)
+            run_command_records = [
+                record
+                for record in log_records
+                if isinstance(record, dict) and record.get("record_type") == "run_command"
+            ]
             processed_ids = {record["id"] for record in call_records}
             self.assertFalse(halted)
             self.assertEqual(output_ids, ids)
             self.assertEqual(processed_ids, {"id3", "id4", "id5"})
             self.assertEqual(len(call_records), 3)
+            self.assertEqual(len(run_command_records), 2)
+            self.assertEqual(
+                run_command_records[-1].get("reason"),
+                "resume_command_changed",
+            )
+            self.assertEqual(
+                run_command_records[-1].get("command"),
+                "python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
+            )
 
 
 if __name__ == "__main__":

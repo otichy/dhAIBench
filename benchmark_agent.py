@@ -796,6 +796,24 @@ def split_validator_args(raw_args: Optional[str]) -> List[str]:
         raise ValueError(f"Unable to parse --validator_args: {exc}") from exc
 
 
+def render_cli_command(tokens: List[str]) -> str:
+    """Render argv tokens as a shell-ready command string."""
+    cleaned = [str(token) for token in tokens if str(token) != ""]
+    if not cleaned:
+        return ""
+    if os.name == "nt":
+        return subprocess.list2cmdline(cleaned)
+    return shlex.join(cleaned)
+
+
+def resolve_invocation_tokens(argv: Optional[List[str]]) -> List[str]:
+    """Resolve the command tokens used to invoke this run."""
+    if argv is None:
+        return [str(token) for token in sys.argv]
+    script_token = sys.argv[0] if sys.argv else "benchmark_agent.py"
+    return [str(script_token), *[str(token) for token in argv]]
+
+
 def build_validator_command(validator_cmd: str, raw_validator_args: Optional[str]) -> List[str]:
     """Build argv for the validator process, using sys.executable for .py scripts."""
     cmd = (validator_cmd or "").strip()
@@ -1653,6 +1671,57 @@ def upsert_prompt_log_run_metadata(
             log_records[index] = metadata_record
             return
     log_records.insert(0, metadata_record)
+
+
+def maybe_append_run_command_record(
+    log_records: List[Dict[str, Any]],
+    command_text: Optional[str],
+    command_argv: Optional[List[str]],
+    resume_mode: bool,
+) -> bool:
+    """Append a run_command record if needed.
+
+    Always logs the command for a fresh log. In resume mode, logs only when the
+    command differs from the most recently logged command.
+    """
+    normalized_command = str(command_text or "").strip()
+    if not normalized_command:
+        return False
+
+    previous_commands: List[str] = []
+    for entry in log_records:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("record_type", "")).strip() != "run_command":
+            continue
+        command_value = str(entry.get("command", "")).strip()
+        if command_value:
+            previous_commands.append(command_value)
+
+    should_append = False
+    reason = "initial_run"
+    if not resume_mode:
+        should_append = True
+    elif not previous_commands:
+        should_append = True
+    elif resume_mode and previous_commands[-1] != normalized_command:
+        should_append = True
+        reason = "resume_command_changed"
+
+    if not should_append:
+        return False
+
+    log_records.append(
+        {
+            "record_type": "run_command",
+            "timestamp": utc_timestamp(),
+            "resume_mode": bool(resume_mode),
+            "reason": reason,
+            "command": normalized_command,
+            "argv": [str(token) for token in (command_argv or [])],
+        }
+    )
+    return True
 
 
 def _build_gemini_cache_resource_endpoint_and_headers(
@@ -4521,6 +4590,8 @@ def process_dataset(
     resolved_api_base_url: Optional[str],
     validator_client: Optional[ValidatorClient] = None,
     before_example_hook: Optional[Callable[[], None]] = None,
+    run_command: Optional[str] = None,
+    run_command_argv: Optional[List[str]] = None,
 ) -> Tuple[int, int, int, bool]:
     """Run the full evaluation pipeline for a single dataset."""
     logging.info("Loading dataset from %s", input_path)
@@ -4738,6 +4809,17 @@ def process_dataset(
         gemini_cached_content=args.gemini_cached_content,
     )
     upsert_prompt_log_run_metadata(log_records, run_model_details)
+    command_logged = maybe_append_run_command_record(
+        log_records=log_records,
+        command_text=run_command,
+        command_argv=run_command_argv,
+        resume_mode=resume_mode,
+    )
+    if command_logged:
+        logging.info(
+            "Recorded run command in prompt log%s.",
+            " (resume command changed)" if resume_mode else "",
+        )
 
     def flush_prompt_log() -> None:
         with open(log_path, "w", encoding="utf-8") as log_handle:
@@ -5616,6 +5698,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    invocation_tokens = resolve_invocation_tokens(argv)
+    invocation_command = render_cli_command(invocation_tokens)
     if args.system_prompt_b64:
         decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)
         args.system_prompt = decoded_prompt or ""
@@ -6053,6 +6137,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 resolved_api_base_url=api_base_url,
                 validator_client=validator_client,
                 before_example_hook=before_example_hook,
+                run_command=invocation_command,
+                run_command_argv=invocation_tokens,
             )
             aggregate_prompt_tokens += prompt_tokens
             aggregate_completion_tokens += completion_tokens

@@ -272,6 +272,8 @@ Running the agent creates:
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
 - A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.
+  The prompt log also stores `run_command` records with the CLI invocation at run start; when resuming,
+  a new `run_command` record is appended only if the command changed.
 
 Logs streamed to stdout include prompt snapshots, raw responses, retries, and aggregate token totals to aid debugging.
 
