@@ -3,6 +3,7 @@
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible model for each example, and scores the predictions against gold labels. A companion browser-based configurator helps compose the command-line invocation.
 
 - **End-to-end evaluation**: process one or many input CSVs, merge optional label files, gather predictions, explanations, confidences, and token usage, then export results plus metrics.
+- **Metrics-only recompute**: recompute metrics from existing output CSVs without calling any model API.
 - **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, prompt payload layout, provider-specific reasoning/thinking effort and verbosity levels, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
 - **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
@@ -72,6 +73,30 @@ On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<provider>_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
 When `--threads` is greater than `1`, classification requests run concurrently but output rows are still written in input order, so resume behavior remains unchanged.
+
+### Metrics-Only Recompute (No API Calls)
+
+Use `--metrics_only` when you already have an output CSV with predictions and want to regenerate metrics only.
+
+```bash
+python benchmark_agent.py ^
+  --metrics_only ^
+  --input runs/input_out_openai_gpt-4o-mini_2026-03-01-10-30.csv
+```
+
+Truth labels can come from:
+
+- the `truth` column already present in that output CSV (including manual edits), or
+- an external labels file via `--labels` (overrides matching IDs in the output CSV):
+
+```bash
+python benchmark_agent.py ^
+  --metrics_only ^
+  --input runs/input_out_openai_gpt-4o-mini_2026-03-01-10-30.csv ^
+  --labels data/new_truth_labels.csv
+```
+
+In `--metrics_only` mode, `--output` is ignored; metrics artifacts are written next to each `--input` file.
 
 ### System Prompts and Encoding
 
@@ -252,6 +277,7 @@ python benchmark_agent.py ^
 
 - `--request_interval_ms`: minimum delay between outgoing API requests in milliseconds (0 disables pacing).
 - `--threads`: number of concurrent worker threads for classification (default `1` = sequential).
+- `--metrics_only`: skip API calls and recompute metrics directly from existing output CSV(s) passed via `--input`.
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
 - `--validator_timeout`: per-request validator timeout (seconds).

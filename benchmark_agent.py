@@ -2304,6 +2304,35 @@ def load_existing_output_predictions(
     return existing_fieldnames, predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
 
+def read_truth_labels_from_output(path: str) -> Tuple[Dict[str, Optional[str]], bool]:
+    """Load truth labels from an existing output CSV keyed by ID."""
+    labels: Dict[str, Optional[str]] = {}
+    with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter=";")
+        fieldnames = [name for name in (reader.fieldnames or []) if name]
+        if not fieldnames:
+            return labels, False
+        if "ID" not in fieldnames:
+            raise ValueError(f"Missing required columns in {path}: ['ID']")
+
+        has_truth_column = "truth" in fieldnames
+        for row_index, row in enumerate(reader, start=2):
+            example_id = str(row.get("ID", "")).strip()
+            if not example_id:
+                logging.warning("Ignoring truth row %d in %s because ID is empty.", row_index, path)
+                continue
+
+            truth_text = str(row.get("truth", "")).strip() if has_truth_column else ""
+            if example_id in labels:
+                logging.warning(
+                    "Duplicate ID %s in truth column of %s; keeping last occurrence.",
+                    example_id,
+                    path,
+                )
+            labels[example_id] = truth_text or None
+    return labels, has_truth_column
+
+
 def read_label_file(path: str) -> Dict[str, str]:
     """Load labels from a semicolon-delimited CSV file keyed by ID."""
     labels: Dict[str, str] = {}
@@ -2336,6 +2365,21 @@ def merge_labels(examples: List[Example], labels: Optional[Dict[str, str]]) -> N
             missing.append(example.example_id)
     if missing:
         logging.warning("No label found for %d example(s): %s", len(missing), missing[:5])
+
+
+def extract_model_details_from_log_records(
+    log_records: Iterable[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Extract run-level model metadata from prompt-log records when available."""
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("record_type") != "run_metadata":
+            continue
+        model_details = record.get("model_details")
+        if isinstance(model_details, dict):
+            return model_details
+    return None
 
 
 def select_few_shot_examples(
@@ -5312,6 +5356,174 @@ def process_dataset(
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
 
 
+def process_metrics_only_output(
+    output_path: str,
+    args: argparse.Namespace,
+    calibration_enabled: bool,
+    label_map: Optional[Dict[str, str]],
+) -> Tuple[int, int, int]:
+    """Compute metrics from an already-produced output CSV without model/API calls."""
+    resolved_output = os.path.expanduser(output_path)
+    if not os.path.exists(resolved_output):
+        raise FileNotFoundError(f"Output CSV does not exist: {resolved_output}")
+
+    (
+        existing_fieldnames,
+        predictions,
+        total_prompt_tokens,
+        total_completion_tokens,
+        total_reported_tokens,
+    ) = load_existing_output_predictions(resolved_output)
+    if not existing_fieldnames:
+        raise ValueError(f"Output CSV {resolved_output} has no header.")
+
+    truth_by_id, has_truth_column = read_truth_labels_from_output(resolved_output)
+    if not has_truth_column and not label_map:
+        logging.warning(
+            "Output CSV %s has no truth column and --labels was not provided; metrics will be skipped.",
+            resolved_output,
+        )
+
+    if label_map:
+        overridden = 0
+        labels_not_in_output = 0
+        for example_id, truth in label_map.items():
+            if example_id in predictions:
+                truth_by_id[example_id] = truth
+                overridden += 1
+            else:
+                labels_not_in_output += 1
+        logging.info(
+            "Applied --labels overrides to %d prediction row(s) in %s.",
+            overridden,
+            resolved_output,
+        )
+        if labels_not_in_output:
+            logging.warning(
+                "Label file contains %d ID(s) not present in %s; they were ignored.",
+                labels_not_in_output,
+                resolved_output,
+            )
+
+    missing_truth = [
+        example_id
+        for example_id in predictions
+        if not str(truth_by_id.get(example_id) or "").strip()
+    ]
+    if missing_truth:
+        logging.warning(
+            "Found %d prediction row(s) without ground-truth labels in %s. Metrics will skip them.",
+            len(missing_truth),
+            resolved_output,
+        )
+
+    evaluated_ids = [
+        example_id
+        for example_id in predictions
+        if str(truth_by_id.get(example_id) or "").strip()
+    ]
+    evaluated_truths = [str(truth_by_id[example_id]).strip() for example_id in evaluated_ids]
+    evaluated_preds = [predictions[example_id].label for example_id in evaluated_ids]
+
+    confidences: List[float] = []
+    correctness: List[bool] = []
+    for example_id in evaluated_ids:
+        prediction = predictions.get(example_id)
+        truth = str(truth_by_id.get(example_id) or "").strip()
+        if prediction is None or not truth or prediction.confidence is None:
+            continue
+        correctness.append(prediction.label == truth)
+        confidences.append(prediction.confidence)
+
+    log_path = os.path.splitext(resolved_output)[0] + ".log"
+    log_records = load_existing_prompt_log(log_path)
+    prompt_time_window = compute_prompt_time_window(log_records)
+    configured_controls = {
+        "reasoning_effort": None,
+        "thinking_level": None,
+        "effort": None,
+        "verbosity": None,
+        "prompt_cache_key": None,
+        "gemini_cached_content": None,
+        "requesty_auto_cache": None,
+    }
+    request_control_summary = compute_request_control_summary(log_records, configured_controls)
+    usage_metadata_summary = compute_usage_metadata_summary(log_records)
+    run_model_details = extract_model_details_from_log_records(log_records) or build_run_model_details(
+        provider=getattr(args, "provider", "openai"),
+        requested_model=str(getattr(args, "model", "") or ""),
+        api_base_url=None,
+        api_key_var=getattr(args, "api_key_var", None),
+        api_base_var=getattr(args, "api_base_var", None),
+        gemini_cached_content=None,
+    )
+    cache_padding_summary = {
+        "enabled": False,
+        "target_shared_prefix_tokens": 0,
+        "calibration_shared_prefix_tokens": None,
+        "target_prompt_tokens": 0,
+        "calibration_prompt_tokens": None,
+        "calibration_example_id": None,
+        "applied_padding_tokens_estimate": 0,
+        "examples_with_padding_applied": 0,
+    }
+
+    metrics_output = os.path.splitext(resolved_output)[0] + "_metrics.json"
+    metrics: Dict[str, Any] = {}
+    if evaluated_truths:
+        metrics = compute_metrics(evaluated_truths, evaluated_preds)
+        metrics["model_details"] = run_model_details
+        metrics["prompt_layout"] = None
+        metrics["cache_padding"] = cache_padding_summary
+        metrics.update(prompt_time_window)
+        metrics["request_control_summary"] = request_control_summary
+        metrics["usage_metadata_summary"] = usage_metadata_summary
+        metrics["mode"] = "metrics_only"
+        metrics["source_output_csv"] = os.path.abspath(resolved_output)
+        if label_map and has_truth_column:
+            metrics["truth_source"] = "labels_csv_override_with_output_fallback"
+        elif label_map:
+            metrics["truth_source"] = "labels_csv"
+        elif has_truth_column:
+            metrics["truth_source"] = "output_csv_truth_column"
+        else:
+            metrics["truth_source"] = "none"
+        with open(metrics_output, "w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, indent=2, ensure_ascii=False)
+        logging.info("Saved metrics to %s", metrics_output)
+        confusion = metrics.get("confusion_matrix")
+        labels = metrics.get("labels", [])
+        if confusion:
+            heatmap_path = os.path.splitext(resolved_output)[0] + "_confusion_heatmap.png"
+            generate_confusion_heatmap(confusion, labels, heatmap_path)
+    else:
+        logging.warning("No ground-truth labels available in %s; skipping metric computation.", resolved_output)
+
+    if calibration_enabled and confidences and correctness:
+        calibration_path = os.path.splitext(resolved_output)[0] + "_calibration.png"
+        generate_calibration_plot(confidences, correctness, calibration_path)
+
+    if metrics:
+        accuracy = metrics.get("accuracy", 0.0)
+        logging.info("Overall accuracy: %.2f%%", accuracy * 100)
+        logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
+
+    if total_prompt_tokens or total_completion_tokens or total_reported_tokens:
+        total_token_usage = (
+            total_reported_tokens
+            if total_reported_tokens
+            else total_prompt_tokens + total_completion_tokens
+        )
+        logging.info(
+            "Aggregate token usage -> prompt: %s, completion: %s, total: %s",
+            total_prompt_tokens or "N/A",
+            total_completion_tokens or "N/A",
+            total_token_usage,
+        )
+
+    return total_prompt_tokens, total_completion_tokens, total_reported_tokens
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark an OpenAI model on a linguistic classification dataset."
@@ -5696,6 +5908,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=20,
         help="Maximum number of per-example error rows shown by --summarize-log-errors.",
     )
+    parser.add_argument(
+        "--metrics_only",
+        "--metrics-only",
+        dest="metrics_only",
+        action="store_true",
+        help=(
+            "Skip model/API calls and compute metrics from existing output CSV file(s) "
+            "provided via --input. Truth labels are taken from each output truth column "
+            "and optionally overridden by --labels."
+        ),
+    )
 
     args = parser.parse_args(argv)
     invocation_tokens = resolve_invocation_tokens(argv)
@@ -5713,6 +5936,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.update_models and args.summarize_log_errors:
         parser.error("--summarize-log-errors and --update-models cannot be used together.")
+    if args.metrics_only and args.update_models:
+        parser.error("--metrics_only and --update-models cannot be used together.")
+    if args.metrics_only and args.summarize_log_errors:
+        parser.error("--metrics_only and --summarize-log-errors cannot be used together.")
     if args.update_models:
         return update_model_catalog(args.models_providers, args.models_output)
     if args.summarize_log_errors:
@@ -5724,8 +5951,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.input:
         parser.error("--input is required unless --update-models or --summarize-log-errors is specified.")
 
-    if not args.model:
-        parser.error("--model is required unless --update-models or --summarize-log-errors is specified.")
+    if not args.metrics_only and not args.model:
+        parser.error(
+            "--model is required unless --metrics_only, --update-models, "
+            "or --summarize-log-errors is specified."
+        )
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
     if args.gemini_cache_ttl <= 0:
@@ -5742,6 +5972,60 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     overall_start = time.perf_counter()
+    input_paths = [os.path.expanduser(path) for path in args.input]
+
+    if args.metrics_only:
+        if args.output:
+            logging.warning(
+                "--output is ignored in --metrics_only mode. Metrics are written next to each input output CSV."
+            )
+        if args.create_gemini_cache:
+            logging.warning("--create_gemini_cache is ignored in --metrics_only mode.")
+
+        label_map: Optional[Dict[str, str]] = None
+        if args.labels:
+            logging.info("Loading labels from %s", args.labels)
+            label_map = read_label_file(args.labels)
+
+        calibration_enabled = args.calibration
+        if calibration_enabled and not ensure_calibration_dependencies():
+            logging.warning(
+                "Calibration dependencies unavailable. Calibration plots will be skipped."
+            )
+            calibration_enabled = False
+
+        aggregate_prompt_tokens = 0
+        aggregate_completion_tokens = 0
+        aggregate_reported_tokens = 0
+
+        for resolved_output in input_paths:
+            prompt_tokens, completion_tokens, reported_tokens = process_metrics_only_output(
+                output_path=resolved_output,
+                args=args,
+                calibration_enabled=calibration_enabled,
+                label_map=label_map,
+            )
+            aggregate_prompt_tokens += prompt_tokens
+            aggregate_completion_tokens += completion_tokens
+            aggregate_reported_tokens += reported_tokens
+
+        if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
+            total_token_usage = (
+                aggregate_reported_tokens
+                if aggregate_reported_tokens
+                else aggregate_prompt_tokens + aggregate_completion_tokens
+            )
+            logging.info(
+                "Total token usage across all inputs -> prompt: %s, completion: %s, total: %s",
+                aggregate_prompt_tokens or "N/A",
+                aggregate_completion_tokens or "N/A",
+                total_token_usage,
+            )
+
+        elapsed_seconds = time.perf_counter() - overall_start
+        logging.info("Total runtime: %.2f seconds", elapsed_seconds)
+        return 0
+
     env_map = parse_env_file(".env")
 
     provider = (args.provider or "openai").lower()
@@ -5860,7 +6144,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             api_base_url or "default base URL",
         )
 
-    input_paths = [os.path.expanduser(path) for path in args.input]
     multiple_inputs = len(input_paths) > 1
     timestamp_tag = datetime.now().strftime("%Y-%m-%d-%H-%M")
 

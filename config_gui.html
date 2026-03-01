@@ -694,6 +694,10 @@
                   >Labels CSV Path
                   <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
                 </label>
+                <label class="inline">
+                  <input type="checkbox" id="metrics_only" name="metrics_only" />
+                  <span>Metrics-only mode (reuse existing output CSV in <code>--input</code>)</span>
+                </label>
                 <label
                   >Request Timeout (seconds)
                   <input
@@ -853,6 +857,7 @@
                           [--validator_debug] [--log_level LOG_LEVEL]
                           [--update-models] [--models-output MODELS_OUTPUT]
                           [--models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]]
+                          [--metrics_only]
 
 Benchmark an OpenAI model on a linguistic classification dataset.
 
@@ -868,6 +873,9 @@ options:
                         already exists, the run resumes from the first ID not
                         present in that file.
   --model MODEL         Model name (e.g., gpt-4-turbo).
+  --metrics_only, --metrics-only
+                        Skip model/API calls and compute metrics from existing
+                        output CSV file(s) provided via --input.
   --temperature TEMPERATURE
                         Sampling temperature. Omit to let the provider/model
                         use its default.
@@ -1108,6 +1116,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         validator_prompt_max_chars: "8000",
         validator_exhausted_policy: "accept_blank_confidence",
         validator_debug: false,
+        metrics_only: false,
       };
 
       const providerDefaults = {
@@ -1194,6 +1203,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         keep_gemini_cache:
           "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
+        metrics_only:
+          "Skip API calls and only recompute metrics from existing output CSVs listed in input_path. Truth labels come from output truth column and can be overridden via labels_path.",
         output_path: "Optional output CSV file path, or output directory when running multiple inputs. Set an existing output file to resume.",
         api_key_var: "Environment variable that stores the API key or access token used for this run.",
         api_base_var: "Environment variable containing the provider base URL.",
@@ -1813,6 +1824,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       function buildCommand() {
         const data = new FormData(form);
         const args = ["python", "benchmark_agent.py"];
+        const metricsOnly = Boolean(data.get("metrics_only"));
 
         const inputRaw = (data.get("input_path") ?? "").toString();
         const inputPaths = inputRaw
@@ -1961,6 +1973,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const labelsPath = data.get("labels_path")?.trim();
         if (labelsPath) {
           args.push("--labels", shellQuote(labelsPath));
+        }
+
+        if (metricsOnly) {
+          args.push("--metrics_only");
         }
 
         const rawSystemPrompt = data.get("system_prompt");
