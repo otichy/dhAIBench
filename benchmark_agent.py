@@ -5234,32 +5234,41 @@ def process_dataset(
         "examples_with_padding_applied": cache_padding_applied_examples,
     }
 
-    metrics: Dict[str, Any] = {}
+    metrics: Dict[str, Any] = {
+        "model_details": run_model_details,
+        "prompt_layout": args.prompt_layout,
+        "cache_padding": cache_padding_summary,
+        "request_control_summary": request_control_summary,
+        "usage_metadata_summary": usage_metadata_summary,
+        "truth_label_count": len(evaluated_truths),
+        "prediction_count": len(predictions),
+        "evaluated_example_count": len(evaluated_truths),
+    }
+    metrics.update(prompt_time_window)
     if evaluated_truths:
-        metrics = compute_metrics(evaluated_truths, evaluated_preds)
-        metrics["model_details"] = run_model_details
-        metrics["prompt_layout"] = args.prompt_layout
-        metrics["cache_padding"] = cache_padding_summary
-        metrics.update(prompt_time_window)
-        metrics["request_control_summary"] = request_control_summary
-        metrics["usage_metadata_summary"] = usage_metadata_summary
-        with open(metrics_output, "w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2, ensure_ascii=False)
-        logging.info("Saved metrics to %s", metrics_output)
-        if metrics.get("overall_time_seconds") is not None:
-            logging.info(
-                "Prompt window runtime: %.2f seconds (%s -> %s)",
-                metrics["overall_time_seconds"],
-                metrics["first_prompt_timestamp"],
-                metrics["last_prompt_timestamp"],
-            )
-        confusion = metrics.get("confusion_matrix")
-        labels = metrics.get("labels", [])
-        if confusion:
-            heatmap_path = os.path.splitext(output_path)[0] + "_confusion_heatmap.png"
-            generate_confusion_heatmap(confusion, labels, heatmap_path)
+        metrics.update(compute_metrics(evaluated_truths, evaluated_preds))
+        metrics["label_metrics_available"] = True
     else:
-        logging.warning("No ground-truth labels available; skipping metric computation.")
+        metrics["label_metrics_available"] = False
+        metrics["label_metrics_reason"] = "no_ground_truth_labels"
+        logging.warning("No ground-truth labels available; skipping label-based metric computation.")
+
+    with open(metrics_output, "w", encoding="utf-8") as handle:
+        json.dump(metrics, handle, indent=2, ensure_ascii=False)
+    logging.info("Saved metrics to %s", metrics_output)
+
+    if metrics.get("overall_time_seconds") is not None:
+        logging.info(
+            "Prompt window runtime: %.2f seconds (%s -> %s)",
+            metrics["overall_time_seconds"],
+            metrics["first_prompt_timestamp"],
+            metrics["last_prompt_timestamp"],
+        )
+    confusion = metrics.get("confusion_matrix")
+    labels = metrics.get("labels", [])
+    if confusion:
+        heatmap_path = os.path.splitext(output_path)[0] + "_confusion_heatmap.png"
+        generate_confusion_heatmap(confusion, labels, heatmap_path)
 
     configured_controls_non_null = request_control_summary.get("configured", {})
     if configured_controls_non_null:
@@ -5325,7 +5334,7 @@ def process_dataset(
         calibration_path = os.path.splitext(output_path)[0] + "_calibration.png"
         generate_calibration_plot(confidences, correctness, calibration_path)
 
-    if metrics:
+    if "accuracy" in metrics:
         accuracy = metrics.get("accuracy", 0.0)
         logging.info("Overall accuracy: %.2f%%", accuracy * 100)
         logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
@@ -5469,41 +5478,53 @@ def process_metrics_only_output(
     }
 
     metrics_output = os.path.splitext(resolved_output)[0] + "_metrics.json"
-    metrics: Dict[str, Any] = {}
-    if evaluated_truths:
-        metrics = compute_metrics(evaluated_truths, evaluated_preds)
-        metrics["model_details"] = run_model_details
-        metrics["prompt_layout"] = None
-        metrics["cache_padding"] = cache_padding_summary
-        metrics.update(prompt_time_window)
-        metrics["request_control_summary"] = request_control_summary
-        metrics["usage_metadata_summary"] = usage_metadata_summary
-        metrics["mode"] = "metrics_only"
-        metrics["source_output_csv"] = os.path.abspath(resolved_output)
-        if label_map and has_truth_column:
-            metrics["truth_source"] = "labels_csv_override_with_output_fallback"
-        elif label_map:
-            metrics["truth_source"] = "labels_csv"
-        elif has_truth_column:
-            metrics["truth_source"] = "output_csv_truth_column"
-        else:
-            metrics["truth_source"] = "none"
-        with open(metrics_output, "w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2, ensure_ascii=False)
-        logging.info("Saved metrics to %s", metrics_output)
-        confusion = metrics.get("confusion_matrix")
-        labels = metrics.get("labels", [])
-        if confusion:
-            heatmap_path = os.path.splitext(resolved_output)[0] + "_confusion_heatmap.png"
-            generate_confusion_heatmap(confusion, labels, heatmap_path)
+    metrics: Dict[str, Any] = {
+        "model_details": run_model_details,
+        "prompt_layout": None,
+        "cache_padding": cache_padding_summary,
+        "request_control_summary": request_control_summary,
+        "usage_metadata_summary": usage_metadata_summary,
+        "mode": "metrics_only",
+        "source_output_csv": os.path.abspath(resolved_output),
+        "truth_label_count": len(evaluated_truths),
+        "prediction_count": len(predictions),
+        "evaluated_example_count": len(evaluated_truths),
+    }
+    metrics.update(prompt_time_window)
+    if label_map and has_truth_column:
+        metrics["truth_source"] = "labels_csv_override_with_output_fallback"
+    elif label_map:
+        metrics["truth_source"] = "labels_csv"
+    elif has_truth_column:
+        metrics["truth_source"] = "output_csv_truth_column"
     else:
-        logging.warning("No ground-truth labels available in %s; skipping metric computation.", resolved_output)
+        metrics["truth_source"] = "none"
+
+    if evaluated_truths:
+        metrics.update(compute_metrics(evaluated_truths, evaluated_preds))
+        metrics["label_metrics_available"] = True
+    else:
+        metrics["label_metrics_available"] = False
+        metrics["label_metrics_reason"] = "no_ground_truth_labels"
+        logging.warning(
+            "No ground-truth labels available in %s; skipping label-based metric computation.",
+            resolved_output,
+        )
+
+    with open(metrics_output, "w", encoding="utf-8") as handle:
+        json.dump(metrics, handle, indent=2, ensure_ascii=False)
+    logging.info("Saved metrics to %s", metrics_output)
+    confusion = metrics.get("confusion_matrix")
+    labels = metrics.get("labels", [])
+    if confusion:
+        heatmap_path = os.path.splitext(resolved_output)[0] + "_confusion_heatmap.png"
+        generate_confusion_heatmap(confusion, labels, heatmap_path)
 
     if calibration_enabled and confidences and correctness:
         calibration_path = os.path.splitext(resolved_output)[0] + "_calibration.png"
         generate_calibration_plot(confidences, correctness, calibration_path)
 
-    if metrics:
+    if "accuracy" in metrics:
         accuracy = metrics.get("accuracy", 0.0)
         logging.info("Overall accuracy: %.2f%%", accuracy * 100)
         logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))

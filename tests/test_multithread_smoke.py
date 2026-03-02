@@ -124,6 +124,7 @@ class MultithreadSmokeTests(unittest.TestCase):
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "output.csv")
             log_path = os.path.splitext(output_path)[0] + ".log"
+            metrics_path = os.path.splitext(output_path)[0] + "_metrics.json"
             _write_input_csv(input_path, ids)
 
             with patch.object(ba, "classify_example", side_effect=stub):
@@ -167,6 +168,13 @@ class MultithreadSmokeTests(unittest.TestCase):
             self.assertTrue(all(record["gemini_cached_content"] is None for record in call_records))
             self.assertTrue(all(record["requesty_auto_cache"] is True for record in call_records))
             self.assertEqual(len(run_command_records), 1)
+            self.assertTrue(os.path.exists(metrics_path))
+            with open(metrics_path, "r", encoding="utf-8") as handle:
+                metrics_payload = ba.json.load(handle)
+            self.assertFalse(metrics_payload.get("label_metrics_available", True))
+            self.assertNotIn("accuracy", metrics_payload)
+            self.assertEqual(metrics_payload.get("prediction_count"), len(ids))
+            self.assertEqual(metrics_payload.get("truth_label_count"), 0)
             self.assertEqual(
                 run_command_records[0].get("reason"),
                 "initial_run",

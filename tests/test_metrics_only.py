@@ -27,6 +27,40 @@ def _write_labels_csv(path: str, rows: list[dict[str, str]]) -> None:
 
 
 class MetricsOnlyTests(unittest.TestCase):
+    def test_metrics_only_writes_run_metrics_without_truth_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_csv = os.path.join(tmpdir, "existing_output.csv")
+            metrics_json = os.path.splitext(output_csv)[0] + "_metrics.json"
+            with open(output_csv, "w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["ID", "prediction", "confidence"],
+                    delimiter=";",
+                )
+                writer.writeheader()
+                writer.writerow({"ID": "1", "prediction": "NOUN", "confidence": "0.9"})
+                writer.writerow({"ID": "2", "prediction": "VERB", "confidence": "0.6"})
+
+            with patch.object(ba, "generate_confusion_heatmap", return_value=None):
+                exit_code = ba.main(
+                    [
+                        "--metrics_only",
+                        "--input",
+                        output_csv,
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(os.path.exists(metrics_json))
+            with open(metrics_json, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            self.assertEqual(payload.get("mode"), "metrics_only")
+            self.assertEqual(payload.get("truth_source"), "none")
+            self.assertFalse(payload.get("label_metrics_available", True))
+            self.assertNotIn("accuracy", payload)
+            self.assertEqual(payload.get("prediction_count"), 2)
+            self.assertEqual(payload.get("truth_label_count"), 0)
+
     def test_metrics_only_uses_truth_column_from_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_csv = os.path.join(tmpdir, "existing_output.csv")
