@@ -26,9 +26,7 @@ def _read_output_ids(path: str) -> List[str]:
 
 
 def _read_json_log(path: str) -> List[Dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as handle:
-        payload = ba.json.load(handle)
-    return payload if isinstance(payload, list) else []
+    return list(ba.iter_prompt_log_records(path))
 
 
 def _build_args(threads: int) -> argparse.Namespace:

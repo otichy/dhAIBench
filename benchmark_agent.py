@@ -20,6 +20,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import sys
 import time
 import subprocess
@@ -31,7 +32,7 @@ from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Tuple
 
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
@@ -59,6 +60,11 @@ VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND = "gcloud auth application-default print-acc
 VERTEX_DEFAULT_ACCESS_TOKEN_REFRESH_SECONDS = 3300
 VERTEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300
 VERTEX_DEFAULT_ADC_LOGIN_COMMAND = "gcloud auth application-default login"
+PROMPT_LOG_DETAIL_FULL = "full"
+PROMPT_LOG_DETAIL_COMPACT = "compact"
+DEFAULT_PROMPT_LOG_DETAIL = PROMPT_LOG_DETAIL_FULL
+DEFAULT_FLUSH_ROWS = 100
+DEFAULT_FLUSH_SECONDS = 2.0
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -1656,72 +1662,143 @@ def build_run_model_details(
     return details
 
 
-def upsert_prompt_log_run_metadata(
-    log_records: List[Dict[str, Any]],
-    model_details: Dict[str, Any],
-) -> None:
-    """Insert or update a run-metadata record in the prompt log list."""
-    metadata_record = {
+def build_prompt_log_run_metadata_record(model_details: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run-metadata record written to the prompt log."""
+    return {
         "record_type": "run_metadata",
         "timestamp": utc_timestamp(),
         "model_details": model_details,
     }
-    for index, entry in enumerate(log_records):
-        if isinstance(entry, dict) and entry.get("record_type") == "run_metadata":
-            log_records[index] = metadata_record
-            return
-    log_records.insert(0, metadata_record)
 
 
-def maybe_append_run_command_record(
-    log_records: List[Dict[str, Any]],
+def build_run_command_record(
     command_text: Optional[str],
     command_argv: Optional[List[str]],
     resume_mode: bool,
-) -> bool:
-    """Append a run_command record if needed.
+    reason: str,
+) -> Dict[str, Any]:
+    """Build a run-command record written to the prompt log."""
+    return {
+        "record_type": "run_command",
+        "timestamp": utc_timestamp(),
+        "resume_mode": bool(resume_mode),
+        "reason": reason,
+        "command": str(command_text or "").strip(),
+        "argv": [str(token) for token in (command_argv or [])],
+    }
 
-    Always logs the command for a fresh log. In resume mode, logs only when the
-    command differs from the most recently logged command.
-    """
-    normalized_command = str(command_text or "").strip()
-    if not normalized_command:
-        return False
 
-    previous_commands: List[str] = []
-    for entry in log_records:
-        if not isinstance(entry, dict):
-            continue
-        if str(entry.get("record_type", "")).strip() != "run_command":
-            continue
-        command_value = str(entry.get("command", "")).strip()
-        if command_value:
-            previous_commands.append(command_value)
+def normalize_prompt_log_detail(value: Optional[str]) -> str:
+    """Normalize prompt-log detail mode."""
+    normalized = str(value or DEFAULT_PROMPT_LOG_DETAIL).strip().lower()
+    if normalized not in {PROMPT_LOG_DETAIL_FULL, PROMPT_LOG_DETAIL_COMPACT}:
+        return DEFAULT_PROMPT_LOG_DETAIL
+    return normalized
 
-    should_append = False
-    reason = "initial_run"
-    if not resume_mode:
-        should_append = True
-    elif not previous_commands:
-        should_append = True
-    elif resume_mode and previous_commands[-1] != normalized_command:
-        should_append = True
-        reason = "resume_command_changed"
 
-    if not should_append:
-        return False
+class PromptLogWriter:
+    """Append-only NDJSON writer for prompt logs with batched flushing."""
 
-    log_records.append(
-        {
-            "record_type": "run_command",
-            "timestamp": utc_timestamp(),
-            "resume_mode": bool(resume_mode),
-            "reason": reason,
-            "command": normalized_command,
-            "argv": [str(token) for token in (command_argv or [])],
-        }
-    )
-    return True
+    def __init__(
+        self,
+        path: str,
+        flush_rows: int = DEFAULT_FLUSH_ROWS,
+        flush_seconds: float = DEFAULT_FLUSH_SECONDS,
+    ) -> None:
+        self.path = os.path.expanduser(path)
+        self.flush_rows = max(1, int(flush_rows))
+        self.flush_seconds = max(0.0, float(flush_seconds))
+        self._rows_since_flush = 0
+        self._last_flush_at = time.perf_counter()
+        self._handle = open(self.path, "a", encoding="utf-8", newline="\n")
+
+    def write_record(self, record: Dict[str, Any]) -> None:
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        self._handle.write(line + "\n")
+        self._rows_since_flush += 1
+
+    def flush_if_needed(self, force: bool = False) -> bool:
+        now = time.perf_counter()
+        should_flush = force or self._rows_since_flush >= self.flush_rows
+        if not should_flush and self.flush_seconds > 0:
+            should_flush = (now - self._last_flush_at) >= self.flush_seconds
+        if not should_flush:
+            return False
+        self._handle.flush()
+        self._rows_since_flush = 0
+        self._last_flush_at = now
+        return True
+
+    def close(self) -> None:
+        self.flush_if_needed(force=True)
+        self._handle.close()
+
+
+def _summarize_validator_result(validator_result: Any) -> Optional[Dict[str, Any]]:
+    """Produce a compact validator summary for prompt-log compact mode."""
+    if not isinstance(validator_result, dict):
+        return None
+    summary: Dict[str, Any] = {
+        "action": str(validator_result.get("action", "")).strip(),
+        "reason": str(validator_result.get("reason", "")).strip(),
+    }
+    normalized = validator_result.get("normalized")
+    if isinstance(normalized, dict):
+        normalized_label = str(normalized.get("label", "")).strip()
+        if normalized_label:
+            summary["normalized_label"] = normalized_label
+    retry_payload = validator_result.get("retry")
+    if isinstance(retry_payload, dict):
+        allowed_labels = retry_payload.get("allowed_labels")
+        if isinstance(allowed_labels, list):
+            summary["retry_allowed_labels_count"] = len(allowed_labels)
+        retry_instruction = str(retry_payload.get("instruction", "")).strip()
+        if retry_instruction:
+            summary["retry_instruction_preview"] = retry_instruction[:200]
+    return summary
+
+
+def compact_prompt_attempt_log(attempt: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact attempt-log payload without heavy prompt/response text."""
+    compact: Dict[str, Any] = {}
+    for key in (
+        "attempt",
+        "timestamp",
+        "status",
+        "error",
+        "error_type",
+        "error_category",
+        "prompt_padding",
+        "prompt_estimate",
+        "request_controls",
+        "parsed_payload",
+        "validation_error",
+    ):
+        if key in attempt:
+            compact[key] = attempt.get(key)
+
+    response_payload = attempt.get("response")
+    if isinstance(response_payload, dict):
+        compact_response = dict(response_payload)
+        compact_response.pop("text", None)
+        compact["response"] = compact_response
+
+    validator_result = _summarize_validator_result(attempt.get("validator_result"))
+    if validator_result is not None:
+        compact["validator_result"] = validator_result
+
+    return compact
+
+
+def prepare_attempt_logs_for_storage(
+    attempt_logs: List[Dict[str, Any]],
+    prompt_log_detail: str,
+) -> List[Dict[str, Any]]:
+    """Prepare attempt logs for persistence according to selected detail level."""
+    detail = normalize_prompt_log_detail(prompt_log_detail)
+    if detail == PROMPT_LOG_DETAIL_FULL:
+        return attempt_logs
+    return [compact_prompt_attempt_log(attempt) for attempt in attempt_logs if isinstance(attempt, dict)]
 
 
 def _build_gemini_cache_resource_endpoint_and_headers(
@@ -2103,41 +2180,219 @@ def read_examples(path: str) -> Tuple[List[Example], List[str]]:
     return examples, extra_field_order
 
 
-def load_existing_prompt_log(path: str) -> List[Dict[str, Any]]:
-    """Load existing prompt log entries for resume mode."""
+def detect_prompt_log_format(path: str) -> str:
+    """Detect on-disk prompt-log format."""
     if not os.path.exists(path):
-        return []
+        return "missing"
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+            while True:
+                chunk = handle.read(1)
+                if chunk == "":
+                    return "empty"
+                if chunk.isspace():
+                    continue
+                if chunk == "[":
+                    return "json_array"
+                if chunk == "{":
+                    return "ndjson"
+                return "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _load_legacy_prompt_log_records_best_effort(path: str) -> Tuple[List[Dict[str, Any]], bool]:
+    """Best-effort parser for interrupted legacy JSON-array prompt logs.
+
+    Returns (records, truncated) where truncated=True means malformed tail data
+    was encountered and ignored.
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        content = handle.read()
+
+    if not content.strip():
+        return [], False
+
+    length = len(content)
+    index = 0
+    while index < length and content[index].isspace():
+        index += 1
+    if index >= length or content[index] != "[":
+        raise ValueError(f"Legacy prompt log {path} does not start with '['.")
+    index += 1
+
+    decoder = json.JSONDecoder()
+    records: List[Dict[str, Any]] = []
+    truncated = False
+
+    while index < length:
+        while index < length and content[index].isspace():
+            index += 1
+        if index >= length:
+            truncated = True
+            break
+        if content[index] == "]":
+            index += 1
+            break
+        if content[index] == ",":
+            index += 1
+            continue
+
+        try:
+            parsed, next_index = decoder.raw_decode(content, index)
+        except json.JSONDecodeError:
+            truncated = True
+            break
+        index = next_index
+        if isinstance(parsed, dict):
+            records.append(parsed)
+
+    return records, truncated
+
+
+def iter_prompt_log_records(path: str) -> Iterator[Dict[str, Any]]:
+    """Iterate prompt-log records from NDJSON or legacy JSON-array files."""
+    resolved = os.path.expanduser(path)
+    format_name = detect_prompt_log_format(resolved)
+    if format_name in {"missing", "empty"}:
+        return
+    if format_name == "json_array":
+        try:
+            with open(resolved, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if not isinstance(payload, list):
+                raise ValueError(f"Prompt log {resolved} is not a JSON list.")
+            for entry in payload:
+                if isinstance(entry, dict):
+                    yield entry
+        except json.JSONDecodeError as exc:
+            # Corrupted legacy logs can happen on interrupted runs. Recover
+            # what we can from valid prefix records.
+            recovered_records, truncated = _load_legacy_prompt_log_records_best_effort(resolved)
+            if not recovered_records:
+                raise ValueError(
+                    f"Unable to parse legacy prompt log {resolved}: {exc}"
+                ) from exc
+            logging.warning(
+                "Recovered %d record(s) from malformed legacy prompt log %s; malformed tail was ignored.",
+                len(recovered_records),
+                resolved,
+            )
+            for entry in recovered_records:
+                yield entry
+            if not truncated:
+                logging.debug(
+                    "Legacy prompt log recovery for %s succeeded without detecting truncation.",
+                    resolved,
+                )
+        return
+    if format_name == "ndjson":
+        with open(resolved, "r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid NDJSON record in {resolved} at line {line_number}: {exc}"
+                    ) from exc
+                if isinstance(payload, dict):
+                    yield payload
+        return
+    raise ValueError(
+        f"Prompt log {resolved} has an unknown format. Expected NDJSON or legacy JSON array."
+    )
+
+
+def load_existing_prompt_log(path: str) -> List[Dict[str, Any]]:
+    """Load existing prompt-log entries from NDJSON or legacy JSON-array format."""
+    try:
+        return list(iter_prompt_log_records(path))
     except Exception as exc:  # noqa: BLE001
         logging.warning("Unable to parse existing prompt log %s; starting fresh log: %s", path, exc)
         return []
-    if isinstance(payload, list):
-        return payload
-    logging.warning("Prompt log %s is not a JSON list; starting fresh log.", path)
-    return []
+
+
+def get_last_run_command_from_prompt_log(path: str) -> Optional[str]:
+    """Return the latest run-command text stored in prompt log, if available."""
+    last_command: Optional[str] = None
+    for entry in iter_prompt_log_records(path):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("record_type", "")).strip() != "run_command":
+            continue
+        command_value = str(entry.get("command", "")).strip()
+        if command_value:
+            last_command = command_value
+    return last_command
+
+
+def migrate_legacy_prompt_log_to_ndjson(path: str) -> bool:
+    """Migrate legacy JSON-array prompt log to NDJSON in place, with backup."""
+    resolved = os.path.expanduser(path)
+    format_name = detect_prompt_log_format(resolved)
+    if format_name != "json_array":
+        return False
+
+    backup_path = resolved + ".legacy.json"
+    if not os.path.exists(backup_path):
+        shutil.copy2(resolved, backup_path)
+
+    try:
+        with open(resolved, "r", encoding="utf-8") as source_handle:
+            payload = json.load(source_handle)
+        if not isinstance(payload, list):
+            raise RuntimeError(
+                f"Legacy prompt log {resolved} is not a JSON list and cannot be migrated."
+            )
+        records = [entry for entry in payload if isinstance(entry, dict)]
+        truncated = False
+    except json.JSONDecodeError as exc:
+        records, truncated = _load_legacy_prompt_log_records_best_effort(resolved)
+        if not records:
+            raise RuntimeError(
+                f"Legacy prompt log {resolved} is malformed and no recoverable records were found: {exc}"
+            ) from exc
+        logging.warning(
+            "Legacy prompt log %s is malformed (likely interrupted write). "
+            "Recovered %d record(s) and will migrate them to NDJSON; malformed tail will be dropped.",
+            resolved,
+            len(records),
+        )
+
+    tmp_path = resolved + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8", newline="\n") as target_handle:
+        for entry in records:
+            target_handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+    os.replace(tmp_path, resolved)
+    logging.info(
+        "Migrated legacy prompt log JSON array to NDJSON: %s (backup: %s)",
+        resolved,
+        backup_path,
+    )
+    if truncated:
+        logging.warning(
+            "Migration dropped malformed trailing data from %s after recovering valid records.",
+            resolved,
+        )
+    return True
 
 
 def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
-    """Print a compact error summary for a prompt log JSON file."""
+    """Print a compact error summary for a prompt log file (NDJSON or JSON-array)."""
     log_path = os.path.expanduser(path)
     if not os.path.exists(log_path):
         logging.error("Prompt log does not exist: %s", log_path)
         return 1
 
     try:
-        with open(log_path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        records = list(iter_prompt_log_records(log_path))
     except Exception as exc:  # noqa: BLE001
         logging.error("Unable to parse prompt log %s: %s", log_path, exc)
         return 1
 
-    if not isinstance(payload, list):
-        logging.error("Prompt log %s is not a JSON list.", log_path)
-        return 1
-
-    records = payload
     attempts_total = 0
     error_attempts_total = 0
     examples_with_errors = 0
@@ -2371,6 +2626,7 @@ def extract_model_details_from_log_records(
     log_records: Iterable[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     """Extract run-level model metadata from prompt-log records when available."""
+    latest_model_details: Optional[Dict[str, Any]] = None
     for record in log_records:
         if not isinstance(record, dict):
             continue
@@ -2378,8 +2634,8 @@ def extract_model_details_from_log_records(
             continue
         model_details = record.get("model_details")
         if isinstance(model_details, dict):
-            return model_details
-    return None
+            latest_model_details = model_details
+    return latest_model_details
 
 
 def select_few_shot_examples(
@@ -4106,6 +4362,7 @@ def classify_example(
     prompt_cache_key: Optional[str] = None,
     gemini_cached_content: Optional[str] = None,
     requesty_auto_cache: Optional[bool] = None,
+    prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
     prompt_artifacts = build_prompt_artifacts(
@@ -4133,6 +4390,9 @@ def classify_example(
     interaction_logs: List[Dict[str, Any]] = []
     resource_exhausted_retry_step = 0
 
+    detail_mode = normalize_prompt_log_detail(prompt_log_detail)
+    include_full_prompt_log = detail_mode == PROMPT_LOG_DETAIL_FULL
+
     attempt = 0
     while True:
         attempt += 1
@@ -4154,7 +4414,6 @@ def classify_example(
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
             "timestamp": utc_timestamp(),
-            "request": copy.deepcopy(messages),
             "prompt_padding": {
                 "applied": bool(cache_padding_text),
                 "padding_tokens_estimate": int(cache_padding_tokens_estimate)
@@ -4166,6 +4425,8 @@ def classify_example(
                 "variable_tokens_estimate": prompt_artifacts.variable_payload_tokens_estimate,
             },
         }
+        if include_full_prompt_log:
+            log_entry["request"] = copy.deepcopy(messages)
         try:
             result = connector.complete(
                 model=model,
@@ -4224,13 +4485,15 @@ def classify_example(
                         f"{missing_keys}; rejected={result.request_controls_rejected}; "
                         f"sent={result.request_controls_sent}."
                     )
-            log_entry["response"] = {
-                "text": raw,
+            response_log: Dict[str, Any] = {
                 "prompt_tokens": result.prompt_tokens,
                 "completion_tokens": result.completion_tokens,
                 "total_tokens": result.total_tokens,
                 "usage_metadata": result.usage_metadata,
             }
+            if include_full_prompt_log:
+                response_log["text"] = raw
+            log_entry["response"] = response_log
             payload = extract_json_object(raw)
             label = str(payload.get("label", "")).strip()
             if include_explanation:
@@ -4329,14 +4592,20 @@ def classify_example(
                         "raw_response": raw,
                     },
                 }
-                log_entry["validator_request"] = validator_request
+                if include_full_prompt_log:
+                    log_entry["validator_request"] = validator_request
 
                 try:
                     validator_result = validator_client.validate(validator_request)
                 except ValidatorError as exc:
                     raise RuntimeError(f"Validator failed for example {example.example_id}: {exc}") from exc
 
-                log_entry["validator_result"] = validator_result
+                if include_full_prompt_log:
+                    log_entry["validator_result"] = validator_result
+                else:
+                    compact_validator_result = _summarize_validator_result(validator_result)
+                    if compact_validator_result is not None:
+                        log_entry["validator_result"] = compact_validator_result
 
                 action = str(validator_result.get("action", "")).strip().lower()
                 reason = str(validator_result.get("reason", "")).strip()
@@ -4839,10 +5108,25 @@ def process_dataset(
         logging.info("Writing predictions to %s", output_path)
     logging.info("Saving prompt/response log to %s", log_path)
 
-    if resume_mode:
-        log_records = load_existing_prompt_log(log_path)
-    else:
-        log_records = []
+    prompt_log_detail = normalize_prompt_log_detail(
+        str(getattr(args, "prompt_log_detail", DEFAULT_PROMPT_LOG_DETAIL) or DEFAULT_PROMPT_LOG_DETAIL)
+    )
+    flush_rows = max(1, int(getattr(args, "flush_rows", DEFAULT_FLUSH_ROWS) or DEFAULT_FLUSH_ROWS))
+    flush_seconds = max(
+        0.0,
+        float(getattr(args, "flush_seconds", DEFAULT_FLUSH_SECONDS) or DEFAULT_FLUSH_SECONDS),
+    )
+
+    if not resume_mode and os.path.exists(log_path):
+        os.remove(log_path)
+    elif resume_mode and os.path.exists(log_path):
+        try:
+            migrate_legacy_prompt_log_to_ndjson(log_path)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Unable to migrate legacy prompt log to NDJSON for resume mode. "
+                f"Backup (if created) is kept next to the log. Path: {log_path}. Error: {exc}"
+            ) from exc
 
     run_model_details = build_run_model_details(
         provider=args.provider,
@@ -4852,328 +5136,379 @@ def process_dataset(
         api_base_var=args.api_base_var,
         gemini_cached_content=args.gemini_cached_content,
     )
-    upsert_prompt_log_run_metadata(log_records, run_model_details)
-    command_logged = maybe_append_run_command_record(
-        log_records=log_records,
-        command_text=run_command,
-        command_argv=run_command_argv,
-        resume_mode=resume_mode,
-    )
-    if command_logged:
-        logging.info(
-            "Recorded run command in prompt log%s.",
-            " (resume command changed)" if resume_mode else "",
-        )
-
-    def flush_prompt_log() -> None:
-        with open(log_path, "w", encoding="utf-8") as log_handle:
-            json.dump(log_records, log_handle, ensure_ascii=False, indent=2)
-
-    flush_prompt_log()
-
-    file_mode = "a" if resume_mode else "w"
-    with open(output_path, file_mode, encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=writer_fieldnames, delimiter=";")
+    run_metadata_record = build_prompt_log_run_metadata_record(run_model_details)
+    normalized_command = str(run_command or "").strip()
+    command_logged = False
+    command_reason = "initial_run"
+    if normalized_command:
         if not resume_mode:
-            writer.writeheader()
-        processed_this_run = 0
+            command_logged = True
+            command_reason = "initial_run"
+        else:
+            try:
+                last_logged_command = get_last_run_command_from_prompt_log(log_path)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "Unable to read existing prompt log run_command entries for resume mode. "
+                    f"Path: {log_path}. Error: {exc}"
+                ) from exc
+            if not last_logged_command:
+                command_logged = True
+                command_reason = "initial_run"
+            elif last_logged_command != normalized_command:
+                command_logged = True
+                command_reason = "resume_command_changed"
 
-        def classify_single_example(
-            example: Example,
-            progress_index: int,
-        ) -> Tuple[Prediction, List[Dict[str, Any]], bool]:
-            if before_example_hook is not None:
-                before_example_hook()
-            logging.info(
-                "Classifying example %s (%d/%d)",
-                example.example_id,
-                progress_index,
-                pending_total,
-            )
-            few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
-            padding_text_for_example = cache_padding_text
-            padding_tokens_for_example = cache_padding_tokens_estimate
-            padding_active_for_example = bool(padding_text_for_example)
-            prediction, attempt_logs = classify_example(
-                connector=connector,
-                example=example,
-                model=args.model,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                top_k=args.top_k,
-                verbosity=args.verbosity,
-                service_tier=args.service_tier,
-                include_logprobs=args.logprobs,
-                reasoning_effort=args.reasoning_effort,
-                thinking_level=args.thinking_level,
-                effort=args.effort,
-                system_prompt=args.system_prompt,
-                enable_cot=args.enable_cot,
-                include_explanation=include_explanation,
-                prompt_layout=args.prompt_layout,
-                few_shot_context=few_shot_context,
-                max_retries=args.max_retries,
-                retry_delay=args.retry_delay,
-                validator_client=validator_client,
-                validator_prompt_max_candidates=args.validator_prompt_max_candidates,
-                validator_prompt_max_chars=args.validator_prompt_max_chars,
-                validator_exhausted_policy=args.validator_exhausted_policy,
-                strict_control_acceptance=args.strict_control_acceptance,
-                cache_padding_text=padding_text_for_example,
-                cache_padding_tokens_estimate=padding_tokens_for_example,
-                prompt_cache_key=args.prompt_cache_key,
-                gemini_cached_content=args.gemini_cached_content,
-                requesty_auto_cache=args.requesty_auto_cache,
-            )
-            return prediction, attempt_logs, padding_active_for_example
-
-        def commit_prediction(
-            example: Example,
-            prediction: Prediction,
-            attempt_logs: List[Dict[str, Any]],
-            padding_active_for_example: bool,
-        ) -> None:
-            nonlocal total_prompt_tokens
-            nonlocal total_completion_tokens
-            nonlocal total_reported_tokens
-            nonlocal cache_padding_applied_examples
-            nonlocal cache_padding_text
-            nonlocal cache_padding_tokens_estimate
-            nonlocal cache_padding_calibration_shared_prefix_tokens
-            nonlocal cache_padding_calibration_example_id
-            nonlocal cache_padding_missing_prefix_warned
-            predictions[example.example_id] = prediction
-            if padding_active_for_example:
-                cache_padding_applied_examples += 1
-            if prediction.prompt_tokens is not None:
-                total_prompt_tokens += prediction.prompt_tokens
-            if prediction.completion_tokens is not None:
-                total_completion_tokens += prediction.completion_tokens
-            if prediction.total_tokens is not None:
-                total_reported_tokens += prediction.total_tokens
-
-            if cache_pad_target_tokens > 0:
-                if cache_padding_calibration_shared_prefix_tokens is None:
-                    shared_prefix_tokens = prediction.shared_prefix_tokens_estimate
-                    if shared_prefix_tokens is None:
-                        if not cache_padding_missing_prefix_warned:
-                            logging.warning(
-                                "Shared-prefix token estimate unavailable; waiting to calibrate cache padding."
-                            )
-                            cache_padding_missing_prefix_warned = True
-                    else:
-                        cache_padding_missing_prefix_warned = False
-                        cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
-                        cache_padding_calibration_example_id = example.example_id
-                        required_padding_tokens = estimate_required_cache_padding_tokens(
-                            shared_prefix_tokens,
-                            cache_pad_target_tokens,
-                        )
-                        if required_padding_tokens > 0:
-                            cache_padding_tokens_estimate = required_padding_tokens
-                            cache_padding_text = build_cache_padding_text(required_padding_tokens)
-                            logging.info(
-                                "Calibrated cache padding from example %s: shared_prefix_tokens~%d, target=%d, applying +%d padding units to subsequent prompts.",
-                                example.example_id,
-                                shared_prefix_tokens,
-                                cache_pad_target_tokens,
-                                cache_padding_tokens_estimate,
-                            )
-                        else:
-                            cache_padding_tokens_estimate = 0
-                            cache_padding_text = None
-                            logging.info(
-                                "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
-                                example.example_id,
-                                shared_prefix_tokens,
-                                cache_pad_target_tokens,
-                            )
-
-            log_records.append(
-                {
-                    "example_id": example.example_id,
-                    "attempts": attempt_logs,
-                    "final_prediction": {
-                        "label": prediction.label,
-                        "confidence": prediction.confidence,
-                        "explanation": prediction.explanation,
-                        "truth": example.truth,
-                        "validator_status": prediction.validator_status,
-                        "validator_reason": prediction.validator_reason,
-                    },
-                }
-            )
-
-            confidence_str = (
-                f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
-            )
-            row = {
-                "ID": example.example_id,
-                "leftContext": example.left_context,
-                "node": example.node,
-                "rightContext": example.right_context,
-                "info": example.info,
-                "truth": example.truth or "",
-                "prediction": prediction.label,
-                "explanation": prediction.explanation,
-                "confidence": confidence_str,
-                "nodeEcho": prediction.node_echo or "",
-                "spanSource": prediction.span_source or "",
-                "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
-                "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
-                "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
-                "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
-                "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
-                "validatorStatus": prediction.validator_status or "",
-                "validatorReason": prediction.validator_reason or "",
-            }
-            for field in extra_field_order:
-                row[field] = example.extras.get(field, "")
-            row_to_write = {field: row.get(field, "") for field in writer_fieldnames}
-            writer.writerow(row_to_write)
-            handle.flush()
-            flush_prompt_log()
-            processed_ids.add(example.example_id)
-
-        try:
-            if worker_threads <= 1 or len(pending_examples) <= 1:
-                for example in pending_examples:
-                    processed_this_run += 1
-                    try:
-                        prediction, attempt_logs, padding_active_for_example = classify_single_example(
-                            example,
-                            processed_this_run,
-                        )
-                    except ProviderQuotaExceededError as exc:
-                        halted_by_quota = True
-                        logging.error("%s", exc)
-                        logging.error(
-                            "Stopping dataset early due to provider quota/rate limit exhaustion. "
-                            "Partial outputs were saved and can be resumed later."
-                        )
-                        break
-                    except ProviderEmptyResponseError as exc:
-                        halted_by_quota = True
-                        logging.error("%s", exc)
-                        logging.error(
-                            "Stopping dataset early due to repeated empty model responses. "
-                            "Partial outputs were saved and can be resumed later."
-                        )
-                        break
-                    commit_prediction(
-                        example,
-                        prediction,
-                        attempt_logs,
-                        padding_active_for_example,
-                    )
-            else:
-                thread_count = min(worker_threads, len(pending_examples))
-                max_in_flight = max(thread_count * 2, thread_count)
-                logging.info(
-                    "Classifying %d pending example(s) using %d worker threads (max in flight: %d).",
-                    len(pending_examples),
-                    thread_count,
-                    max_in_flight,
+    log_writer = PromptLogWriter(
+        log_path,
+        flush_rows=flush_rows,
+        flush_seconds=flush_seconds,
+    )
+    try:
+        log_writer.write_record(run_metadata_record)
+        if command_logged:
+            log_writer.write_record(
+                build_run_command_record(
+                    command_text=normalized_command,
+                    command_argv=run_command_argv,
+                    resume_mode=resume_mode,
+                    reason=command_reason,
                 )
-                future_to_order: Dict[
-                    Future[Tuple[Prediction, List[Dict[str, Any]], bool]],
-                    int,
-                ] = {}
-                buffered_results: Dict[int, Tuple[Prediction, List[Dict[str, Any]], bool]] = {}
-                next_submit_order = 0
-                next_write_order = 0
-                submitted_total = 0
-                terminal_order: Optional[int] = None
-                terminal_exception: Optional[Exception] = None
-                halt_message_logged = False
+            )
+            logging.info(
+                "Recorded run command in prompt log%s.",
+                " (resume command changed)" if command_reason == "resume_command_changed" else "",
+            )
+        log_writer.flush_if_needed(force=True)
 
-                def submit_available(executor: ThreadPoolExecutor) -> None:
-                    nonlocal next_submit_order
-                    nonlocal submitted_total
-                    while (
-                        terminal_order is None
-                        and next_submit_order < len(pending_examples)
-                        and len(future_to_order) < max_in_flight
-                    ):
-                        example = pending_examples[next_submit_order]
-                        submitted_total += 1
-                        future = executor.submit(
-                            classify_single_example,
-                            example,
-                            submitted_total,
-                        )
-                        future_to_order[future] = next_submit_order
-                        next_submit_order += 1
+        file_mode = "a" if resume_mode else "w"
+        with open(output_path, file_mode, encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=writer_fieldnames, delimiter=";")
+            if not resume_mode:
+                writer.writeheader()
+            processed_this_run = 0
+            rows_since_flush = 0
+            last_flush_at = time.perf_counter()
 
-                with ThreadPoolExecutor(max_workers=thread_count) as executor:
-                    submit_available(executor)
-                    while future_to_order:
-                        done, _ = wait(
-                            list(future_to_order.keys()),
-                            return_when=FIRST_COMPLETED,
-                        )
-                        for completed_future in done:
-                            order = future_to_order.pop(completed_future)
-                            try:
-                                buffered_results[order] = completed_future.result()
-                            except ProviderQuotaExceededError as exc:
-                                halted_by_quota = True
-                                if terminal_order is None or order < terminal_order:
-                                    terminal_order = order
-                                    terminal_exception = exc
-                                if not halt_message_logged:
-                                    logging.error("%s", exc)
-                                    logging.error(
-                                        "Stopping dataset early due to provider quota/rate limit exhaustion. "
-                                        "Partial outputs were saved and can be resumed later."
-                                    )
-                                    halt_message_logged = True
-                            except ProviderEmptyResponseError as exc:
-                                halted_by_quota = True
-                                if terminal_order is None or order < terminal_order:
-                                    terminal_order = order
-                                    terminal_exception = exc
-                                if not halt_message_logged:
-                                    logging.error("%s", exc)
-                                    logging.error(
-                                        "Stopping dataset early due to repeated empty model responses. "
-                                        "Partial outputs were saved and can be resumed later."
-                                    )
-                                    halt_message_logged = True
-                            except Exception as exc:  # noqa: BLE001
-                                if terminal_order is None or order < terminal_order:
-                                    terminal_order = order
-                                    terminal_exception = exc
+            def flush_outputs(force: bool = False) -> None:
+                nonlocal rows_since_flush
+                nonlocal last_flush_at
+                now = time.perf_counter()
+                should_flush = force or rows_since_flush >= flush_rows
+                if not should_flush and flush_seconds > 0:
+                    should_flush = (now - last_flush_at) >= flush_seconds
+                if not should_flush:
+                    return
+                handle.flush()
+                log_writer.flush_if_needed(force=True)
+                rows_since_flush = 0
+                last_flush_at = now
 
-                        if terminal_order is not None:
-                            for future, order in list(future_to_order.items()):
-                                if order >= terminal_order and future.cancel():
-                                    future_to_order.pop(future)
-                            for order in list(buffered_results.keys()):
-                                if order >= terminal_order:
-                                    buffered_results.pop(order, None)
+            def classify_single_example(
+                example: Example,
+                progress_index: int,
+            ) -> Tuple[Prediction, List[Dict[str, Any]], bool]:
+                if before_example_hook is not None:
+                    before_example_hook()
+                logging.info(
+                    "Classifying example %s (%d/%d)",
+                    example.example_id,
+                    progress_index,
+                    pending_total,
+                )
+                few_shot_context = select_few_shot_examples(examples, example.example_id, few_shot_count)
+                padding_text_for_example = cache_padding_text
+                padding_tokens_for_example = cache_padding_tokens_estimate
+                padding_active_for_example = bool(padding_text_for_example)
+                prediction, attempt_logs = classify_example(
+                    connector=connector,
+                    example=example,
+                    model=args.model,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    verbosity=args.verbosity,
+                    service_tier=args.service_tier,
+                    include_logprobs=args.logprobs,
+                    reasoning_effort=args.reasoning_effort,
+                    thinking_level=args.thinking_level,
+                    effort=args.effort,
+                    system_prompt=args.system_prompt,
+                    enable_cot=args.enable_cot,
+                    include_explanation=include_explanation,
+                    prompt_layout=args.prompt_layout,
+                    few_shot_context=few_shot_context,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                    validator_client=validator_client,
+                    validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                    validator_prompt_max_chars=args.validator_prompt_max_chars,
+                    validator_exhausted_policy=args.validator_exhausted_policy,
+                    strict_control_acceptance=args.strict_control_acceptance,
+                    cache_padding_text=padding_text_for_example,
+                    cache_padding_tokens_estimate=padding_tokens_for_example,
+                    prompt_cache_key=args.prompt_cache_key,
+                    gemini_cached_content=args.gemini_cached_content,
+                    requesty_auto_cache=args.requesty_auto_cache,
+                    prompt_log_detail=prompt_log_detail,
+                )
+                return prediction, attempt_logs, padding_active_for_example
 
-                        while next_write_order in buffered_results:
-                            prediction, attempt_logs, padding_active_for_example = buffered_results.pop(
-                                next_write_order
+            def commit_prediction(
+                example: Example,
+                prediction: Prediction,
+                attempt_logs: List[Dict[str, Any]],
+                padding_active_for_example: bool,
+            ) -> None:
+                nonlocal total_prompt_tokens
+                nonlocal total_completion_tokens
+                nonlocal total_reported_tokens
+                nonlocal cache_padding_applied_examples
+                nonlocal cache_padding_text
+                nonlocal cache_padding_tokens_estimate
+                nonlocal cache_padding_calibration_shared_prefix_tokens
+                nonlocal cache_padding_calibration_example_id
+                nonlocal cache_padding_missing_prefix_warned
+                nonlocal rows_since_flush
+                predictions[example.example_id] = prediction
+                if padding_active_for_example:
+                    cache_padding_applied_examples += 1
+                if prediction.prompt_tokens is not None:
+                    total_prompt_tokens += prediction.prompt_tokens
+                if prediction.completion_tokens is not None:
+                    total_completion_tokens += prediction.completion_tokens
+                if prediction.total_tokens is not None:
+                    total_reported_tokens += prediction.total_tokens
+
+                if cache_pad_target_tokens > 0:
+                    if cache_padding_calibration_shared_prefix_tokens is None:
+                        shared_prefix_tokens = prediction.shared_prefix_tokens_estimate
+                        if shared_prefix_tokens is None:
+                            if not cache_padding_missing_prefix_warned:
+                                logging.warning(
+                                    "Shared-prefix token estimate unavailable; waiting to calibrate cache padding."
+                                )
+                                cache_padding_missing_prefix_warned = True
+                        else:
+                            cache_padding_missing_prefix_warned = False
+                            cache_padding_calibration_shared_prefix_tokens = shared_prefix_tokens
+                            cache_padding_calibration_example_id = example.example_id
+                            required_padding_tokens = estimate_required_cache_padding_tokens(
+                                shared_prefix_tokens,
+                                cache_pad_target_tokens,
                             )
-                            example = pending_examples[next_write_order]
-                            processed_this_run += 1
-                            commit_prediction(
+                            if required_padding_tokens > 0:
+                                cache_padding_tokens_estimate = required_padding_tokens
+                                cache_padding_text = build_cache_padding_text(required_padding_tokens)
+                                logging.info(
+                                    "Calibrated cache padding from example %s: shared_prefix_tokens~%d, target=%d, applying +%d padding units to subsequent prompts.",
+                                    example.example_id,
+                                    shared_prefix_tokens,
+                                    cache_pad_target_tokens,
+                                    cache_padding_tokens_estimate,
+                                )
+                            else:
+                                cache_padding_tokens_estimate = 0
+                                cache_padding_text = None
+                                logging.info(
+                                    "Cache padding target already met on calibration example %s (shared_prefix_tokens~%d, target=%d); no padding will be applied.",
+                                    example.example_id,
+                                    shared_prefix_tokens,
+                                    cache_pad_target_tokens,
+                                )
+
+                stored_attempt_logs = prepare_attempt_logs_for_storage(
+                    attempt_logs,
+                    prompt_log_detail=prompt_log_detail,
+                )
+                log_writer.write_record(
+                    {
+                        "record_type": "example_result",
+                        "example_id": example.example_id,
+                        "attempts": stored_attempt_logs,
+                        "final_prediction": {
+                            "label": prediction.label,
+                            "confidence": prediction.confidence,
+                            "explanation": prediction.explanation,
+                            "truth": example.truth,
+                            "validator_status": prediction.validator_status,
+                            "validator_reason": prediction.validator_reason,
+                        },
+                    }
+                )
+
+                confidence_str = (
+                    f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
+                )
+                row = {
+                    "ID": example.example_id,
+                    "leftContext": example.left_context,
+                    "node": example.node,
+                    "rightContext": example.right_context,
+                    "info": example.info,
+                    "truth": example.truth or "",
+                    "prediction": prediction.label,
+                    "explanation": prediction.explanation,
+                    "confidence": confidence_str,
+                    "nodeEcho": prediction.node_echo or "",
+                    "spanSource": prediction.span_source or "",
+                    "promptTokens": prediction.prompt_tokens if prediction.prompt_tokens is not None else "",
+                    "completionTokens": prediction.completion_tokens if prediction.completion_tokens is not None else "",
+                    "totalTokens": prediction.total_tokens if prediction.total_tokens is not None else "",
+                    "labelLogProb": f"{prediction.label_logprob:.6f}" if prediction.label_logprob is not None else "",
+                    "labelProbability": f"{prediction.label_probability:.6f}" if prediction.label_probability is not None else "",
+                    "validatorStatus": prediction.validator_status or "",
+                    "validatorReason": prediction.validator_reason or "",
+                }
+                for field in extra_field_order:
+                    row[field] = example.extras.get(field, "")
+                row_to_write = {field: row.get(field, "") for field in writer_fieldnames}
+                writer.writerow(row_to_write)
+                rows_since_flush += 1
+                flush_outputs(force=False)
+                processed_ids.add(example.example_id)
+
+            try:
+                if worker_threads <= 1 or len(pending_examples) <= 1:
+                    for example in pending_examples:
+                        processed_this_run += 1
+                        try:
+                            prediction, attempt_logs, padding_active_for_example = classify_single_example(
                                 example,
-                                prediction,
-                                attempt_logs,
-                                padding_active_for_example,
+                                processed_this_run,
                             )
-                            next_write_order += 1
+                        except ProviderQuotaExceededError as exc:
+                            halted_by_quota = True
+                            logging.error("%s", exc)
+                            logging.error(
+                                "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                                "Partial outputs were saved and can be resumed later."
+                            )
+                            break
+                        except ProviderEmptyResponseError as exc:
+                            halted_by_quota = True
+                            logging.error("%s", exc)
+                            logging.error(
+                                "Stopping dataset early due to repeated empty model responses. "
+                                "Partial outputs were saved and can be resumed later."
+                            )
+                            break
+                        commit_prediction(
+                            example,
+                            prediction,
+                            attempt_logs,
+                            padding_active_for_example,
+                        )
+                else:
+                    thread_count = min(worker_threads, len(pending_examples))
+                    max_in_flight = max(thread_count * 2, thread_count)
+                    logging.info(
+                        "Classifying %d pending example(s) using %d worker threads (max in flight: %d).",
+                        len(pending_examples),
+                        thread_count,
+                        max_in_flight,
+                    )
+                    future_to_order: Dict[
+                        Future[Tuple[Prediction, List[Dict[str, Any]], bool]],
+                        int,
+                    ] = {}
+                    buffered_results: Dict[int, Tuple[Prediction, List[Dict[str, Any]], bool]] = {}
+                    next_submit_order = 0
+                    next_write_order = 0
+                    submitted_total = 0
+                    terminal_order: Optional[int] = None
+                    terminal_exception: Optional[Exception] = None
+                    halt_message_logged = False
 
-                        if terminal_order is None:
-                            submit_available(executor)
+                    def submit_available(executor: ThreadPoolExecutor) -> None:
+                        nonlocal next_submit_order
+                        nonlocal submitted_total
+                        while (
+                            terminal_order is None
+                            and next_submit_order < len(pending_examples)
+                            and len(future_to_order) < max_in_flight
+                        ):
+                            example = pending_examples[next_submit_order]
+                            submitted_total += 1
+                            future = executor.submit(
+                                classify_single_example,
+                                example,
+                                submitted_total,
+                            )
+                            future_to_order[future] = next_submit_order
+                            next_submit_order += 1
 
-                if terminal_exception is not None and not halted_by_quota:
-                    raise terminal_exception
-        finally:
-            flush_prompt_log()
+                    with ThreadPoolExecutor(max_workers=thread_count) as executor:
+                        submit_available(executor)
+                        while future_to_order:
+                            done, _ = wait(
+                                list(future_to_order.keys()),
+                                return_when=FIRST_COMPLETED,
+                            )
+                            for completed_future in done:
+                                order = future_to_order.pop(completed_future)
+                                try:
+                                    buffered_results[order] = completed_future.result()
+                                except ProviderQuotaExceededError as exc:
+                                    halted_by_quota = True
+                                    if terminal_order is None or order < terminal_order:
+                                        terminal_order = order
+                                        terminal_exception = exc
+                                    if not halt_message_logged:
+                                        logging.error("%s", exc)
+                                        logging.error(
+                                            "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                                            "Partial outputs were saved and can be resumed later."
+                                        )
+                                        halt_message_logged = True
+                                except ProviderEmptyResponseError as exc:
+                                    halted_by_quota = True
+                                    if terminal_order is None or order < terminal_order:
+                                        terminal_order = order
+                                        terminal_exception = exc
+                                    if not halt_message_logged:
+                                        logging.error("%s", exc)
+                                        logging.error(
+                                            "Stopping dataset early due to repeated empty model responses. "
+                                            "Partial outputs were saved and can be resumed later."
+                                        )
+                                        halt_message_logged = True
+                                except Exception as exc:  # noqa: BLE001
+                                    if terminal_order is None or order < terminal_order:
+                                        terminal_order = order
+                                        terminal_exception = exc
+
+                            if terminal_order is not None:
+                                for future, order in list(future_to_order.items()):
+                                    if order >= terminal_order and future.cancel():
+                                        future_to_order.pop(future)
+                                for order in list(buffered_results.keys()):
+                                    if order >= terminal_order:
+                                        buffered_results.pop(order, None)
+
+                            while next_write_order in buffered_results:
+                                prediction, attempt_logs, padding_active_for_example = buffered_results.pop(
+                                    next_write_order
+                                )
+                                example = pending_examples[next_write_order]
+                                processed_this_run += 1
+                                commit_prediction(
+                                    example,
+                                    prediction,
+                                    attempt_logs,
+                                    padding_active_for_example,
+                                )
+                                next_write_order += 1
+
+                            if terminal_order is None:
+                                submit_available(executor)
+
+                    if terminal_exception is not None and not halted_by_quota:
+                        raise terminal_exception
+            finally:
+                flush_outputs(force=True)
+    finally:
+        log_writer.close()
 
     logging.info("Saved prompt log to %s", log_path)
 
@@ -5210,6 +5545,7 @@ def process_dataset(
         correctness.append(prediction.label == example.truth)
         confidences.append(prediction.confidence)
 
+    log_records = load_existing_prompt_log(log_path)
     prompt_time_window = compute_prompt_time_window(log_records)
     configured_controls = {
         "reasoning_effort": args.reasoning_effort,
@@ -5775,10 +6111,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--logprobs",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
             "Enable token log probabilities when supported. "
-            "Use --no-logprobs to skip requesting logprobs."
+            "Disabled by default for better large-run throughput. "
+            "Use --logprobs to enable."
         ),
     )
     parser.add_argument(
@@ -5837,6 +6174,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         help=(
             "Number of concurrent worker threads used to classify examples. "
             "Use 1 to keep sequential processing."
+        ),
+    )
+    parser.add_argument(
+        "--prompt_log_detail",
+        choices=[PROMPT_LOG_DETAIL_FULL, PROMPT_LOG_DETAIL_COMPACT],
+        default=DEFAULT_PROMPT_LOG_DETAIL,
+        help=(
+            "Prompt-log detail level. "
+            "full stores full request/response text; compact omits heavy text fields."
+        ),
+    )
+    parser.add_argument(
+        "--flush_rows",
+        type=int,
+        default=DEFAULT_FLUSH_ROWS,
+        help=(
+            "Flush CSV and NDJSON prompt log after this many committed rows "
+            "(default: 100)."
+        ),
+    )
+    parser.add_argument(
+        "--flush_seconds",
+        type=float,
+        default=DEFAULT_FLUSH_SECONDS,
+        help=(
+            "Flush CSV and NDJSON prompt log after this many seconds even if "
+            "flush_rows was not reached (default: 2.0)."
         ),
     )
     parser.add_argument(
@@ -5919,7 +6283,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--summarize-log-errors",
         dest="summarize_log_errors",
         help=(
-            "Path to a prompt log JSON file (*.log) produced by this benchmark. "
+            "Path to a prompt log file (*.log) produced by this benchmark. "
+            "Supports NDJSON and legacy JSON-array logs. "
             "Prints a compact attempt/error summary and exits."
         ),
     )
@@ -5985,6 +6350,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--request_timeout_seconds must be a finite number.")
     if args.threads <= 0:
         parser.error("--threads must be > 0.")
+    if args.flush_rows <= 0:
+        parser.error("--flush_rows must be > 0.")
+    if args.flush_seconds < 0:
+        parser.error("--flush_seconds must be >= 0.")
     if args.create_gemini_cache and args.gemini_cached_content:
         parser.error(
             "--create_gemini_cache and --gemini_cached_content are mutually exclusive. "
@@ -6194,6 +6563,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Multithreaded mode enabled with %d threads; output rows remain in input order.",
             args.threads,
         )
+    if args.prompt_log_detail != DEFAULT_PROMPT_LOG_DETAIL:
+        logging.info("Prompt log detail set to '%s'.", args.prompt_log_detail)
+    logging.info(
+        "Output flush policy: every %d row(s) or %.1f second(s).",
+        args.flush_rows,
+        args.flush_seconds,
+    )
     if args.prompt_layout != "standard":
         logging.info(
             "Prompt layout set to '%s' (cache-optimized payload mode).",

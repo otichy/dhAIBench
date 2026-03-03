@@ -277,6 +277,10 @@ python benchmark_agent.py ^
 
 - `--request_interval_ms`: minimum delay between outgoing API requests in milliseconds (0 disables pacing).
 - `--threads`: number of concurrent worker threads for classification (default `1` = sequential).
+- `--prompt_log_detail {full,compact}`: prompt-log payload detail level (`full` keeps request/response text, `compact` omits heavy text fields).
+- `--flush_rows`: flush CSV + prompt log after N committed rows (default `100`).
+- `--flush_seconds`: flush CSV + prompt log after N seconds even when row threshold is not reached (default `2.0`).
+- `--logprobs`: explicitly enable token log probabilities (disabled by default for better large-run throughput).
 - `--metrics_only`: skip API calls and recompute metrics directly from existing output CSV(s) passed via `--input`.
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
@@ -285,7 +289,7 @@ python benchmark_agent.py ^
 - `--validator_prompt_max_chars`: cap how large the retry instruction can get.
 - `--validator_exhausted_policy`: what to do if the validator keeps requesting retries but `--max_retries` is exhausted (`accept_blank_confidence` / `unclassified` / `error`).
 
-When enabled, the output CSV gains two extra columns: `validatorStatus` and `validatorReason`. Each attempt in the JSON prompt log also includes `validator_request` and `validator_result` fields.
+When enabled, the output CSV gains two extra columns: `validatorStatus` and `validatorReason`. Each attempt in the prompt log includes validator result metadata (and in `full` detail mode, full `validator_request`/`validator_result` payloads).
 
 ## Outputs
 
@@ -297,9 +301,9 @@ Running the agent creates:
   It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
 - A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
-- A JSON prompt log (`<output_basename>.log`) capturing every prompt/response attempt per example for auditability.
-  The prompt log also stores `run_command` records with the CLI invocation at run start; when resuming,
-  a new `run_command` record is appended only if the command changed.
+- A prompt log (`<output_basename>.log`) in **NDJSON** format (one JSON object per line), capturing every attempt for auditability.
+  The prompt log stores `run_metadata`, `run_command`, and per-example `example_result` records.
+  On resume, legacy JSON-array logs are auto-migrated to NDJSON once, with backup written as `<output_basename>.log.legacy.json`.
 
 Logs streamed to stdout include prompt snapshots, raw responses, retries, and aggregate token totals to aid debugging.
 
@@ -311,4 +315,4 @@ Logs streamed to stdout include prompt snapshots, raw responses, retries, and ag
 - Few-shot examples are drawn from the start of the dataset; place high-quality labeled instances there to guide the model.
 - When targeting non-OpenAI services, ensure the endpoint is API-compatible and provide the correct base URL via `.env` or `--api_base_var`.
 - `--temperature` and `--top_p` are optional; when omitted, they are not sent and the provider default is used.
-- Use `--no-logprobs` when you do not need token-level probability estimates.
+- `--logprobs` is off by default for performance. Enable it only when you need token-level probability estimates.

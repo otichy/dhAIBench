@@ -542,6 +542,22 @@
                   <span class="hint">Concurrent worker threads for classification. Output order remains aligned with input.</span>
                 </label>
                 <label
+                  >Prompt Log Detail
+                  <select id="prompt_log_detail" name="prompt_log_detail">
+                    <option value="full" selected>Full</option>
+                    <option value="compact">Compact</option>
+                  </select>
+                  <span class="hint">Compact omits heavy request/response text from prompt logs.</span>
+                </label>
+                <label
+                  >Flush Every N Rows
+                  <input type="number" min="1" step="1" id="flush_rows" name="flush_rows" value="100" />
+                </label>
+                <label
+                  >Flush Every N Seconds
+                  <input type="number" min="0" step="0.1" id="flush_seconds" name="flush_seconds" value="2.0" />
+                </label>
+                <label
                   >OpenAI Service Tier
                   <select id="service_tier" name="service_tier">
                     <option value="standard" selected>Standard (omit)</option>
@@ -744,7 +760,7 @@
                 <span>Enable calibration plot</span>
               </label>
               <label class="inline">
-                <input type="checkbox" id="logprobs" name="logprobs" checked />
+                <input type="checkbox" id="logprobs" name="logprobs" />
                 <span>Request token logprobs</span>
               </label>
               <label class="inline">
@@ -847,6 +863,9 @@
                           [--retry_delay RETRY_DELAY]
                           [--request_interval_ms REQUEST_INTERVAL_MS]
                           [--threads THREADS]
+                          [--prompt_log_detail {full,compact}]
+                          [--flush_rows FLUSH_ROWS]
+                          [--flush_seconds FLUSH_SECONDS]
                           [--request_timeout_seconds REQUEST_TIMEOUT_SECONDS]
                           [--validator_cmd VALIDATOR_CMD]
                           [--validator_args VALIDATOR_ARGS]
@@ -949,8 +968,8 @@ options:
                         before answering.
   --no_explanation      Skip requesting explanations to reduce token usage.
   --logprobs, --no-logprobs
-                        Enable token log probabilities when supported. Use
-                        --no-logprobs to skip requesting logprobs.
+                        Enable token log probabilities when supported.
+                        Disabled by default for better large-run throughput.
   --calibration         Generate a calibration plot using the model's
                         confidences.
   --api_key_var API_KEY_VAR
@@ -969,6 +988,16 @@ options:
                         requests. Use 0 to disable request pacing.
   --threads THREADS     Number of concurrent worker threads used to classify
                         examples. Use 1 to keep sequential processing.
+  --prompt_log_detail {full,compact}
+                        Prompt-log detail level. full stores full
+                        request/response text; compact omits heavy text
+                        fields.
+  --flush_rows FLUSH_ROWS
+                        Flush CSV and NDJSON prompt log after this many
+                        committed rows.
+  --flush_seconds FLUSH_SECONDS
+                        Flush CSV and NDJSON prompt log after this many
+                        seconds even if flush_rows was not reached.
   --request_timeout_seconds REQUEST_TIMEOUT_SECONDS
                         Per-request timeout in seconds for provider API calls.
                         Use 0 or a negative value to disable timeout.
@@ -1085,10 +1114,13 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         reasoning_effort: "",
         thinking_level: "",
         effort: "",
-        logprobs: true,
+        logprobs: false,
         strict_control_acceptance: false,
         request_interval_ms: "0",
         threads: "1",
+        prompt_log_detail: "full",
+        flush_rows: "100",
+        flush_seconds: "2.0",
         request_timeout_seconds: "30.0",
         few_shot_examples: "0",
         prompt_layout: "standard",
@@ -1161,12 +1193,15 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
         enable_cot: "Encourage model to 'Think ... step-by-step' to elicit chain-of-thought behaviour.",
         include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
-        logprobs: "If unchecked, adds --no-logprobs to skip token log probability requests.",
+        logprobs: "If checked, adds --logprobs to request token-level probability estimates (off by default).",
         temperature: "Optional temperature sampling value. Leave blank to omit this parameter.",
         top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
         top_k: "Optional top-k sampling parameter, if your provider supports it.",
         request_interval_ms: "Minimum delay in milliseconds between API requests.",
         threads: "Number of concurrent worker threads. Output rows are still written in input order.",
+        prompt_log_detail: "Prompt-log payload level. compact omits heavy request/response text fields.",
+        flush_rows: "Flush CSV and prompt log after this many committed rows.",
+        flush_seconds: "Flush CSV and prompt log after this many seconds even when flush_rows is not reached.",
         request_timeout_seconds:
           "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
         service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
@@ -1892,6 +1927,21 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           args.push("--threads", threads);
         }
 
+        const promptLogDetail = data.get("prompt_log_detail");
+        if (promptLogDetail && promptLogDetail !== defaultValues.prompt_log_detail) {
+          args.push("--prompt_log_detail", promptLogDetail);
+        }
+
+        const flushRows = data.get("flush_rows")?.toString().trim() ?? "";
+        if (flushRows && flushRows !== defaultValues.flush_rows) {
+          args.push("--flush_rows", flushRows);
+        }
+
+        const flushSeconds = data.get("flush_seconds")?.toString().trim() ?? "";
+        if (flushSeconds && flushSeconds !== defaultValues.flush_seconds) {
+          args.push("--flush_seconds", flushSeconds);
+        }
+
         const requestTimeoutSeconds = data.get("request_timeout_seconds")?.toString().trim() ?? "";
         if (requestTimeoutSeconds && requestTimeoutSeconds !== defaultValues.request_timeout_seconds) {
           args.push("--request_timeout_seconds", requestTimeoutSeconds);
@@ -2001,8 +2051,8 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           args.push("--no_explanation");
         }
 
-        if (!data.get("logprobs")) {
-          args.push("--no-logprobs");
+        if (data.get("logprobs")) {
+          args.push("--logprobs");
         }
 
         if (data.get("calibration")) {
