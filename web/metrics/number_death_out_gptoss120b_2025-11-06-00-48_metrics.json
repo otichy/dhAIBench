@@ -1,0 +1,44 @@
+{
+  "accuracy": 0.9992447129909365,
+  "macro_precision": 0.6666666666666666,
+  "macro_recall": 0.6664131812420786,
+  "macro_f1": 0.6665398757448967,
+  "per_label": {
+    "plural": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 9
+    },
+    "singular": {
+      "precision": 1.0,
+      "recall": 0.9992395437262357,
+      "f1": 0.9996196272346899,
+      "support": 1315
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 9,
+      "singular": 0,
+      "unclassified": 0
+    },
+    "singular": {
+      "plural": 0,
+      "singular": 1314,
+      "unclassified": 1
+    },
+    "unclassified": {
+      "plural": 0,
+      "singular": 0,
+      "unclassified": 0
+    }
+  },
+  "total_examples": 1324
+}

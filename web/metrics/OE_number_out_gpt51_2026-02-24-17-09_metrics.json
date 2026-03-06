@@ -1,0 +1,153 @@
+{
+  "accuracy": 0.9308333333333333,
+  "macro_precision": 0.5964724315107947,
+  "macro_recall": 0.6333627616360035,
+  "macro_f1": 0.6109236308800409,
+  "per_label": {
+    "plural": {
+      "precision": 0.7941176470588235,
+      "recall": 0.9854014598540146,
+      "f1": 0.8794788273615635,
+      "support": 274
+    },
+    "singular": {
+      "precision": 0.9952996474735605,
+      "recall": 0.9146868250539957,
+      "f1": 0.9532920652785594,
+      "support": 926
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 270,
+      "singular": 4,
+      "unclassified": 0
+    },
+    "singular": {
+      "plural": 70,
+      "singular": 847,
+      "unclassified": 9
+    },
+    "unclassified": {
+      "plural": 0,
+      "singular": 0,
+      "unclassified": 0
+    }
+  },
+  "labels": [
+    "plural",
+    "singular",
+    "unclassified"
+  ],
+  "total_examples": 1200,
+  "prompt_layout": "standard",
+  "cache_padding": {
+    "enabled": true,
+    "target_shared_prefix_tokens": 1200,
+    "calibration_shared_prefix_tokens": 500,
+    "target_prompt_tokens": 1200,
+    "calibration_prompt_tokens": 500,
+    "calibration_example_id": "water-3",
+    "applied_padding_tokens_estimate": 300,
+    "examples_with_padding_applied": 1199
+  },
+  "first_prompt_timestamp": "2026-02-24T16:09:02.122628Z",
+  "last_prompt_timestamp": "2026-02-24T17:13:19.197405Z",
+  "overall_time_seconds": 3857.074777,
+  "overall_time_human": "1h 04m 17s",
+  "request_control_summary": {
+    "configured": {
+      "prompt_cache_key": "OE_number-5"
+    },
+    "attempts_total": 1201,
+    "attempts_with_control_telemetry": 1201,
+    "per_control": {
+      "reasoning_effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "thinking_level": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "verbosity": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "prompt_cache_key": {
+        "configured_value": "OE_number-5",
+        "requested_attempts": 1201,
+        "sent_attempts": 1201,
+        "accepted_attempts": 1201,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": 1.0,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "gemini_cached_content": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      }
+    }
+  },
+  "usage_metadata_summary": {
+    "attempts_total": 1201,
+    "attempts_with_usage_metadata": 1201,
+    "attempts_with_cached_token_signals": 1201,
+    "cached_tokens_total_estimate": 1216256,
+    "cache_read_tokens_total": 1216256,
+    "cache_write_tokens_total": 0,
+    "cache_token_fields_totals": {
+      "usage.prompt_tokens_details.cached_tokens": 1216256
+    },
+    "attempts_with_gemini_cached_content_token_signals": 0,
+    "gemini_cached_content_token_count_total": 0,
+    "gemini_cached_content_token_fields_totals": {}
+  }
+}

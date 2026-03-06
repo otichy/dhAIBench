@@ -1,0 +1,59 @@
+{
+  "accuracy": 0.9308176100628931,
+  "macro_precision": 0.71074848433339,
+  "macro_recall": 0.6534391534391534,
+  "macro_f1": 0.6803769238499416,
+  "per_label": {
+    "AC": {
+      "precision": 0.8888888888888888,
+      "recall": 0.7619047619047619,
+      "f1": 0.8205128205128205,
+      "support": 21
+    },
+    "AVG": {
+      "precision": 0.972972972972973,
+      "recall": 0.8888888888888888,
+      "f1": 0.9290322580645162,
+      "support": 81
+    },
+    "FA": {
+      "precision": 0.9811320754716981,
+      "recall": 0.9629629629629629,
+      "f1": 0.9719626168224299,
+      "support": 216
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "AC": {
+      "AC": 16,
+      "AVG": 1,
+      "FA": 1,
+      "unclassified": 3
+    },
+    "AVG": {
+      "AC": 0,
+      "AVG": 72,
+      "FA": 3,
+      "unclassified": 6
+    },
+    "FA": {
+      "AC": 2,
+      "AVG": 1,
+      "FA": 208,
+      "unclassified": 5
+    },
+    "unclassified": {
+      "AC": 0,
+      "AVG": 0,
+      "FA": 0,
+      "unclassified": 0
+    }
+  },
+  "total_examples": 318
+}

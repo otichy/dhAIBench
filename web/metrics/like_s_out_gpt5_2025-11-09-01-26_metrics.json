@@ -1,0 +1,76 @@
+{
+  "accuracy": 0.85,
+  "macro_precision": 0.7252747252747253,
+  "macro_recall": 0.6799999999999999,
+  "macro_f1": 0.6940368824875488,
+  "per_label": {
+    "Clause-final pragmatic marker": {
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9473684210526316,
+      "support": 10
+    },
+    "Clause-medial pragmatic marker": {
+      "precision": 0.8571428571428571,
+      "recall": 0.6,
+      "f1": 0.7058823529411764,
+      "support": 10
+    },
+    "Discourse marker": {
+      "precision": 0.7692307692307693,
+      "recall": 1.0,
+      "f1": 0.8695652173913044,
+      "support": 10
+    },
+    "Quotative marker": {
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9473684210526316,
+      "support": 10
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "Clause-final pragmatic marker": {
+      "Clause-final pragmatic marker": 9,
+      "Clause-medial pragmatic marker": 1,
+      "Discourse marker": 0,
+      "Quotative marker": 0,
+      "unclassified": 0
+    },
+    "Clause-medial pragmatic marker": {
+      "Clause-final pragmatic marker": 0,
+      "Clause-medial pragmatic marker": 6,
+      "Discourse marker": 2,
+      "Quotative marker": 0,
+      "unclassified": 2
+    },
+    "Discourse marker": {
+      "Clause-final pragmatic marker": 0,
+      "Clause-medial pragmatic marker": 0,
+      "Discourse marker": 10,
+      "Quotative marker": 0,
+      "unclassified": 0
+    },
+    "Quotative marker": {
+      "Clause-final pragmatic marker": 0,
+      "Clause-medial pragmatic marker": 0,
+      "Discourse marker": 1,
+      "Quotative marker": 9,
+      "unclassified": 0
+    },
+    "unclassified": {
+      "Clause-final pragmatic marker": 0,
+      "Clause-medial pragmatic marker": 0,
+      "Discourse marker": 0,
+      "Quotative marker": 0,
+      "unclassified": 0
+    }
+  },
+  "total_examples": 40
+}

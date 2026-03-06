@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dhAIBench Metrics Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">dh</div>
+        <div>
+          <h1>Benchmark Radar</h1>
+          <p>Metrics from <code>web/metrics</code></p>
+        </div>
+      </div>
+
+      <section class="panel">
+        <h2>Appearance</h2>
+        <label class="checkbox">
+          <input id="themeToggle" type="checkbox">
+          <span>Dark Theme</span>
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Filters</h2>
+        <label class="field">
+          <span>Task</span>
+          <select id="taskSelect"></select>
+        </label>
+        <label class="field">
+          <span>Model Search</span>
+          <input id="modelSearch" type="search" placeholder="e.g. gpt5, gemini, qwen">
+        </label>
+        <label class="field">
+          <span>Sort Runs By</span>
+          <select id="sortSelect">
+            <option value="accuracy">Accuracy</option>
+            <option value="macro_f1">Macro F1</option>
+            <option value="cached_tokens">Cached Tokens</option>
+            <option value="attempts_total">Requests</option>
+            <option value="timestamp">Most Recent</option>
+          </select>
+        </label>
+        <label class="checkbox">
+          <input id="hideNoAccuracy" type="checkbox">
+          <span>Hide runs without accuracy</span>
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Tasks</h2>
+        <div id="taskChips" class="chips"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="hero">
+        <div class="hero-copy">
+          <h2 id="heroTitle">All Tasks</h2>
+          <p id="heroSubtitle">Loading metrics files...</p>
+        </div>
+        <section class="source-panel">
+          <h3>Data Source</h3>
+          <div class="source-actions">
+            <button id="btnAutoServer" class="btn" type="button">Auto (Server)</button>
+            <button id="btnOpenFolder" class="btn" type="button">Open Metrics Folder</button>
+            <button id="btnOpenFiles" class="btn" type="button">Open Metrics Files</button>
+            <button id="reloadBtn" class="btn" type="button">Reload</button>
+          </div>
+          <p id="sourceStatus" class="source-status">Mode: none | Files: 0 | Warnings: 0</p>
+          <p id="sourceHint" class="source-hint muted"></p>
+          <p id="sourceWarnings" class="source-warnings"></p>
+          <input id="metricsFileInput" type="file" accept=".json,application/json" multiple hidden>
+        </section>
+      </header>
+
+      <section class="kpis">
+        <article class="kpi">
+          <h3>Total Runs</h3>
+          <p id="kpiRuns">-</p>
+        </article>
+        <article class="kpi">
+          <h3>Total Tasks</h3>
+          <p id="kpiTasks">-</p>
+        </article>
+        <article class="kpi">
+          <h3>Best Accuracy</h3>
+          <p id="kpiBestAccuracy">-</p>
+        </article>
+        <article class="kpi">
+          <h3>Total Requests</h3>
+          <p id="kpiRequests">-</p>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h3>Leaderboard (Selected Task)</h3>
+          <div id="leaderboardChart" class="chart"></div>
+        </article>
+        <article class="card">
+          <h3>Best Run Per Task</h3>
+          <div id="taskBestChart" class="chart"></div>
+        </article>
+        <article class="card card-wide">
+          <h3>Token / Request Signals (Selected Task)</h3>
+          <div id="tokenChart" class="chart"></div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="table-head">
+          <h3>Runs</h3>
+          <p id="tableMeta"></p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Model</th>
+                <th>Timestamp</th>
+                <th>Accuracy</th>
+                <th>Macro F1</th>
+                <th>Requests</th>
+                <th>Cached Input Tokens</th>
+                <th>File</th>
+              </tr>
+            </thead>
+            <tbody id="runsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="runModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="runModalTitle">Run Details</h3>
+        <button id="runModalClose" class="btn" type="button">Close</button>
+      </div>
+      <p id="runModalMeta" class="muted"></p>
+      <div id="runModalContent" class="details-grid"></div>
+    </div>
+  </div>
+
+  <template id="barRowTemplate">
+    <div class="bar-row">
+      <div class="bar-label"></div>
+      <div class="bar-track">
+        <div class="bar-fill"></div>
+      </div>
+      <div class="bar-value"></div>
+    </div>
+  </template>
+
+  <script src="./app.js"></script>
+</body>
+</html>

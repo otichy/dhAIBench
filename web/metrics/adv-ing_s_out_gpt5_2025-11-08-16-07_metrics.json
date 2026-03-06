@@ -1,0 +1,76 @@
+{
+  "accuracy": 0.8,
+  "macro_precision": 0.575,
+  "macro_recall": 0.5454545454545455,
+  "macro_f1": 0.5550877192982456,
+  "per_label": {
+    "AC": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 1
+    },
+    "AVG": {
+      "precision": 0.875,
+      "recall": 1.0,
+      "f1": 0.9333333333333333,
+      "support": 7
+    },
+    "FA": {
+      "precision": 1.0,
+      "recall": 0.7272727272727273,
+      "f1": 0.8421052631578948,
+      "support": 22
+    },
+    "other": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "AC": {
+      "AC": 1,
+      "AVG": 0,
+      "FA": 0,
+      "other": 0,
+      "unclassified": 0
+    },
+    "AVG": {
+      "AC": 0,
+      "AVG": 7,
+      "FA": 0,
+      "other": 0,
+      "unclassified": 0
+    },
+    "FA": {
+      "AC": 0,
+      "AVG": 1,
+      "FA": 16,
+      "other": 4,
+      "unclassified": 1
+    },
+    "other": {
+      "AC": 0,
+      "AVG": 0,
+      "FA": 0,
+      "other": 0,
+      "unclassified": 0
+    },
+    "unclassified": {
+      "AC": 0,
+      "AVG": 0,
+      "FA": 0,
+      "other": 0,
+      "unclassified": 0
+    }
+  },
+  "total_examples": 30
+}

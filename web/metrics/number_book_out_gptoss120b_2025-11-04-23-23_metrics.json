@@ -1,0 +1,44 @@
+{
+  "accuracy": 0.9783783783783784,
+  "macro_precision": 0.6529923963698798,
+  "macro_recall": 0.6525973173740715,
+  "macro_f1": 0.6527690233567952,
+  "per_label": {
+    "plural": {
+      "precision": 0.9867549668874173,
+      "recall": 0.9738562091503268,
+      "f1": 0.9802631578947368,
+      "support": 306
+    },
+    "singular": {
+      "precision": 0.9722222222222222,
+      "recall": 0.9839357429718876,
+      "f1": 0.9780439121756487,
+      "support": 249
+    },
+    "undecidable": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 298,
+      "singular": 7,
+      "undecidable": 1
+    },
+    "singular": {
+      "plural": 4,
+      "singular": 245,
+      "undecidable": 0
+    },
+    "undecidable": {
+      "plural": 0,
+      "singular": 0,
+      "undecidable": 0
+    }
+  },
+  "total_examples": 555
+}

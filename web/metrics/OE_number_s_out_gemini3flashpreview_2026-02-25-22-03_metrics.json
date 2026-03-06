@@ -1,0 +1,162 @@
+{
+  "accuracy": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "macro_f1": 1.0,
+  "per_label": {
+    "plural": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 3
+    },
+    "singular": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 16
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 3,
+      "singular": 0
+    },
+    "singular": {
+      "plural": 0,
+      "singular": 16
+    }
+  },
+  "labels": [
+    "plural",
+    "singular"
+  ],
+  "total_examples": 19,
+  "model_details": {
+    "provider": "vertex",
+    "model_requested": "gemini-3-flash-preview",
+    "model_for_requests": "google/gemini-3-flash-preview",
+    "api_base_url": "https://aiplatform.googleapis.com/v1/projects/gen-lang-client-0461875984/locations/global/endpoints/openapi",
+    "api_key_var": "VERTEX_ACCESS_TOKEN",
+    "api_base_var": "VERTEX_BASE_URL",
+    "chat_completions_endpoint": "https://aiplatform.googleapis.com/v1/projects/gen-lang-client-0461875984/locations/global/endpoints/openapi/chat/completions",
+    "vertex_cache_model": "projects/gen-lang-client-0461875984/locations/global/publishers/google/models/gemini-3-flash-preview",
+    "gemini_cached_content": "projects/972860687194/locations/global/cachedContents/1204247050988814336"
+  },
+  "prompt_layout": "standard",
+  "cache_padding": {
+    "enabled": false,
+    "target_shared_prefix_tokens": 0,
+    "calibration_shared_prefix_tokens": 0,
+    "target_prompt_tokens": 0,
+    "calibration_prompt_tokens": 0,
+    "calibration_example_id": null,
+    "applied_padding_tokens_estimate": 1018,
+    "examples_with_padding_applied": 19
+  },
+  "first_prompt_timestamp": "2026-02-25T21:03:34.764628Z",
+  "last_prompt_timestamp": "2026-02-25T21:05:52.338866Z",
+  "overall_time_seconds": 137.574238,
+  "overall_time_human": "2m 18s",
+  "request_control_summary": {
+    "configured": {
+      "thinking_level": "minimal",
+      "gemini_cached_content": "projects/972860687194/locations/global/cachedContents/1204247050988814336"
+    },
+    "attempts_total": 21,
+    "attempts_with_control_telemetry": 19,
+    "per_control": {
+      "reasoning_effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "thinking_level": {
+        "configured_value": "minimal",
+        "requested_attempts": 19,
+        "sent_attempts": 19,
+        "accepted_attempts": 19,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": 1.0,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "verbosity": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "prompt_cache_key": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "gemini_cached_content": {
+        "configured_value": "projects/972860687194/locations/global/cachedContents/1204247050988814336",
+        "requested_attempts": 19,
+        "sent_attempts": 19,
+        "accepted_attempts": 19,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": 1.0,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "requesty_auto_cache": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      }
+    }
+  },
+  "usage_metadata_summary": {
+    "attempts_total": 21,
+    "attempts_with_usage_metadata": 19,
+    "attempts_with_cached_token_signals": 19,
+    "cached_tokens_total_estimate": 20083,
+    "cache_read_tokens_total": 20083,
+    "cache_write_tokens_total": 0,
+    "cache_token_fields_totals": {
+      "usage.prompt_tokens_details.cached_tokens": 20083
+    },
+    "attempts_with_gemini_cached_content_token_signals": 0,
+    "gemini_cached_content_token_count_total": 0,
+    "gemini_cached_content_token_fields_totals": {}
+  }
+}

@@ -1,0 +1,191 @@
+{
+  "model_details": {
+    "provider": "inception",
+    "model_requested": "mercury-2",
+    "model_for_requests": "mercury-2",
+    "api_base_url": "https://api.inceptionlabs.ai/v1",
+    "api_key_var": "INCEPTION_API_KEY",
+    "api_base_var": "INCEPTION_BASE_URL",
+    "chat_completions_endpoint": "https://api.inceptionlabs.ai/v1/chat/completions"
+  },
+  "prompt_layout": "standard",
+  "cache_padding": {
+    "enabled": false,
+    "target_shared_prefix_tokens": 0,
+    "calibration_shared_prefix_tokens": null,
+    "target_prompt_tokens": 0,
+    "calibration_prompt_tokens": null,
+    "calibration_example_id": null,
+    "applied_padding_tokens_estimate": 0,
+    "examples_with_padding_applied": 0
+  },
+  "request_control_summary": {
+    "configured": {},
+    "attempts_total": 19,
+    "attempts_with_control_telemetry": 19,
+    "per_control": {
+      "reasoning_effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "thinking_level": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "verbosity": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "prompt_cache_key": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "gemini_cached_content": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "requesty_auto_cache": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      }
+    }
+  },
+  "usage_metadata_summary": {
+    "attempts_total": 19,
+    "attempts_with_usage_metadata": 19,
+    "attempts_with_cached_token_signals": 19,
+    "cached_tokens_total_estimate": 1706,
+    "cache_read_tokens_total": 1706,
+    "cache_write_tokens_total": 0,
+    "cache_token_fields_totals": {
+      "usage.cached_input_tokens": 1706
+    },
+    "attempts_with_gemini_cached_content_token_signals": 0,
+    "gemini_cached_content_token_count_total": 0,
+    "gemini_cached_content_token_fields_totals": {}
+  },
+  "truth_label_count": 19,
+  "prediction_count": 19,
+  "evaluated_example_count": 19,
+  "first_prompt_timestamp": "2026-03-04T22:43:06.114716Z",
+  "last_prompt_timestamp": "2026-03-04T22:43:11.082649Z",
+  "overall_time_seconds": 4.967933,
+  "overall_time_human": "5s",
+  "accuracy": 0.7368421052631579,
+  "macro_precision": 0.39743589743589747,
+  "macro_recall": 0.35416666666666663,
+  "macro_f1": 0.3735632183908046,
+  "per_label": {
+    "accusative": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    },
+    "plural": {
+      "precision": 0.6666666666666666,
+      "recall": 0.6666666666666666,
+      "f1": 0.6666666666666666,
+      "support": 3
+    },
+    "singular": {
+      "precision": 0.9230769230769231,
+      "recall": 0.75,
+      "f1": 0.8275862068965517,
+      "support": 16
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "accusative": {
+      "accusative": 0,
+      "plural": 0,
+      "singular": 0,
+      "unclassified": 0
+    },
+    "plural": {
+      "accusative": 0,
+      "plural": 2,
+      "singular": 1,
+      "unclassified": 0
+    },
+    "singular": {
+      "accusative": 2,
+      "plural": 1,
+      "singular": 12,
+      "unclassified": 1
+    },
+    "unclassified": {
+      "accusative": 0,
+      "plural": 0,
+      "singular": 0,
+      "unclassified": 0
+    }
+  },
+  "labels": [
+    "accusative",
+    "plural",
+    "singular",
+    "unclassified"
+  ],
+  "total_examples": 19,
+  "label_metrics_available": true
+}

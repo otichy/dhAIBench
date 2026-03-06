@@ -1,0 +1,126 @@
+{
+  "accuracy": 0.9473684210526315,
+  "macro_precision": 0.6666666666666666,
+  "macro_recall": 0.6458333333333334,
+  "macro_f1": 0.6559139784946236,
+  "per_label": {
+    "plural": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 3
+    },
+    "singular": {
+      "precision": 1.0,
+      "recall": 0.9375,
+      "f1": 0.967741935483871,
+      "support": 16
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 3,
+      "singular": 0,
+      "unclassified": 0
+    },
+    "singular": {
+      "plural": 0,
+      "singular": 15,
+      "unclassified": 1
+    },
+    "unclassified": {
+      "plural": 0,
+      "singular": 0,
+      "unclassified": 0
+    }
+  },
+  "labels": [
+    "plural",
+    "singular",
+    "unclassified"
+  ],
+  "total_examples": 19,
+  "prompt_layout": "standard",
+  "cache_padding": {
+    "enabled": true,
+    "target_prompt_tokens": 1200,
+    "calibration_prompt_tokens": 682,
+    "calibration_example_id": "water-3",
+    "applied_padding_tokens_estimate": 518,
+    "examples_with_padding_applied": 18
+  },
+  "first_prompt_timestamp": "2026-02-23T21:10:20.795258Z",
+  "last_prompt_timestamp": "2026-02-23T21:14:49.349731Z",
+  "overall_time_seconds": 268.554473,
+  "overall_time_human": "4m 29s",
+  "request_control_summary": {
+    "configured": {
+      "verbosity": "low"
+    },
+    "attempts_total": 19,
+    "attempts_with_control_telemetry": 19,
+    "per_control": {
+      "reasoning_effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "thinking_level": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "effort": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "verbosity": {
+        "configured_value": "low",
+        "requested_attempts": 19,
+        "sent_attempts": 19,
+        "accepted_attempts": 19,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": 1.0,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      }
+    }
+  },
+  "usage_metadata_summary": {
+    "attempts_total": 19,
+    "attempts_with_usage_metadata": 19,
+    "attempts_with_cached_token_signals": 19,
+    "cached_tokens_total_estimate": 0,
+    "cache_read_tokens_total": 0,
+    "cache_write_tokens_total": 0,
+    "cache_token_fields_totals": {
+      "usage.prompt_tokens_details.cached_tokens": 0
+    }
+  }
+}

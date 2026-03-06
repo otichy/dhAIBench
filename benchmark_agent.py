@@ -420,6 +420,169 @@ def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dic
     }
 
 
+def _as_finite_number(value: Any) -> Optional[float]:
+    """Convert numeric-like values to finite floats."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if math.isfinite(number):
+            return number
+    return None
+
+
+def compute_token_usage_totals(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate input/cached/output/thinking token totals across prompt-log attempts."""
+    attempts_total = 0
+    attempts_with_token_usage = 0
+    attempts_with_cached_input_tokens = 0
+    attempts_with_thinking_tokens = 0
+    attempts_with_output_tokens = 0
+
+    input_tokens_total = 0.0
+    cached_input_tokens_total = 0.0
+    output_tokens_total = 0.0
+    thinking_tokens_total = 0.0
+
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        attempts = record.get("attempts")
+        if not isinstance(attempts, list):
+            continue
+
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempts_total += 1
+            response_payload = attempt.get("response")
+            if not isinstance(response_payload, dict):
+                continue
+
+            usage_metadata = response_payload.get("usage_metadata")
+            usage_payload: Dict[str, Any] = {}
+            if isinstance(usage_metadata, dict):
+                usage_obj = usage_metadata.get("usage")
+                if isinstance(usage_obj, dict):
+                    usage_payload = usage_obj
+
+            prompt_tokens = None
+            completion_tokens = None
+            total_tokens = None
+            cached_input_tokens = None
+
+            if usage_payload:
+                prompt_tokens = _as_finite_number(usage_payload.get("prompt_tokens"))
+                if prompt_tokens is None:
+                    prompt_tokens = _as_finite_number(usage_payload.get("input_tokens"))
+                completion_tokens = _as_finite_number(usage_payload.get("completion_tokens"))
+                if completion_tokens is None:
+                    completion_tokens = _as_finite_number(usage_payload.get("output_tokens"))
+                total_tokens = _as_finite_number(usage_payload.get("total_tokens"))
+
+                prompt_details = usage_payload.get("prompt_tokens_details")
+                if isinstance(prompt_details, dict):
+                    cached_input_tokens = _as_finite_number(prompt_details.get("cached_tokens"))
+
+            # Fallback to response-level token counters when usage payload is absent/incomplete.
+            if prompt_tokens is None:
+                prompt_tokens = _as_finite_number(response_payload.get("prompt_tokens"))
+            if completion_tokens is None:
+                completion_tokens = _as_finite_number(response_payload.get("completion_tokens"))
+            if total_tokens is None:
+                total_tokens = _as_finite_number(response_payload.get("total_tokens"))
+
+            # Scan flattened metadata for token fields not covered by standard keys.
+            flattened = _flatten_numeric_metrics(usage_metadata) if isinstance(usage_metadata, dict) else {}
+            prompt_candidates: List[float] = []
+            completion_candidates: List[float] = []
+            total_candidates: List[float] = []
+            cached_candidates: List[float] = []
+            thinking_candidates: List[float] = []
+
+            for field_path, value in flattened.items():
+                lowered = field_path.lower()
+                canonical = re.sub(r"[^a-z0-9]", "", lowered)
+
+                if canonical.endswith("prompttokens") or canonical.endswith("inputtokens"):
+                    prompt_candidates.append(value)
+                if canonical.endswith("completiontokens") or canonical.endswith("outputtokens"):
+                    completion_candidates.append(value)
+                if canonical.endswith("totaltokens"):
+                    total_candidates.append(value)
+
+                if ("cached" in lowered or "cache" in lowered) and "token" in lowered:
+                    if "write" not in lowered and "creation" not in lowered and "create" not in lowered:
+                        cached_candidates.append(value)
+
+                if (
+                    "reasoningtoken" in canonical
+                    or "thinkingtoken" in canonical
+                    or "thoughtstoken" in canonical
+                ):
+                    thinking_candidates.append(value)
+
+            if prompt_tokens is None and prompt_candidates:
+                prompt_tokens = max(prompt_candidates)
+            if completion_tokens is None and completion_candidates:
+                completion_tokens = max(completion_candidates)
+            if total_tokens is None and total_candidates:
+                total_tokens = max(total_candidates)
+            if cached_input_tokens is None and cached_candidates:
+                cached_input_tokens = max(cached_candidates)
+
+            thinking_tokens = max(thinking_candidates) if thinking_candidates else None
+
+            output_tokens = None
+            if total_tokens is not None and prompt_tokens is not None:
+                output_tokens = max(total_tokens - prompt_tokens, 0.0)
+            elif completion_tokens is not None:
+                output_tokens = completion_tokens + (thinking_tokens or 0.0)
+
+            has_any_tokens = False
+
+            if prompt_tokens is not None:
+                input_tokens_total += prompt_tokens
+                has_any_tokens = True
+
+            if cached_input_tokens is not None:
+                cached_input_tokens_total += cached_input_tokens
+                has_any_tokens = True
+                if cached_input_tokens > 0:
+                    attempts_with_cached_input_tokens += 1
+
+            if output_tokens is not None:
+                output_tokens_total += output_tokens
+                has_any_tokens = True
+                if output_tokens > 0:
+                    attempts_with_output_tokens += 1
+
+            if thinking_tokens is not None:
+                thinking_tokens_total += thinking_tokens
+                has_any_tokens = True
+                if thinking_tokens > 0:
+                    attempts_with_thinking_tokens += 1
+
+            if has_any_tokens:
+                attempts_with_token_usage += 1
+
+    non_cached_input_tokens_total = max(input_tokens_total - cached_input_tokens_total, 0.0)
+
+    return {
+        "attempts_total": attempts_total,
+        "attempts_with_token_usage": attempts_with_token_usage,
+        "attempts_with_output_tokens": attempts_with_output_tokens,
+        "attempts_with_cached_input_tokens": attempts_with_cached_input_tokens,
+        "attempts_with_thinking_tokens": attempts_with_thinking_tokens,
+        "input_tokens_total": _normalize_metric_number(input_tokens_total),
+        "cached_input_tokens_total": _normalize_metric_number(cached_input_tokens_total),
+        "non_cached_input_tokens_total": _normalize_metric_number(non_cached_input_tokens_total),
+        "output_tokens_total": _normalize_metric_number(output_tokens_total),
+        "thinking_tokens_total": _normalize_metric_number(thinking_tokens_total),
+        "output_tokens_definition": "total_tokens - prompt_tokens (or completion_tokens + thinking_tokens fallback)",
+    }
+
+
 def is_placeholder_value(value: Optional[str]) -> bool:
     """Return True if a value looks like an unresolved placeholder token."""
     if value is None:
@@ -5558,6 +5721,7 @@ def process_dataset(
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
+    token_usage_totals = compute_token_usage_totals(log_records)
     cache_padding_summary = {
         "enabled": cache_pad_target_tokens > 0,
         "target_shared_prefix_tokens": cache_pad_target_tokens,
@@ -5576,6 +5740,7 @@ def process_dataset(
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
+        "token_usage_totals": token_usage_totals,
         "truth_label_count": len(evaluated_truths),
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),
@@ -5794,6 +5959,7 @@ def process_metrics_only_output(
     }
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
+    token_usage_totals = compute_token_usage_totals(log_records)
     run_model_details = extract_model_details_from_log_records(log_records) or build_run_model_details(
         provider=getattr(args, "provider", "openai"),
         requested_model=str(getattr(args, "model", "") or ""),
@@ -5820,6 +5986,7 @@ def process_metrics_only_output(
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
+        "token_usage_totals": token_usage_totals,
         "mode": "metrics_only",
         "source_output_csv": os.path.abspath(resolved_output),
         "truth_label_count": len(evaluated_truths),
