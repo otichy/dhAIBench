@@ -121,8 +121,8 @@ class MultithreadSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "output.csv")
-            log_path = os.path.splitext(output_path)[0] + ".log"
-            metrics_path = os.path.splitext(output_path)[0] + "_metrics.json"
+            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
+            metrics_path = ba.build_artifact_path(output_path, "_metrics.json", ba.DEFAULT_METRICS_DIR)
             _write_input_csv(input_path, ids)
 
             with patch.object(ba, "classify_example", side_effect=stub):
@@ -190,7 +190,7 @@ class MultithreadSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "output.csv")
-            log_path = os.path.splitext(output_path)[0] + ".log"
+            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
             _write_input_csv(input_path, ids)
 
             with open(output_path, "w", encoding="utf-8", newline="") as handle:

@@ -453,14 +453,14 @@
                   <textarea
                     id="input_path"
                     name="input_path"
-                    placeholder="data/examples.csv&#10;data/examples_2.csv"
+                    placeholder="/data/input/examples.csv&#10;/data/input/examples_2.csv"
                     required
                   ></textarea>
                   <span class="hint">Provide one path per line.</span>
                 </label>
                 <label
                   >Output CSV Path
-                  <input type="text" id="output_path" name="output_path" placeholder="data/output.csv" />
+                  <input type="text" id="output_path" name="output_path" placeholder="/data/output/results.csv" />
                   <span class="hint">Optional: dir for multi-file input or an existing file to resume.</span>
                 </label>
               </section>
@@ -708,7 +708,7 @@
               <div class="grid">
                 <label
                   >Labels CSV Path
-                  <input type="text" id="labels_path" name="labels_path" placeholder="data/labels.csv" />
+                  <input type="text" id="labels_path" name="labels_path" placeholder="/data/input/labels.csv" />
                 </label>
                 <label class="inline">
                   <input type="checkbox" id="metrics_only" name="metrics_only" />

@@ -14,6 +14,7 @@ import base64
 import codecs
 import copy
 import csv
+import hashlib
 import json
 import logging
 import math
@@ -65,6 +66,24 @@ PROMPT_LOG_DETAIL_COMPACT = "compact"
 DEFAULT_PROMPT_LOG_DETAIL = PROMPT_LOG_DETAIL_FULL
 DEFAULT_FLUSH_ROWS = 100
 DEFAULT_FLUSH_SECONDS = 2.0
+DATA_ROOT_DIR = "/data"
+DEFAULT_INPUT_DIR = os.path.join(DATA_ROOT_DIR, "input")
+DEFAULT_OUTPUT_DIR = os.path.join(DATA_ROOT_DIR, "output")
+DEFAULT_METRICS_DIR = os.path.join(DATA_ROOT_DIR, "metrics")
+DEFAULT_LOGS_DIR = os.path.join(DATA_ROOT_DIR, "logs")
+
+
+def ensure_data_layout() -> None:
+    """Create standard data directories when missing."""
+    for path in (DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_METRICS_DIR, DEFAULT_LOGS_DIR):
+        os.makedirs(path, exist_ok=True)
+
+
+def build_artifact_path(output_csv_path: str, suffix: str, target_dir: str) -> str:
+    """Build a stable artifact path in a dedicated target directory."""
+    base_name = os.path.splitext(os.path.basename(output_csv_path))[0]
+    output_fingerprint = hashlib.sha1(os.path.abspath(output_csv_path).encode("utf-8")).hexdigest()[:10]
+    return os.path.join(target_dir, f"{base_name}_{output_fingerprint}{suffix}")
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -1092,7 +1111,8 @@ def resolve_output_path(
             os.makedirs(resolved_argument, exist_ok=True)
             return os.path.join(os.path.abspath(resolved_argument), filename)
         return resolved_argument
-    return os.path.join(os.path.dirname(os.path.abspath(input_path)), filename)
+    ensure_data_layout()
+    return os.path.join(DEFAULT_OUTPUT_DIR, filename)
 
 
 def mark_node_in_context(left: str, node: str, right: str) -> str:
@@ -5119,7 +5139,8 @@ def process_dataset(
         )
 
     ensure_directory(output_path)
-    log_path = os.path.splitext(output_path)[0] + ".log"
+    ensure_data_layout()
+    log_path = build_artifact_path(output_path, ".log", DEFAULT_LOGS_DIR)
     ensure_directory(log_path)
     fieldnames = [
         "ID",
@@ -5675,7 +5696,7 @@ def process_dataset(
 
     logging.info("Saved prompt log to %s", log_path)
 
-    metrics_output = os.path.splitext(output_path)[0] + "_metrics.json"
+    metrics_output = build_artifact_path(output_path, "_metrics.json", DEFAULT_METRICS_DIR)
 
     missing_predictions = [
         ex.example_id for ex in examples if ex.example_id not in predictions
@@ -5768,7 +5789,7 @@ def process_dataset(
     confusion = metrics.get("confusion_matrix")
     labels = metrics.get("labels", [])
     if confusion:
-        heatmap_path = os.path.splitext(output_path)[0] + "_confusion_heatmap.png"
+        heatmap_path = build_artifact_path(output_path, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
         generate_confusion_heatmap(confusion, labels, heatmap_path)
 
     configured_controls_non_null = request_control_summary.get("configured", {})
@@ -5832,7 +5853,7 @@ def process_dataset(
         )
 
     if calibration_enabled and confidences and correctness:
-        calibration_path = os.path.splitext(output_path)[0] + "_calibration.png"
+        calibration_path = build_artifact_path(output_path, "_calibration.png", DEFAULT_METRICS_DIR)
         generate_calibration_plot(confidences, correctness, calibration_path)
 
     if "accuracy" in metrics:
@@ -5945,7 +5966,11 @@ def process_metrics_only_output(
         correctness.append(prediction.label == truth)
         confidences.append(prediction.confidence)
 
-    log_path = os.path.splitext(resolved_output)[0] + ".log"
+    ensure_data_layout()
+    log_path = build_artifact_path(resolved_output, ".log", DEFAULT_LOGS_DIR)
+    if not os.path.exists(log_path):
+        legacy_log_path = os.path.splitext(resolved_output)[0] + ".log"
+        log_path = legacy_log_path if os.path.exists(legacy_log_path) else log_path
     log_records = load_existing_prompt_log(log_path)
     prompt_time_window = compute_prompt_time_window(log_records)
     configured_controls = {
@@ -5979,7 +6004,7 @@ def process_metrics_only_output(
         "examples_with_padding_applied": 0,
     }
 
-    metrics_output = os.path.splitext(resolved_output)[0] + "_metrics.json"
+    metrics_output = build_artifact_path(resolved_output, "_metrics.json", DEFAULT_METRICS_DIR)
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
         "prompt_layout": None,
@@ -6020,11 +6045,11 @@ def process_metrics_only_output(
     confusion = metrics.get("confusion_matrix")
     labels = metrics.get("labels", [])
     if confusion:
-        heatmap_path = os.path.splitext(resolved_output)[0] + "_confusion_heatmap.png"
+        heatmap_path = build_artifact_path(resolved_output, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
         generate_confusion_heatmap(confusion, labels, heatmap_path)
 
     if calibration_enabled and confidences and correctness:
-        calibration_path = os.path.splitext(resolved_output)[0] + "_calibration.png"
+        calibration_path = build_artifact_path(resolved_output, "_calibration.png", DEFAULT_METRICS_DIR)
         generate_calibration_plot(confidences, correctness, calibration_path)
 
     if "accuracy" in metrics:
@@ -6053,7 +6078,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         description="Benchmark an OpenAI model on a linguistic classification dataset."
     )
 
-    parser.add_argument("--input", nargs="+", help="Path(s) to input CSV file(s) with examples.")
+    parser.add_argument("--input", nargs="+", help=f"Path(s) to input CSV file(s) with examples (default location: {DEFAULT_INPUT_DIR}).")
     parser.add_argument(
         "--labels",
         help="Optional path to CSV file that provides ground-truth labels (ID;truth).",
@@ -6482,10 +6507,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         args.system_prompt = decode_cli_system_prompt(args.system_prompt)
 
+    ensure_data_layout()
+    session_log_file = os.path.join(
+        DEFAULT_LOGS_DIR,
+        f"benchmark_agent_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.log",
+    )
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(session_log_file, encoding="utf-8"),
+        ],
     )
+    logging.info("Session log file: %s", session_log_file)
 
     if args.update_models and args.summarize_log_errors:
         parser.error("--summarize-log-errors and --update-models cannot be used together.")
@@ -6534,7 +6569,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.metrics_only:
         if args.output:
             logging.warning(
-                "--output is ignored in --metrics_only mode. Metrics are written next to each input output CSV."
+                "--output is ignored in --metrics_only mode. Metrics are written to /data/metrics."
             )
         if args.create_gemini_cache:
             logging.warning("--create_gemini_cache is ignored in --metrics_only mode.")

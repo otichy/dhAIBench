@@ -10,14 +10,14 @@ from pathlib import Path
 
 def main() -> int:
     web_dir = Path(__file__).resolve().parent
-    metrics_dir = web_dir / "metrics"
+    metrics_dir = web_dir.parent / "data" / "metrics"
     output_path = web_dir / "metrics-manifest.json"
 
     if not metrics_dir.exists():
         raise FileNotFoundError(f"Missing metrics directory: {metrics_dir}")
 
     files = sorted(
-        f"metrics/{path.name}"
+        f"../data/metrics/{path.name}"
         for path in metrics_dir.glob("*_metrics.json")
         if path.is_file()
     )

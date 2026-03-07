@@ -151,7 +151,7 @@ class PromptLogNdjsonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.csv")
             output_path = os.path.join(tmpdir, "out.csv")
-            log_path = os.path.splitext(output_path)[0] + ".log"
+            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
             _write_input(input_path, ["id1", "id2"])
 
             with open(output_path, "w", encoding="utf-8", newline="") as handle:
