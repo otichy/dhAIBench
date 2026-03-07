@@ -5,6 +5,6 @@ config_models.js
 /data/output/
 /data/metrics/*
 !/data/metrics/.gitkeep
-!/data/metrics/*_metrics.json
+/data/metrics/*_metrics.json
 __pycache__/
 *.py[cod]
