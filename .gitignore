@@ -1,5 +1,10 @@
 .env
 config_models.js
-/data
+/data/logs/
+/data/input/
+/data/output/
+/data/metrics/*
+!/data/metrics/.gitkeep
+!/data/metrics/*_metrics.json
 __pycache__/
 *.py[cod]

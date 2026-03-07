@@ -1,4 +1,6 @@
 const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
+const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
+const METRICS_SERVER_DIR = "../data/metrics";
 
 const state = {
   runs: [],
@@ -186,7 +188,7 @@ function dedupeRuns(runs) {
 
 async function discoverMetricFilesFromServer() {
   try {
-    const manifestRes = await fetch("./metrics-manifest.json", { cache: "no-store" });
+    const manifestRes = await fetch(METRICS_MANIFEST_PATH, { cache: "no-store" });
     if (manifestRes.ok) {
       const manifest = await manifestRes.json();
       if (Array.isArray(manifest.metrics_files) && manifest.metrics_files.length) {
@@ -197,15 +199,15 @@ async function discoverMetricFilesFromServer() {
     // Fallback below.
   }
 
-  const dirRes = await fetch("./metrics/", { cache: "no-store" });
+  const dirRes = await fetch(`${METRICS_SERVER_DIR}/`, { cache: "no-store" });
   if (!dirRes.ok) {
-    throw new Error("Unable to load metrics manifest or metrics directory listing.");
+    throw new Error(`Unable to load metrics manifest or metrics directory listing from ${METRICS_SERVER_DIR}/.`);
   }
   const html = await dirRes.text();
   const matches = [...html.matchAll(/href=\"([^\"]+_metrics\.json)\"/gi)];
-  const files = matches.map((match) => `metrics/${decodeURIComponent(match[1])}`);
+  const files = matches.map((match) => `${METRICS_SERVER_DIR}/${decodeURIComponent(match[1])}`);
   if (!files.length) {
-    throw new Error("No *_metrics.json files discovered on server path ./metrics/.");
+    throw new Error(`No *_metrics.json files discovered on server path ${METRICS_SERVER_DIR}/.`);
   }
   return files.sort();
 }
@@ -217,7 +219,7 @@ async function loadFromServer() {
 
   for (const path of files) {
     try {
-      const res = await fetch(`./${path}`, { cache: "no-store" });
+      const res = await fetch(path, { cache: "no-store" });
       if (!res.ok) {
         warnings.push({
           file: path,
@@ -352,7 +354,7 @@ function updateSourceStatus(customHint = "") {
     if (isFileProtocol() && state.sourceMode === "none") {
       hint = "file:// mode: browsers block automatic folder scanning. Use Open Metrics Folder or Open Metrics Files.";
     } else if (state.sourceMode === "server") {
-      hint = "Server mode: loading from ./metrics-manifest.json or ./metrics/ listing.";
+      hint = `Server mode: loading from ${METRICS_MANIFEST_PATH} or ${METRICS_SERVER_DIR}/ listing.`;
     } else if (state.sourceMode === "folder") {
       hint = "Folder mode: loaded from browser-granted local folder access.";
     } else if (state.sourceMode === "files") {

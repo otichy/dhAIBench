@@ -53,8 +53,8 @@ When `--labels` is provided, supply a second CSV with `ID;truth` columns. The sc
 
 ```bash
 python benchmark_agent.py ^
-  --input data/input.csv data/input_extra.csv ^
-  --output runs/ ^
+  --input /data/input/input.csv /data/input/input_extra.csv ^
+  --output /data/output/ ^
   --model gpt-4o-mini ^
   --temperature 0.0 ^
   --top_p 1.0 ^
@@ -70,7 +70,7 @@ python benchmark_agent.py ^
 
 On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
-When `--output` is omitted, each input file produces a sibling result named `<input_basename>_out_<provider>_<model>_<timestamp>.csv` (plus matching metrics and optional calibration artifacts).
+When `--output` is omitted, each input file produces `/data/output/<input_basename>_out_<provider>_<model>_<timestamp>.csv`. Metrics JSON and chart artifacts are written to `/data/metrics`, and prompt/session logs are written to `/data/logs`.
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
 When `--threads` is greater than `1`, classification requests run concurrently but output rows are still written in input order, so resume behavior remains unchanged.
 
@@ -96,7 +96,7 @@ python benchmark_agent.py ^
   --labels data/new_truth_labels.csv
 ```
 
-In `--metrics_only` mode, `--output` is ignored; metrics artifacts are written next to each `--input` file.
+In `--metrics_only` mode, `--output` is ignored; metrics artifacts are written to `/data/metrics`.
 
 ### System Prompts and Encoding
 
@@ -296,12 +296,12 @@ When enabled, the output CSV gains two extra columns: `validatorStatus` and `val
 Running the agent creates:
 
 - A semicolon-separated predictions file (`--output`) containing the original context, predicted label, explanation (when requested), and token usage statistics. Confidence is included when the model supplies a valid value; entries that violated the span contract omit it.
-- A JSON metrics report (`<output_basename>_metrics.json`) with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
+- A JSON metrics report in `/data/metrics/<output_basename>_metrics.json` with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
   The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, `verbosity`, `prompt_cache_key`, `gemini_cached_content`, and `requesty_auto_cache` controls when used.
   It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
-- A dual-panel confusion heatmap (`<output_basename>_confusion_heatmap.png`) showing absolute counts alongside row-normalized percentages.
-- Optionally, a calibration plot (`<output_basename>_calibration.png`) summarizing confidence reliability.
-- A prompt log (`<output_basename>.log`) in **NDJSON** format (one JSON object per line), capturing every attempt for auditability.
+- A dual-panel confusion heatmap in `/data/metrics/<output_basename>_confusion_heatmap.png` showing absolute counts alongside row-normalized percentages.
+- Optionally, a calibration plot in `/data/metrics/<output_basename>_calibration.png` summarizing confidence reliability.
+- A prompt log in `/data/logs/<output_basename>.log` in **NDJSON** format (one JSON object per line), capturing every attempt for auditability.
   The prompt log stores `run_metadata`, `run_command`, and per-example `example_result` records.
   On resume, legacy JSON-array logs are auto-migrated to NDJSON once, with backup written as `<output_basename>.log.legacy.json`.
 

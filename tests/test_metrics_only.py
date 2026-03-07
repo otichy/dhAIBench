@@ -30,7 +30,7 @@ class MetricsOnlyTests(unittest.TestCase):
     def test_metrics_only_writes_run_metrics_without_truth_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_csv = os.path.join(tmpdir, "existing_output.csv")
-            metrics_json = os.path.splitext(output_csv)[0] + "_metrics.json"
+            metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
             with open(output_csv, "w", encoding="utf-8", newline="") as handle:
                 writer = csv.DictWriter(
                     handle,
@@ -64,7 +64,7 @@ class MetricsOnlyTests(unittest.TestCase):
     def test_metrics_only_uses_truth_column_from_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_csv = os.path.join(tmpdir, "existing_output.csv")
-            metrics_json = os.path.splitext(output_csv)[0] + "_metrics.json"
+            metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
             _write_output_csv(
                 output_csv,
                 [
@@ -97,7 +97,7 @@ class MetricsOnlyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_csv = os.path.join(tmpdir, "existing_output.csv")
             labels_csv = os.path.join(tmpdir, "new_labels.csv")
-            metrics_json = os.path.splitext(output_csv)[0] + "_metrics.json"
+            metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
             _write_output_csv(
                 output_csv,
                 [

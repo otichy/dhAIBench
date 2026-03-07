@@ -4,7 +4,7 @@ This folder contains a static dashboard for benchmark metrics.
 
 ## Local-Only Mode (No Webserver, No Preprocessing)
 
-1. Put your `*_metrics.json` files into `web/metrics/`.
+1. Put your `*_metrics.json` files into `/data/metrics/`.
 2. Open `web/index.html` directly in a browser (`file://.../web/index.html`).
 3. Use one of these buttons in the **Data Source** panel:
 - `Open Metrics Folder` (Chrome/Edge, File System Access API)
@@ -24,6 +24,6 @@ Open `http://localhost:8000/web/`.
 
 In server mode, the app auto-loads metrics via:
 1. `web/metrics-manifest.json` if present
-2. otherwise `web/metrics/` directory listing fallback
+2. otherwise `../data/metrics/` directory listing fallback
 
 `web/generate_metrics_manifest.py` is optional optimization only.
