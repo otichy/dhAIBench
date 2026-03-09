@@ -6,5 +6,6 @@ config_models.js
 /data/metrics/*
 !/data/metrics/.gitkeep
 /data/metrics/*_metrics.json
+/data/backup
 __pycache__/
 *.py[cod]

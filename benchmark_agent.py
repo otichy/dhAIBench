@@ -1830,8 +1830,6 @@ def build_run_model_details(
         "model_requested": str(requested_model or "").strip(),
         "model_for_requests": normalized_request_model,
         "api_base_url": api_base_url or "",
-        "api_key_var": str(api_key_var or "").strip(),
-        "api_base_var": str(api_base_var or "").strip(),
         "chat_completions_endpoint": (
             f"{api_base_url.rstrip('/')}/chat/completions" if api_base_url else ""
         ),
@@ -1843,6 +1841,14 @@ def build_run_model_details(
     if gemini_cached_content:
         details["gemini_cached_content"] = str(gemini_cached_content).strip()
     return details
+
+
+def sanitize_model_details_for_metrics(model_details: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop config-only fields that should not be persisted in metrics artifacts."""
+    sanitized = dict(model_details)
+    sanitized.pop("api_key_var", None)
+    sanitized.pop("api_base_var", None)
+    return sanitized
 
 
 def build_prompt_log_run_metadata_record(model_details: Dict[str, Any]) -> Dict[str, Any]:
@@ -2817,7 +2823,7 @@ def extract_model_details_from_log_records(
             continue
         model_details = record.get("model_details")
         if isinstance(model_details, dict):
-            latest_model_details = model_details
+            latest_model_details = sanitize_model_details_for_metrics(model_details)
     return latest_model_details
 
 

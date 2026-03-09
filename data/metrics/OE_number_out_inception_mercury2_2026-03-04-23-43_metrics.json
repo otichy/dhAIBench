@@ -4,8 +4,6 @@
     "model_requested": "mercury-2",
     "model_for_requests": "mercury-2",
     "api_base_url": "https://api.inceptionlabs.ai/v1",
-    "api_key_var": "INCEPTION_API_KEY",
-    "api_base_var": "INCEPTION_BASE_URL",
     "chat_completions_endpoint": "https://api.inceptionlabs.ai/v1/chat/completions"
   },
   "prompt_layout": "standard",

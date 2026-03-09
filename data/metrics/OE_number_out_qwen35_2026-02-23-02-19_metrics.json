@@ -1,41 +1,22 @@
 {
-  "accuracy": 0.9708333333333333,
-  "macro_precision": 0.9550164769844989,
-  "macro_recall": 0.9631134618719553,
-  "macro_f1": 0.95898337361752,
-  "per_label": {
-    "plural": {
-      "precision": 0.9252669039145908,
-      "recall": 0.948905109489051,
-      "f1": 0.9369369369369368,
-      "support": 274
-    },
-    "singular": {
-      "precision": 0.984766050054407,
-      "recall": 0.9773218142548596,
-      "f1": 0.981029810298103,
-      "support": 926
-    }
+  "model_details": {
+    "provider": "openai",
+    "model_requested": "",
+    "model_for_requests": "",
+    "api_base_url": "",
+    "chat_completions_endpoint": ""
   },
-  "confusion_matrix": {
-    "plural": {
-      "plural": 260,
-      "singular": 14
-    },
-    "singular": {
-      "plural": 21,
-      "singular": 905
-    }
+  "prompt_layout": null,
+  "cache_padding": {
+    "enabled": false,
+    "target_shared_prefix_tokens": 0,
+    "calibration_shared_prefix_tokens": null,
+    "target_prompt_tokens": 0,
+    "calibration_prompt_tokens": null,
+    "calibration_example_id": null,
+    "applied_padding_tokens_estimate": 0,
+    "examples_with_padding_applied": 0
   },
-  "labels": [
-    "plural",
-    "singular"
-  ],
-  "total_examples": 1200,
-  "first_prompt_timestamp": "2026-02-23T01:19:56.706842Z",
-  "last_prompt_timestamp": "2026-02-23T12:21:25.974281Z",
-  "overall_time_seconds": 39689.267439,
-  "overall_time_human": "11h 01m 29s",
   "request_control_summary": {
     "configured": {},
     "attempts_total": 1206,
@@ -73,7 +54,120 @@
         "acceptance_rate": null,
         "rejected_reasons": {},
         "rejected_example_ids": []
+      },
+      "verbosity": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "prompt_cache_key": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "gemini_cached_content": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
+      },
+      "requesty_auto_cache": {
+        "configured_value": null,
+        "requested_attempts": 0,
+        "sent_attempts": 0,
+        "accepted_attempts": 0,
+        "rejected_attempts": 0,
+        "missing_from_final_request_attempts": 0,
+        "acceptance_rate": null,
+        "rejected_reasons": {},
+        "rejected_example_ids": []
       }
     }
-  }
+  },
+  "usage_metadata_summary": {
+    "attempts_total": 1206,
+    "attempts_with_usage_metadata": 0,
+    "attempts_with_cached_token_signals": 0,
+    "cached_tokens_total_estimate": 0,
+    "cache_read_tokens_total": 0,
+    "cache_write_tokens_total": 0,
+    "cache_token_fields_totals": {},
+    "attempts_with_gemini_cached_content_token_signals": 0,
+    "gemini_cached_content_token_count_total": 0,
+    "gemini_cached_content_token_fields_totals": {}
+  },
+  "token_usage_totals": {
+    "attempts_total": 1206,
+    "attempts_with_token_usage": 1206,
+    "attempts_with_output_tokens": 1206,
+    "attempts_with_cached_input_tokens": 0,
+    "attempts_with_thinking_tokens": 0,
+    "input_tokens_total": 886818,
+    "cached_input_tokens_total": 0,
+    "non_cached_input_tokens_total": 886818,
+    "output_tokens_total": 4146884,
+    "thinking_tokens_total": 0,
+    "output_tokens_definition": "total_tokens - prompt_tokens (or completion_tokens + thinking_tokens fallback)"
+  },
+  "mode": "metrics_only",
+  "source_output_csv": "D:\\OneDrive - Filozofická fakulta, Univerzita Karlova\\Skola\\ai\\dhAIBench\\dhAIBench\\data\\OE_number_out_qwen35_2026-02-23-02-19.csv",
+  "truth_label_count": 1200,
+  "prediction_count": 1200,
+  "evaluated_example_count": 1200,
+  "first_prompt_timestamp": "2026-02-23T01:19:56.706842Z",
+  "last_prompt_timestamp": "2026-02-23T12:21:25.974281Z",
+  "overall_time_seconds": 39689.267439,
+  "overall_time_human": "11h 01m 29s",
+  "truth_source": "output_csv_truth_column",
+  "accuracy": 0.9708333333333333,
+  "macro_precision": 0.9550164769844989,
+  "macro_recall": 0.9631134618719553,
+  "macro_f1": 0.95898337361752,
+  "per_label": {
+    "plural": {
+      "precision": 0.9252669039145908,
+      "recall": 0.948905109489051,
+      "f1": 0.9369369369369368,
+      "support": 274
+    },
+    "singular": {
+      "precision": 0.984766050054407,
+      "recall": 0.9773218142548596,
+      "f1": 0.981029810298103,
+      "support": 926
+    }
+  },
+  "confusion_matrix": {
+    "plural": {
+      "plural": 260,
+      "singular": 14
+    },
+    "singular": {
+      "plural": 21,
+      "singular": 905
+    }
+  },
+  "labels": [
+    "plural",
+    "singular"
+  ],
+  "total_examples": 1200,
+  "label_metrics_available": true
 }

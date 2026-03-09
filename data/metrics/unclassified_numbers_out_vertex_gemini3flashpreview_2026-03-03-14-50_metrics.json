@@ -4,8 +4,6 @@
     "model_requested": "gemini-3-flash-preview",
     "model_for_requests": "google/gemini-3-flash-preview",
     "api_base_url": "https://aiplatform.googleapis.com/v1/projects/gen-lang-client-0461875984/locations/global/endpoints/openapi",
-    "api_key_var": "VERTEX_ACCESS_TOKEN",
-    "api_base_var": "VERTEX_BASE_URL",
     "chat_completions_endpoint": "https://aiplatform.googleapis.com/v1/projects/gen-lang-client-0461875984/locations/global/endpoints/openapi/chat/completions",
     "vertex_cache_model": "projects/gen-lang-client-0461875984/locations/global/publishers/google/models/gemini-3-flash-preview",
     "gemini_cached_content": "projects/972860687194/locations/global/cachedContents/6666559794884640768"
