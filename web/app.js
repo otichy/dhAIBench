@@ -202,6 +202,25 @@ function safeNum(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function asTrimmedString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseSemicolonTags(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((tag) => asTrimmedString(tag))
+      .filter(Boolean);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(";")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
 function normalizeRun(filePath, payload) {
   const normalizedFilePath = normalizeMetricsPath(filePath);
   const fileName = getFileNameFromPath(normalizedFilePath);
@@ -212,6 +231,16 @@ function normalizeRun(filePath, payload) {
   const tokenTotals = payload.token_usage_totals || {};
   const controls = payload.request_control_summary || {};
   const ts = payload.first_prompt_timestamp || nameParts.timestamp;
+  const taskNameFromMetrics = asTrimmedString(payload.task_name);
+  const providerFromMetrics =
+    asTrimmedString(modelDetails.provider) || asTrimmedString(payload.provider);
+  const modelFromMetrics =
+    asTrimmedString(modelDetails.model_requested) ||
+    asTrimmedString(modelDetails.model_for_requests) ||
+    asTrimmedString(payload.model_requested) ||
+    asTrimmedString(payload.model);
+  const taskDescription = asTrimmedString(payload.task_description);
+  const tags = parseSemicolonTags(payload.tags);
 
   const accuracy = toPct(safeNum(payload.accuracy));
   const macroF1 = toPct(safeNum(payload.macro_f1));
@@ -220,12 +249,12 @@ function normalizeRun(filePath, payload) {
     filePath: normalizedFilePath,
     fileName,
     runStem,
-    task: nameParts.task,
-    provider: modelDetails.provider || nameParts.provider || "",
-    model:
-      modelDetails.model_requested ||
-      modelDetails.model_for_requests ||
-      nameParts.model,
+    task: taskNameFromMetrics || nameParts.task,
+    taskDescription,
+    tags,
+    tagsDisplay: tags.join("; "),
+    provider: providerFromMetrics || nameParts.provider || "",
+    model: modelFromMetrics || nameParts.model,
     timestamp: ts,
     accuracy,
     macroF1,
@@ -1004,6 +1033,8 @@ function fillRunDetailsContent(run) {
   }
   const detailPairs = [
     ["Task", run.task],
+    ["Task Description", run.taskDescription],
+    ["Tags", run.tagsDisplay],
     ["Model", run.model],
     ["Timestamp", formatTs(run.timestamp)],
     ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],

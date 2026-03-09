@@ -1914,6 +1914,69 @@ def normalize_model_for_provider(provider: str, model: str) -> str:
     return normalized
 
 
+def parse_run_metadata_from_metrics_path(metrics_output_path: str) -> Tuple[str, str, str]:
+    """Infer task/provider/model hints from a metrics filename."""
+    base_name = os.path.splitext(os.path.basename(str(metrics_output_path or "")))[0]
+    base_without_suffix = re.sub(r"(?:__metrics|_metrics)$", "", base_name, flags=re.IGNORECASE)
+    parsed = parse_run_basename(base_without_suffix) or {}
+    task_name = str(parsed.get("task") or base_without_suffix).strip()
+    provider = str(parsed.get("provider") or "").strip()
+    model_requested = str(parsed.get("model") or "").strip()
+    return task_name, provider, model_requested
+
+
+def normalize_metrics_tags_value(raw_tags: Any) -> str:
+    """Normalize metrics tags into a semicolon-delimited string."""
+    if isinstance(raw_tags, list):
+        cleaned = [str(item).strip() for item in raw_tags if str(item).strip()]
+        return "; ".join(cleaned)
+    if isinstance(raw_tags, str):
+        return raw_tags.strip()
+    return ""
+
+
+def ensure_metrics_metadata_fields(metrics: Dict[str, Any], metrics_output_path: str) -> Dict[str, Any]:
+    """Ensure metadata/editable fields exist in a metrics payload."""
+    payload = dict(metrics)
+    task_name_from_file, provider_from_file, model_from_file = parse_run_metadata_from_metrics_path(
+        metrics_output_path
+    )
+
+    existing_task_name = payload.get("task_name")
+    if isinstance(existing_task_name, str) and existing_task_name.strip():
+        payload["task_name"] = existing_task_name.strip()
+    else:
+        payload["task_name"] = task_name_from_file
+
+    task_description = payload.get("task_description")
+    payload["task_description"] = task_description.strip() if isinstance(task_description, str) else ""
+    payload["tags"] = normalize_metrics_tags_value(payload.get("tags"))
+
+    model_details_raw = payload.get("model_details")
+    model_details = dict(model_details_raw) if isinstance(model_details_raw, dict) else {}
+
+    provider_value = str(model_details.get("provider") or "").strip() or provider_from_file
+    model_requested_value = str(model_details.get("model_requested") or "").strip() or model_from_file
+    model_for_requests_value = str(model_details.get("model_for_requests") or "").strip()
+    if not model_for_requests_value and model_requested_value:
+        model_for_requests_value = normalize_model_for_provider(provider_value, model_requested_value)
+
+    api_base_url_value = model_details.get("api_base_url")
+    api_base_url = api_base_url_value.strip() if isinstance(api_base_url_value, str) else ""
+    endpoint_value = model_details.get("chat_completions_endpoint")
+    chat_completions_endpoint = endpoint_value.strip() if isinstance(endpoint_value, str) else ""
+    if not chat_completions_endpoint and api_base_url:
+        chat_completions_endpoint = f"{api_base_url.rstrip('/')}/chat/completions"
+
+    model_details["provider"] = provider_value
+    model_details["model_requested"] = model_requested_value
+    model_details["model_for_requests"] = model_for_requests_value
+    model_details["api_base_url"] = api_base_url
+    model_details["chat_completions_endpoint"] = chat_completions_endpoint
+    payload["model_details"] = model_details
+    return payload
+
+
 def build_run_model_details(
     provider: str,
     requested_model: str,
@@ -5863,7 +5926,10 @@ def process_dataset(
 
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
+        "task_name": "",
         "prompt_layout": args.prompt_layout,
+        "task_description": "",
+        "tags": "",
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
@@ -5881,6 +5947,7 @@ def process_dataset(
         metrics["label_metrics_reason"] = "no_ground_truth_labels"
         logging.warning("No ground-truth labels available; skipping label-based metric computation.")
 
+    metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)
     logging.info("Saved metrics to %s", metrics_output)
@@ -6113,7 +6180,10 @@ def process_metrics_only_output(
     metrics_output = build_artifact_path(resolved_output, "_metrics.json", DEFAULT_METRICS_DIR)
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
+        "task_name": "",
         "prompt_layout": None,
+        "task_description": "",
+        "tags": "",
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
@@ -6145,6 +6215,7 @@ def process_metrics_only_output(
             resolved_output,
         )
 
+    metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)
     logging.info("Saved metrics to %s", metrics_output)

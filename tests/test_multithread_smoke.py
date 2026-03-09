@@ -173,6 +173,16 @@ class MultithreadSmokeTests(unittest.TestCase):
             self.assertNotIn("accuracy", metrics_payload)
             self.assertEqual(metrics_payload.get("prediction_count"), len(ids))
             self.assertEqual(metrics_payload.get("truth_label_count"), 0)
+            self.assertEqual(metrics_payload.get("task_name"), "output")
+            self.assertEqual(metrics_payload.get("task_description"), "")
+            self.assertEqual(metrics_payload.get("tags"), "")
+            model_details = metrics_payload.get("model_details")
+            self.assertIsInstance(model_details, dict)
+            self.assertIn("provider", model_details)
+            self.assertIn("model_requested", model_details)
+            self.assertIn("model_for_requests", model_details)
+            self.assertIn("api_base_url", model_details)
+            self.assertIn("chat_completions_endpoint", model_details)
             self.assertEqual(
                 run_command_records[0].get("reason"),
                 "initial_run",

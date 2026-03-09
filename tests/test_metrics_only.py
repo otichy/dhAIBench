@@ -60,6 +60,16 @@ class MetricsOnlyTests(unittest.TestCase):
             self.assertNotIn("accuracy", payload)
             self.assertEqual(payload.get("prediction_count"), 2)
             self.assertEqual(payload.get("truth_label_count"), 0)
+            self.assertEqual(payload.get("task_name"), "existing_output")
+            self.assertEqual(payload.get("task_description"), "")
+            self.assertEqual(payload.get("tags"), "")
+            model_details = payload.get("model_details")
+            self.assertIsInstance(model_details, dict)
+            self.assertIn("provider", model_details)
+            self.assertIn("model_requested", model_details)
+            self.assertIn("model_for_requests", model_details)
+            self.assertIn("api_base_url", model_details)
+            self.assertIn("chat_completions_endpoint", model_details)
 
     def test_metrics_only_uses_truth_column_from_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

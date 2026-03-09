@@ -299,6 +299,7 @@ Running the agent creates:
 - A JSON metrics report in `/data/metrics/<output_basename>__metrics.json` with accuracy, macro F1, per-label precision/recall/F1, and a confusion matrix.
   The metrics JSON also includes `request_control_summary` with run-level acceptance/rejection counts for `reasoning_effort`, `thinking_level`, `effort`, `verbosity`, `prompt_cache_key`, `gemini_cached_content`, and `requesty_auto_cache` controls when used.
   It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
+  It includes `task_name` plus editable placeholders `task_description` and `tags` (semicolon-delimited) for dashboard annotations.
 - A dual-panel confusion heatmap in `/data/metrics/<output_basename>__heatmap.png` showing absolute counts alongside row-normalized percentages.
 - Optionally, a calibration plot in `/data/metrics/<output_basename>__calibration.png` summarizing confidence reliability.
 - A prompt log in `/data/logs/<output_basename>.log` in **NDJSON** format (one JSON object per line), capturing every attempt for auditability.
