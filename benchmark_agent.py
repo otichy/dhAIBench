@@ -14,7 +14,6 @@ import base64
 import codecs
 import copy
 import csv
-import hashlib
 import json
 import logging
 import math
@@ -71,6 +70,13 @@ DEFAULT_INPUT_DIR = os.path.join(DATA_ROOT_DIR, "input")
 DEFAULT_OUTPUT_DIR = os.path.join(DATA_ROOT_DIR, "output")
 DEFAULT_METRICS_DIR = os.path.join(DATA_ROOT_DIR, "metrics")
 DEFAULT_LOGS_DIR = os.path.join(DATA_ROOT_DIR, "logs")
+RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
+OLD_RUN_BASENAME_RE = re.compile(
+    rf"^(?P<task>.+?)_out_(?P<tail>.+?)_(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
+)
+NEW_RUN_BASENAME_RE = re.compile(
+    rf"^(?P<task>.+?)__(?P<provider>.*?)__(?P<model>.*?)__(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
+)
 
 
 def ensure_data_layout() -> None:
@@ -82,8 +88,14 @@ def ensure_data_layout() -> None:
 def build_artifact_path(output_csv_path: str, suffix: str, target_dir: str) -> str:
     """Build a stable artifact path in a dedicated target directory."""
     base_name = os.path.splitext(os.path.basename(output_csv_path))[0]
-    output_fingerprint = hashlib.sha1(os.path.abspath(output_csv_path).encode("utf-8")).hexdigest()[:10]
-    return os.path.join(target_dir, f"{base_name}_{output_fingerprint}{suffix}")
+    normalized_base = normalize_run_basename_for_artifacts(base_name)
+    suffix_map = {
+        "_metrics.json": "__metrics.json",
+        "_calibration.png": "__calibration.png",
+        "_confusion_heatmap.png": "__heatmap.png",
+    }
+    normalized_suffix = suffix_map.get(suffix, suffix)
+    return os.path.join(target_dir, f"{normalized_base}{normalized_suffix}")
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -971,6 +983,94 @@ def sanitize_model_identifier(model: str) -> str:
     return slug or "model"
 
 
+def _split_old_run_tail(tail: str) -> Tuple[str, str]:
+    """Split legacy '<provider>_<model>' (or '<model>') tail into provider/model hints."""
+    normalized = str(tail or "").strip("_")
+    if not normalized:
+        return "", ""
+    tokens = [token for token in normalized.split("_") if token]
+    if not tokens:
+        return "", ""
+    if len(tokens) == 1:
+        return "", tokens[0]
+
+    known_providers = {
+        "openai",
+        "anthropic",
+        "cohere",
+        "google",
+        "huggingface",
+        "einfra",
+        "requesty",
+        "vertex",
+    }
+    first = tokens[0].lower()
+    if first in known_providers:
+        return tokens[0], "_".join(tokens[1:])
+    return "", "_".join(tokens)
+
+
+def parse_run_basename(base_name: str) -> Optional[Dict[str, str]]:
+    """Parse either legacy or canonical run basename into normalized parts."""
+    candidate = str(base_name or "").strip()
+    if not candidate:
+        return None
+
+    new_match = NEW_RUN_BASENAME_RE.match(candidate)
+    if new_match:
+        return {
+            "task": new_match.group("task"),
+            "provider": new_match.group("provider"),
+            "model": new_match.group("model"),
+            "timestamp": new_match.group("timestamp"),
+            "extra": new_match.group("extra") or "",
+        }
+
+    legacy_match = OLD_RUN_BASENAME_RE.match(candidate)
+    if not legacy_match:
+        return None
+    provider_hint, model_hint = _split_old_run_tail(legacy_match.group("tail"))
+    return {
+        "task": legacy_match.group("task"),
+        "provider": provider_hint,
+        "model": model_hint,
+        "timestamp": legacy_match.group("timestamp"),
+        "extra": legacy_match.group("extra") or "",
+    }
+
+
+def format_run_basename(
+    task: str,
+    provider: str,
+    model: str,
+    timestamp_tag: str,
+    extra_suffix: str = "",
+) -> str:
+    """Format run basename using the canonical double-underscore naming scheme."""
+    safe_task = str(task or "").strip()
+    safe_provider = str(provider or "").strip()
+    safe_model = str(model or "").strip()
+    safe_timestamp = str(timestamp_tag or "").strip()
+    safe_extra = str(extra_suffix or "").strip()
+    if safe_extra and not safe_extra.startswith("__"):
+        safe_extra = f"__{safe_extra}"
+    return f"{safe_task}__{safe_provider}__{safe_model}__{safe_timestamp}{safe_extra}"
+
+
+def normalize_run_basename_for_artifacts(base_name: str) -> str:
+    """Normalize legacy output basenames so artifacts always use canonical names."""
+    parsed = parse_run_basename(base_name)
+    if not parsed:
+        return str(base_name or "").strip()
+    return format_run_basename(
+        task=parsed.get("task", ""),
+        provider=parsed.get("provider", ""),
+        model=parsed.get("model", ""),
+        timestamp_tag=parsed.get("timestamp", ""),
+        extra_suffix=parsed.get("extra", ""),
+    )
+
+
 def split_validator_args(raw_args: Optional[str]) -> List[str]:
     """Split a validator args string into argv tokens (supports quoting)."""
     if not raw_args:
@@ -1086,7 +1186,7 @@ def build_default_output_filename(
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     provider_slug = sanitize_model_identifier(provider)
     model_slug = sanitize_model_identifier(model)
-    return f"{base_name}_out_{provider_slug}_{model_slug}_{timestamp_tag}.csv"
+    return f"{format_run_basename(base_name, provider_slug, model_slug, timestamp_tag)}.csv"
 
 
 def resolve_output_path(
@@ -6094,7 +6194,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional output CSV path or directory. When omitted, defaults to "
-            "<input>_out_<provider>_<model>_<timestamp>.csv alongside each input file. "
+            "<input>__<provider>__<model>__<timestamp>.csv alongside each input file. "
             "If the resolved output CSV already exists, the run resumes from the first ID "
             "not present in that file."
         ),

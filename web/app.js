@@ -67,20 +67,127 @@ function getFileNameFromPath(filePath) {
   return parts[parts.length - 1] || normalized;
 }
 
+function normalizeMetricsPath(filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/").trim();
+  if (!normalized) {
+    return normalized;
+  }
+
+  // Keep explicit URLs and absolute paths unchanged.
+  if (/^(https?:)?\/\//i.test(normalized) || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+    return normalized;
+  }
+
+  // Already points into metrics via relative traversal.
+  if (normalized.includes("/data/metrics/") || normalized.startsWith("../data/metrics/")) {
+    return normalized;
+  }
+
+  // Relative bare paths from local file/folder loaders are resolved under data/metrics.
+  return `${METRICS_SERVER_DIR}/${normalized.replace(/^\.?\//, "")}`;
+}
+
+function getDirectoryFromPath(filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(0, idx) : "";
+}
+
+function replaceFileNameInPath(filePath, newFileName) {
+  const dir = getDirectoryFromPath(filePath);
+  if (!dir) {
+    return newFileName;
+  }
+  return `${dir}/${newFileName}`;
+}
+
+function metricFileToRunStem(fileName) {
+  return String(fileName || "")
+    .replace(/__(metrics|calibration|heatmap)\.(json|png)$/i, "")
+    .replace(/_(metrics|calibration|confusion_heatmap)\.(json|png)$/i, "");
+}
+
+function mapMetricsPathToSiblingDir(filePath, siblingDir) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  if (normalized.includes("/metrics/")) {
+    return normalized.replace("/metrics/", `/${siblingDir}/`);
+  }
+  if (normalized.startsWith("metrics/")) {
+    return normalized.replace(/^metrics\//, `${siblingDir}/`);
+  }
+  return `../data/${siblingDir}/${getFileNameFromPath(normalized)}`;
+}
+
 function parseRunName(fileName) {
-  const raw = fileName.replace(/_metrics\.json$/i, "");
-  const match = raw.match(/^(.*)_out_(.*)_(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})$/i);
-  if (!match) {
+  const raw = metricFileToRunStem(fileName);
+
+  const canonical = raw.match(
+    /^(.*)__(.*?)__(.*?)__(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:__(.+))?$/i
+  );
+  if (canonical) {
     return {
-      task: raw,
-      model: "unknown",
-      timestamp: null,
+      task: canonical[1],
+      provider: canonical[2] || "",
+      model: canonical[3] || "unknown",
+      timestamp: canonical[4],
+      extra: canonical[5] || "",
     };
   }
+
+  const legacy = raw.match(
+    /^(.*)_out_(.+)_(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:__(.+))?$/i
+  );
+  if (legacy) {
+    const task = legacy[1];
+    const tail = legacy[2];
+    const tokens = tail.split("_").filter(Boolean);
+    const knownProviders = new Set([
+      "openai",
+      "anthropic",
+      "cohere",
+      "google",
+      "huggingface",
+      "einfra",
+      "requesty",
+      "vertex",
+    ]);
+
+    if (tokens.length === 1) {
+      return {
+        task,
+        provider: "",
+        model: tokens[0],
+        timestamp: legacy[3],
+        extra: legacy[4] || "",
+      };
+    }
+
+    const firstToken = (tokens[0] || "").toLowerCase();
+    if (knownProviders.has(firstToken)) {
+      return {
+        task,
+        provider: tokens[0],
+        model: tokens.slice(1).join("_") || "unknown",
+        timestamp: legacy[3],
+        extra: legacy[4] || "",
+      };
+    }
+
+    return {
+      task,
+      provider: "",
+      model: tail || "unknown",
+      timestamp: legacy[3],
+      extra: legacy[4] || "",
+    };
+  }
+
   return {
-    task: match[1],
-    model: match[2],
-    timestamp: match[3],
+    task: raw,
+    provider: "",
+    model: "unknown",
+    timestamp: null,
+    extra: "",
   };
 }
 
@@ -96,7 +203,9 @@ function safeNum(value) {
 }
 
 function normalizeRun(filePath, payload) {
-  const fileName = getFileNameFromPath(filePath);
+  const normalizedFilePath = normalizeMetricsPath(filePath);
+  const fileName = getFileNameFromPath(normalizedFilePath);
+  const runStem = metricFileToRunStem(fileName);
   const nameParts = parseRunName(fileName);
   const modelDetails = payload.model_details || {};
   const usage = payload.usage_metadata_summary || {};
@@ -108,9 +217,11 @@ function normalizeRun(filePath, payload) {
   const macroF1 = toPct(safeNum(payload.macro_f1));
 
   return {
-    filePath,
+    filePath: normalizedFilePath,
     fileName,
+    runStem,
     task: nameParts.task,
+    provider: modelDetails.provider || nameParts.provider || "",
     model:
       modelDetails.model_requested ||
       modelDetails.model_for_requests ||
@@ -791,6 +902,99 @@ function createDetailItem(label, value) {
   return wrapper;
 }
 
+function createLinkDetailItem(label, href, hint = "") {
+  const wrapper = document.createElement("div");
+  wrapper.className = "detail-item";
+  const labelEl = document.createElement("span");
+  labelEl.className = "label";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "value mono";
+
+  const link = document.createElement("a");
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.className = "detail-link";
+  link.textContent = "Open";
+  valueEl.appendChild(link);
+
+  const hintText = hint || href;
+  if (hintText) {
+    const hintEl = document.createElement("div");
+    hintEl.className = "muted";
+    hintEl.textContent = hintText;
+    valueEl.appendChild(hintEl);
+  }
+
+  wrapper.appendChild(labelEl);
+  wrapper.appendChild(valueEl);
+  return wrapper;
+}
+
+function createChartsDetailItem(charts) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "detail-item detail-raw";
+  const labelEl = document.createElement("span");
+  labelEl.className = "label";
+  labelEl.textContent = "Metric Charts";
+  wrapper.appendChild(labelEl);
+
+  const grid = document.createElement("div");
+  grid.className = "chart-preview-grid";
+
+  charts.forEach((chart) => {
+    const link = document.createElement("a");
+    link.href = chart.href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.className = "chart-preview";
+
+    const img = document.createElement("img");
+    img.src = chart.href;
+    img.alt = chart.label;
+    img.loading = "lazy";
+    img.addEventListener("error", () => {
+      link.classList.add("missing");
+      img.remove();
+    });
+
+    const caption = document.createElement("span");
+    caption.textContent = chart.label;
+
+    link.appendChild(img);
+    link.appendChild(caption);
+    grid.appendChild(link);
+  });
+
+  wrapper.appendChild(grid);
+  return wrapper;
+}
+
+function buildRunResourceLinks(run) {
+  const metricsPath = run.filePath;
+  const canonicalMetrics = String(run.fileName || "").toLowerCase().endsWith("__metrics.json");
+  const heatmapFile = canonicalMetrics
+    ? `${run.runStem}__heatmap.png`
+    : `${run.runStem}_confusion_heatmap.png`;
+  const calibrationFile = canonicalMetrics
+    ? `${run.runStem}__calibration.png`
+    : `${run.runStem}_calibration.png`;
+  const logFile = `${run.runStem}.log`;
+  const outputFile = `${run.runStem}.csv`;
+  const inputFile = `${run.task}.csv`;
+
+  return {
+    metrics: metricsPath,
+    heatmap: replaceFileNameInPath(metricsPath, heatmapFile),
+    calibration: replaceFileNameInPath(metricsPath, calibrationFile),
+    log: replaceFileNameInPath(mapMetricsPathToSiblingDir(metricsPath, "logs"), logFile),
+    output: replaceFileNameInPath(mapMetricsPathToSiblingDir(metricsPath, "output"), outputFile),
+    input: replaceFileNameInPath(mapMetricsPathToSiblingDir(metricsPath, "input"), inputFile),
+  };
+}
+
 function fillRunDetailsContent(run) {
   if (!run) {
     els.runModalTitle.textContent = "Run Details";
@@ -820,7 +1024,7 @@ function fillRunDetailsContent(run) {
     ["Last Prompt", formatTs(run.lastPromptTimestamp)],
     ["Label Metrics Available", run.labelMetricsAvailable ? "true" : "false"],
     ["Label Metrics Reason", run.labelMetricsReason],
-    ["Provider", run.modelDetails.provider || "N/A"],
+    ["Provider", run.provider || "N/A"],
     ["Model Requested", run.modelDetails.model_requested || "N/A"],
     ["Model For Requests", run.modelDetails.model_for_requests || "N/A"],
   ];
@@ -832,6 +1036,32 @@ function fillRunDetailsContent(run) {
   detailPairs.forEach(([label, value]) => {
     els.runModalContent.appendChild(createDetailItem(label, value));
   });
+
+  const links = buildRunResourceLinks(run);
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Metrics JSON", links.metrics, getFileNameFromPath(links.metrics))
+  );
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Heatmap", links.heatmap, getFileNameFromPath(links.heatmap))
+  );
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Calibration", links.calibration, getFileNameFromPath(links.calibration))
+  );
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Log File", links.log, getFileNameFromPath(links.log))
+  );
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Output CSV", links.output, getFileNameFromPath(links.output))
+  );
+  els.runModalContent.appendChild(
+    createLinkDetailItem("Input CSV", links.input, getFileNameFromPath(links.input))
+  );
+  els.runModalContent.appendChild(
+    createChartsDetailItem([
+      { label: "Heatmap Preview", href: links.heatmap },
+      { label: "Calibration Preview", href: links.calibration },
+    ])
+  );
 
   const rawWrap = document.createElement("div");
   rawWrap.className = "detail-item detail-raw";
