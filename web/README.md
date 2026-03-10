@@ -30,5 +30,7 @@ Manifest notes:
 - `metrics_files` is authoritative when present.
 - If a listed path 404s, the app retries by filename in common dirs (`../data/metrics`, `./metrics`, `./data/metrics`).
 - Optional `metrics_base_dirs` in the manifest customizes/extends those retry directories.
+- If manifest entries fail completely, the app also falls back to server directory discovery.
+- `metrics_base_dirs` can use relative paths (e.g. `./metrics`) or absolute site paths (e.g. `/bench/data/metrics`).
 
 `web/generate_metrics_manifest.py` is optional optimization only, and now writes `metrics_base_dirs` by default.

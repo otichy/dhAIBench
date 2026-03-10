@@ -97,6 +97,20 @@ function joinPath(baseDir, name) {
   return base ? `${base}/${fileName}` : fileName;
 }
 
+function getLocationAwareMetricsBaseDirs() {
+  const dirs = ["/data/metrics", "/metrics"];
+  const pathname = normalizeSlashes(window.location.pathname || "/");
+  const currentDirPath = trimTrailingSlash(pathname.replace(/\/[^/]*$/, "")) || "/";
+  const segments = currentDirPath.split("/").filter(Boolean);
+
+  for (let i = segments.length; i >= 1; i -= 1) {
+    const prefix = `/${segments.slice(0, i).join("/")}`;
+    dirs.push(`${prefix}/data/metrics`, `${prefix}/metrics`);
+  }
+
+  return uniqueNonEmptyStrings(dirs).map((dir) => trimTrailingSlash(dir));
+}
+
 function getFileNameFromPath(filePath) {
   const normalized = normalizeSlashes(filePath);
   const parts = normalized.split("/");
@@ -454,27 +468,14 @@ function buildServerMetricPathCandidates(rawPath, manifestBaseDirs = []) {
 }
 
 function getDirectoryListingCandidates() {
-  return uniqueNonEmptyStrings(METRICS_SERVER_DIR_CANDIDATES).map((dir) => trimTrailingSlash(dir));
+  return uniqueNonEmptyStrings([
+    ...METRICS_SERVER_DIR_CANDIDATES,
+    ...getLocationAwareMetricsBaseDirs(),
+  ]).map((dir) => trimTrailingSlash(dir));
 }
 
-async function discoverMetricFilesFromServer() {
-  try {
-    const manifestRes = await fetch(METRICS_MANIFEST_PATH, { cache: "no-store" });
-    if (manifestRes.ok) {
-      const manifest = await manifestRes.json();
-      if (Array.isArray(manifest.metrics_files) && manifest.metrics_files.length) {
-        return {
-          files: manifest.metrics_files,
-          source: "manifest",
-          manifestBaseDirs: parseManifestBaseDirs(manifest),
-        };
-      }
-    }
-  } catch (_) {
-    // Fallback below.
-  }
-
-  const listingDirs = getDirectoryListingCandidates();
+async function discoverMetricFilesFromDirectoryListings(candidateDirs = getDirectoryListingCandidates()) {
+  const listingDirs = uniqueNonEmptyStrings(candidateDirs).map((dir) => trimTrailingSlash(dir));
   const listingErrors = [];
 
   for (const dir of listingDirs) {
@@ -515,6 +516,37 @@ async function discoverMetricFilesFromServer() {
     ? ` Tried: ${listingErrors.slice(0, 3).join(" | ")}${listingErrors.length > 3 ? ` | ...and ${listingErrors.length - 3} more` : ""}`
     : "";
   throw new Error(`Unable to load metrics manifest or discover metrics directory listings.${detailText}`);
+}
+
+async function discoverMetricFilesFromServer() {
+  try {
+    const manifestRes = await fetch(METRICS_MANIFEST_PATH, { cache: "no-store" });
+    if (manifestRes.ok) {
+      const manifest = await manifestRes.json();
+      if (Array.isArray(manifest.metrics_files) && manifest.metrics_files.length) {
+        return {
+          files: manifest.metrics_files,
+          source: "manifest",
+          manifestBaseDirs: parseManifestBaseDirs(manifest),
+        };
+      }
+    }
+  } catch (_) {
+    // Fallback below.
+  }
+
+  return discoverMetricFilesFromDirectoryListings();
+}
+
+async function loadRunsFromServerFileList(files, manifestBaseDirs, warnings) {
+  const runs = [];
+  for (const path of files) {
+    const run = await loadRunFromServerCandidates(path, manifestBaseDirs, warnings);
+    if (run) {
+      runs.push(run);
+    }
+  }
+  return runs;
 }
 
 async function loadRunFromServerCandidates(rawPath, manifestBaseDirs, warnings) {
@@ -566,18 +598,29 @@ async function loadFromServer() {
   const files = discovery.files;
   const manifestBaseDirs = discovery.manifestBaseDirs || [];
   const warnings = [];
-  const runs = [];
+  let runs = await loadRunsFromServerFileList(files, manifestBaseDirs, warnings);
+  let fileCount = files.length;
 
-  for (const path of files) {
-    const run = await loadRunFromServerCandidates(path, manifestBaseDirs, warnings);
-    if (run) {
-      runs.push(run);
+  if (!runs.length && discovery.source === "manifest") {
+    try {
+      const listingDiscovery = await discoverMetricFilesFromDirectoryListings(manifestBaseDirs);
+      const listingRuns = await loadRunsFromServerFileList(listingDiscovery.files, [], warnings);
+      if (listingRuns.length) {
+        runs = listingRuns;
+        fileCount = listingDiscovery.files.length;
+        warnings.push({
+          file: METRICS_MANIFEST_PATH,
+          message: "Manifest paths failed; loaded metrics via directory listing fallback.",
+        });
+      }
+    } catch (_) {
+      // Keep original manifest warnings.
     }
   }
 
   return {
     mode: "server",
-    fileCount: files.length,
+    fileCount,
     runs: dedupeRuns(runs),
     warnings,
   };
