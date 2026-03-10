@@ -1,11 +1,13 @@
 .env
 config_models.js
-/data/logs/
-/data/input/
-/data/output/
+/data/logs/*
+!/data/logs/.gitkeep
+/data/input/*
+!/data/input/.gitkeep
+/data/output/*
+!/data/output/.gitkeep
 /data/metrics/*
 !/data/metrics/.gitkeep
-/data/metrics/*_metrics.json
 /data/backup
 __pycache__/
 *.py[cod]
