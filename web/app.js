@@ -15,7 +15,7 @@ const state = {
   tokenSortBy: "runtime_seconds",
   tokenSortDir: "desc",
   hideNoAccuracy: false,
-  theme: "light",
+  theme: "dark",
   sourceMode: "none",
   sourceFileCount: 0,
   warnings: [],
@@ -36,11 +36,8 @@ const els = {
   heroSubtitle: document.querySelector("#heroSubtitle"),
   btnAutoServer: document.querySelector("#btnAutoServer"),
   btnOpenFolder: document.querySelector("#btnOpenFolder"),
-  btnOpenFiles: document.querySelector("#btnOpenFiles"),
   reloadBtn: document.querySelector("#reloadBtn"),
-  metricsFileInput: document.querySelector("#metricsFileInput"),
   sourceStatus: document.querySelector("#sourceStatus"),
-  sourceHint: document.querySelector("#sourceHint"),
   sourceWarnings: document.querySelector("#sourceWarnings"),
   kpiRuns: document.querySelector("#kpiRuns"),
   kpiTasks: document.querySelector("#kpiTasks"),
@@ -539,24 +536,8 @@ function warningSummary(warnings, maxItems = 3) {
   return items.join(" | ");
 }
 
-function updateSourceStatus(customHint = "") {
+function updateSourceStatus() {
   els.sourceStatus.textContent = `Mode: ${state.sourceMode} | Files: ${state.sourceFileCount} | Warnings: ${state.warnings.length}`;
-
-  let hint = customHint;
-  if (!hint) {
-    if (isFileProtocol() && state.sourceMode === "none") {
-      hint = "file:// mode: browsers block automatic folder scanning. Use Open Metrics Folder or Open Metrics Files.";
-    } else if (state.sourceMode === "server") {
-      hint = `Server mode: loading from ${METRICS_MANIFEST_PATH} or ${METRICS_SERVER_DIR}/ listing.`;
-    } else if (state.sourceMode === "folder") {
-      hint = "Folder mode: loaded from browser-granted local folder access.";
-    } else if (state.sourceMode === "files") {
-      hint = "Files mode: loaded from selected local files.";
-    } else {
-      hint = "Choose a data source to load metrics.";
-    }
-  }
-  els.sourceHint.textContent = hint;
 
   const summary = warningSummary(state.warnings);
   els.sourceWarnings.textContent = summary ? `Warnings: ${summary}` : "";
@@ -681,10 +662,7 @@ function setupSourceControls() {
 
   els.btnOpenFolder.addEventListener("click", async () => {
     if (!supportsDirectoryPicker()) {
-      renderError(
-        "Open Metrics Folder is not supported by this browser. Use Open Metrics Files instead.",
-        true
-      );
+      renderError("Open Metrics Folder is not supported by this browser.", true);
       return;
     }
     try {
@@ -700,21 +678,6 @@ function setupSourceControls() {
     }
   });
 
-  els.btnOpenFiles.addEventListener("click", () => {
-    els.metricsFileInput.value = "";
-    els.metricsFileInput.click();
-  });
-
-  els.metricsFileInput.addEventListener("change", async () => {
-    const files = Array.from(els.metricsFileInput.files || []);
-    if (!files.length) {
-      return;
-    }
-    state.activeFiles = files;
-    state.activeDirectoryHandle = null;
-    await activateFilesSource(files);
-  });
-
   els.reloadBtn.addEventListener("click", async () => {
     if (state.sourceMode === "folder" && state.activeDirectoryHandle) {
       await activateFolderSource(state.activeDirectoryHandle);
@@ -728,10 +691,7 @@ function setupSourceControls() {
       await activateServerSource();
       return;
     }
-    renderError(
-      "No active local source to reload. Choose Open Metrics Folder or Open Metrics Files.",
-      true
-    );
+    renderError("No active local source to reload. Choose Open Metrics Folder.", true);
   });
 }
 
@@ -1527,7 +1487,7 @@ async function activateServerSource() {
   } catch (error) {
     const base = `Server source failed: ${error.message}`;
     const suffix = isFileProtocol()
-      ? " In file:// mode, use Open Metrics Folder or Open Metrics Files."
+      ? " In file:// mode, use Open Metrics Folder."
       : "";
     renderError(base + suffix, true);
     updateSourceStatus();
@@ -1577,9 +1537,7 @@ async function init() {
     state.sourceMode = "none";
     state.sourceFileCount = 0;
     state.warnings = [];
-    updateSourceStatus(
-      "file:// mode detected. Browsers block auto-scanning local folders, so choose Open Metrics Folder or Open Metrics Files."
-    );
+    updateSourceStatus();
     els.heroSubtitle.textContent = "Choose a local data source to load metrics.";
     return;
   }

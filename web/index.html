@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,20 +13,18 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">dh</div>
-        <div>
-          <h1>Benchmark Radar</h1>
-          <p>Metrics from <code>web/metrics</code></p>
+        <div class="brand-lockup">
+          <div class="brand-mark">dh</div>
+          <div>
+            <h1>Benchmark Radar</h1>
+            <p>Metrics from <code>web/metrics</code></p>
+          </div>
         </div>
-      </div>
-
-      <section class="panel">
-        <h2>Appearance</h2>
-        <label class="checkbox">
+        <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
           <input id="themeToggle" type="checkbox">
-          <span>Dark Theme</span>
+          <span class="theme-icon" aria-hidden="true"></span>
         </label>
-      </section>
+      </div>
 
       <section class="panel">
         <h2>Filters</h2>
@@ -72,17 +70,28 @@
           <p id="heroSubtitle">Loading metrics files...</p>
         </div>
         <section class="source-panel">
-          <h3>Data Source</h3>
           <div class="source-actions">
-            <button id="btnAutoServer" class="btn" type="button">Auto (Server)</button>
-            <button id="btnOpenFolder" class="btn" type="button">Open Metrics Folder</button>
-            <button id="btnOpenFiles" class="btn" type="button">Open Metrics Files</button>
-            <button id="reloadBtn" class="btn" type="button">Reload</button>
+            <button id="btnAutoServer" class="btn icon-btn" type="button" title="Auto (Server)" aria-label="Auto (Server)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="4" rx="1.5"></rect>
+                <rect x="4" y="10" width="16" height="4" rx="1.5"></rect>
+                <rect x="4" y="15" width="16" height="4" rx="1.5"></rect>
+              </svg>
+            </button>
+            <button id="btnOpenFolder" class="btn icon-btn" type="button" title="Open Metrics Folder" aria-label="Open Metrics Folder">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H18.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path>
+              </svg>
+            </button>
+            <button id="reloadBtn" class="btn icon-btn" type="button" title="Reload" aria-label="Reload">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                <path d="M20 4v6h-6"></path>
+              </svg>
+            </button>
           </div>
           <p id="sourceStatus" class="source-status">Mode: none | Files: 0 | Warnings: 0</p>
-          <p id="sourceHint" class="source-hint muted"></p>
           <p id="sourceWarnings" class="source-warnings"></p>
-          <input id="metricsFileInput" type="file" accept=".json,application/json" multiple hidden>
         </section>
       </header>
 
