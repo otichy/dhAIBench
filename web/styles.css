@@ -314,6 +314,92 @@ html[data-theme="dark"] .chip {
   align-content: start;
 }
 
+#leaderboardChart {
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.leaderboard-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--paper) 97%, var(--accent) 3%);
+}
+
+.leaderboard-group + .leaderboard-group {
+  margin-top: 0.42rem;
+}
+
+.leaderboard-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.2rem 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.leaderboard-summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--muted);
+  transform-origin: 35% 50%;
+  transition: transform 120ms ease;
+}
+
+.leaderboard-group[open] .leaderboard-summary::before {
+  transform: rotate(90deg);
+}
+
+.leaderboard-summary::-webkit-details-marker {
+  display: none;
+}
+
+.leaderboard-summary .bar-row {
+  flex: 1;
+  grid-template-columns: minmax(160px, 1.2fr) 3fr 92px;
+}
+
+.leaderboard-summary .bar-label {
+  font-weight: 600;
+}
+
+.leaderboard-summary-label {
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.leaderboard-summary-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.leaderboard-summary-track {
+  background: var(--bar-track);
+  border-radius: 999px;
+  height: 9px;
+  overflow: hidden;
+}
+
+.leaderboard-summary-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-3));
+}
+
+.leaderboard-group-runs {
+  border-top: 1px dashed var(--line);
+  padding: 0.25rem 0.4rem 0.35rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.leaderboard-group-runs .bar-label {
+  font-size: 0.79rem;
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 3fr 80px;
@@ -389,6 +475,31 @@ html[data-theme="dark"] .chip {
 .table-wrap {
   overflow: auto;
   margin-top: 0.6rem;
+}
+
+.token-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--paper) 98%, black 2%);
+  max-height: 430px;
+}
+
+.token-table {
+  min-width: 1120px;
+}
+
+.sort-head {
+  all: unset;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.sort-head:hover {
+  color: var(--ink);
 }
 
 table {
@@ -608,5 +719,13 @@ tbody tr.selected-row {
 
   .chart-preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  #leaderboardChart {
+    max-height: 420px;
+  }
+
+  .token-table {
+    min-width: 900px;
   }
 }

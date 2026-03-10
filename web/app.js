@@ -6,10 +6,14 @@ const state = {
   runs: [],
   filtered: [],
   tasks: [],
+  models: [],
   selectedTask: "ALL",
+  selectedModel: "ALL",
   selectedRunPath: null,
   modelQuery: "",
   sortBy: "accuracy",
+  tokenSortBy: "runtime_seconds",
+  tokenSortDir: "desc",
   hideNoAccuracy: false,
   theme: "light",
   sourceMode: "none",
@@ -17,6 +21,7 @@ const state = {
   warnings: [],
   activeDirectoryHandle: null,
   activeFiles: [],
+  expandedLeaderboardModels: new Set(),
 };
 
 const els = {
@@ -26,6 +31,7 @@ const els = {
   hideNoAccuracy: document.querySelector("#hideNoAccuracy"),
   themeToggle: document.querySelector("#themeToggle"),
   taskChips: document.querySelector("#taskChips"),
+  modelChips: document.querySelector("#modelChips"),
   heroTitle: document.querySelector("#heroTitle"),
   heroSubtitle: document.querySelector("#heroSubtitle"),
   btnAutoServer: document.querySelector("#btnAutoServer"),
@@ -219,6 +225,53 @@ function parseSemicolonTags(value) {
     .split(";")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function parseRunTimestampMs(run) {
+  const ts = Date.parse(run.timestamp || "");
+  return Number.isFinite(ts) ? ts : -Infinity;
+}
+
+function getConfiguredControl(run, key) {
+  const configured =
+    run && run.controlSummary && typeof run.controlSummary === "object"
+      ? run.controlSummary.configured
+      : null;
+  if (!configured || typeof configured !== "object") {
+    return "";
+  }
+  return asTrimmedString(configured[key]);
+}
+
+function getRunEffortSuffix(run) {
+  const thinkingLevel = getConfiguredControl(run, "thinking_level");
+  const reasoningEffort =
+    getConfiguredControl(run, "reasoning_effort") || getConfiguredControl(run, "effort");
+  const parts = [];
+  if (thinkingLevel) {
+    parts.push(`thinking:${thinkingLevel}`);
+  }
+  if (reasoningEffort) {
+    parts.push(`effort:${reasoningEffort}`);
+  }
+  return parts.length ? `[${parts.join(", ")}]` : "";
+}
+
+function getRunModelDisplayName(run) {
+  const suffix = getRunEffortSuffix(run);
+  return suffix ? `${run.model} ${suffix}` : run.model;
+}
+
+function getSharedRunEffortSuffix(runs) {
+  const suffixes = runs.map((run) => getRunEffortSuffix(run));
+  if (!suffixes.length) {
+    return "";
+  }
+  const first = suffixes[0];
+  if (!first) {
+    return "";
+  }
+  return suffixes.every((suffix) => suffix === first) ? first : "";
 }
 
 function normalizeRun(filePath, payload) {
@@ -512,8 +565,11 @@ function updateSourceStatus(customHint = "") {
 function persistUiState() {
   const payload = {
     selectedTask: state.selectedTask,
+    selectedModel: state.selectedModel,
     modelQuery: state.modelQuery,
     sortBy: state.sortBy,
+    tokenSortBy: state.tokenSortBy,
+    tokenSortDir: state.tokenSortDir,
     hideNoAccuracy: state.hideNoAccuracy,
     theme: state.theme,
   };
@@ -535,11 +591,20 @@ function restoreUiState() {
       if (typeof payload.selectedTask === "string") {
         state.selectedTask = payload.selectedTask;
       }
+      if (typeof payload.selectedModel === "string") {
+        state.selectedModel = payload.selectedModel;
+      }
       if (typeof payload.modelQuery === "string") {
         state.modelQuery = payload.modelQuery;
       }
       if (typeof payload.sortBy === "string") {
         state.sortBy = payload.sortBy;
+      }
+      if (typeof payload.tokenSortBy === "string") {
+        state.tokenSortBy = payload.tokenSortBy;
+      }
+      if (payload.tokenSortDir === "asc" || payload.tokenSortDir === "desc") {
+        state.tokenSortDir = payload.tokenSortDir;
       }
       if (typeof payload.hideNoAccuracy === "boolean") {
         state.hideNoAccuracy = payload.hideNoAccuracy;
@@ -569,6 +634,12 @@ function setSelectedTask(task) {
   if (els.taskSelect.value !== task) {
     els.taskSelect.value = task;
   }
+  persistUiState();
+  render();
+}
+
+function setSelectedModel(model) {
+  state.selectedModel = model;
   persistUiState();
   render();
 }
@@ -669,18 +740,19 @@ function scoreForSort(run, key) {
   if (key === "macro_f1") return run.macroF1 ?? -Infinity;
   if (key === "cached_tokens") return run.cachedTokens ?? -Infinity;
   if (key === "attempts_total") return run.requestsTotal ?? -Infinity;
-  if (key === "timestamp") {
-    const ts = Date.parse(run.timestamp || "");
-    return Number.isFinite(ts) ? ts : -Infinity;
-  }
+  if (key === "timestamp") return parseRunTimestampMs(run);
   return -Infinity;
 }
 
 function getFilteredRuns() {
   const query = state.modelQuery;
   const selectedTask = state.selectedTask;
+  const selectedModel = state.selectedModel;
   let runs = state.runs.filter((run) => {
     if (selectedTask !== "ALL" && run.task !== selectedTask) {
+      return false;
+    }
+    if (selectedModel !== "ALL" && run.model !== selectedModel) {
       return false;
     }
     if (query && !run.model.toLowerCase().includes(query) && !run.fileName.toLowerCase().includes(query)) {
@@ -743,6 +815,31 @@ function renderTaskControls() {
   });
 }
 
+function renderModelControls() {
+  const models = ["ALL", ...state.models];
+  const counts = state.runs.reduce((acc, run) => {
+    acc[run.model] = (acc[run.model] || 0) + 1;
+    return acc;
+  }, {});
+
+  if (!models.includes(state.selectedModel)) {
+    state.selectedModel = "ALL";
+  }
+
+  els.modelChips.innerHTML = "";
+  models.forEach((model) => {
+    const button = document.createElement("button");
+    button.className = `chip${state.selectedModel === model ? " active" : ""}`;
+    button.textContent =
+      model === "ALL"
+        ? `All Models (${state.runs.length})`
+        : `${model} (${counts[model] || 0})`;
+    button.type = "button";
+    button.addEventListener("click", () => setSelectedModel(model));
+    els.modelChips.appendChild(button);
+  });
+}
+
 function renderKpis(runs) {
   const uniqueTasks = new Set(runs.map((run) => run.task)).size;
   const bestAccuracy = runs.reduce(
@@ -797,25 +894,117 @@ function createBarRow(label, value, max, formatter, colorClass, onClick) {
 
 function renderLeaderboard(runs) {
   els.leaderboardChart.innerHTML = "";
-  const source = runs.filter((run) => run.accuracy !== null).slice(0, 12);
+  const source = runs.filter((run) => run.accuracy !== null);
 
   if (!source.length) {
     els.leaderboardChart.innerHTML = '<p class="muted">No runs with accuracy in current filter.</p>';
     return;
   }
 
-  const max = Math.max(...source.map((run) => run.accuracy));
+  const groups = new Map();
   source.forEach((run) => {
-    els.leaderboardChart.appendChild(
+    const key = run.model;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(run);
+  });
+
+  const entries = Array.from(groups.entries()).map(([model, modelRuns]) => {
+    const runsSorted = [...modelRuns].sort((a, b) => {
+      if ((b.accuracy || 0) !== (a.accuracy || 0)) {
+        return (b.accuracy || 0) - (a.accuracy || 0);
+      }
+      return parseRunTimestampMs(b) - parseRunTimestampMs(a);
+    });
+    if (runsSorted.length === 1) {
+      return {
+        type: "run",
+        key: runsSorted[0].filePath,
+        label: getRunModelDisplayName(runsSorted[0]),
+        score: runsSorted[0].accuracy || 0,
+        run: runsSorted[0],
+      };
+    }
+
+    const avgAccuracy =
+      runsSorted.reduce((sum, run) => sum + (run.accuracy || 0), 0) / runsSorted.length;
+    const sharedSuffix = getSharedRunEffortSuffix(runsSorted);
+    const groupLabel = sharedSuffix ? `${model} ${sharedSuffix}` : model;
+    return {
+      type: "group",
+      key: model,
+      label: groupLabel,
+      score: avgAccuracy,
+      avgAccuracy,
+      runs: runsSorted,
+    };
+  });
+
+  entries.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  const maxScore = Math.max(...entries.map((entry) => entry.score), 1);
+  entries.forEach((entry) => {
+    if (entry.type === "run") {
+      els.leaderboardChart.appendChild(
+        createBarRow(
+          entry.label,
+          entry.score,
+          maxScore,
+          (value) => `${formatNum(value, 2)}%`,
+          null,
+          () => openRunModal(entry.run)
+        )
+      );
+      return;
+    }
+
+    const details = document.createElement("details");
+    details.className = "leaderboard-group";
+    details.dataset.modelKey = entry.key;
+    details.open = state.expandedLeaderboardModels.has(entry.key);
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        state.expandedLeaderboardModels.add(entry.key);
+      } else {
+        state.expandedLeaderboardModels.delete(entry.key);
+      }
+    });
+
+    const summary = document.createElement("summary");
+    summary.className = "leaderboard-summary";
+    summary.appendChild(
       createBarRow(
-        run.model,
-        run.accuracy,
-        max,
-        (value) => `${formatNum(value, 2)}%`,
-        null,
-        () => openRunModal(run)
+        `${entry.label} (${entry.runs.length})`,
+        entry.avgAccuracy || 0,
+        maxScore,
+        (value) => `${formatNum(value, 2)}% avg`,
+        null
       )
     );
+    details.appendChild(summary);
+
+    const runsWrap = document.createElement("div");
+    runsWrap.className = "leaderboard-group-runs";
+    entry.runs.forEach((run) => {
+      runsWrap.appendChild(
+        createBarRow(
+          getRunModelDisplayName(run),
+          run.accuracy || 0,
+          maxScore,
+          (value) => `${formatNum(value, 2)}%`,
+          null,
+          () => openRunModal(run)
+        )
+      );
+    });
+    details.appendChild(runsWrap);
+    els.leaderboardChart.appendChild(details);
   });
 }
 
@@ -843,7 +1032,7 @@ function renderBestByTask() {
   items.forEach((run) => {
     els.taskBestChart.appendChild(
       createBarRow(
-        `${run.task} / ${run.model}`,
+        `${run.task} / ${getRunModelDisplayName(run)}`,
         run.accuracy,
         max,
         (value) => `${formatNum(value, 2)}%`,
@@ -854,31 +1043,158 @@ function renderBestByTask() {
   });
 }
 
+function getPromptCountForRun(run) {
+  return run.requestsTotal ?? run.attemptsWithUsage ?? run.predictionCount ?? run.totalExamples ?? 0;
+}
+
+function formatTotalAndAvg(total, prompts) {
+  if (total === null || total === undefined || Number.isNaN(total)) {
+    return "N/A";
+  }
+  const avg = prompts > 0 ? total / prompts : null;
+  if (avg === null || Number.isNaN(avg)) {
+    return `${formatNum(total, 0)} / N/A`;
+  }
+  return `${formatNum(total, 0)} / ${formatNum(avg, 2)}`;
+}
+
+function formatRuntimeCell(seconds, humanText = "") {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+    return "N/A";
+  }
+  const human = asTrimmedString(humanText);
+  return human ? `${human} (${formatNum(seconds, 2)}s)` : `${formatNum(seconds, 2)}s`;
+}
+
+function computeTokenSignalRows(runs) {
+  return runs.map((run) => {
+    const prompts = getPromptCountForRun(run);
+    const input = run.inputTokensTotal;
+    const cached = run.cachedInputTokensTotal ?? run.cachedTokens;
+    const output = run.outputTokensTotal;
+    const thinking = run.thinkingTokensTotal;
+    const runtime = run.overallTimeSeconds;
+    return {
+      run,
+      modelLabel: getRunModelDisplayName(run),
+      prompts,
+      input,
+      cached,
+      output,
+      thinking,
+      runtime,
+      runtimeHuman: run.overallTimeHuman,
+    };
+  });
+}
+
+function getTokenSortValue(row, key) {
+  if (key === "model") return row.modelLabel.toLowerCase();
+  if (key === "prompts") return row.prompts ?? -Infinity;
+  if (key === "input") return row.input ?? -Infinity;
+  if (key === "cached") return row.cached ?? -Infinity;
+  if (key === "output") return row.output ?? -Infinity;
+  if (key === "thinking") return row.thinking ?? -Infinity;
+  if (key === "runtime_seconds") return row.runtime ?? -Infinity;
+  return -Infinity;
+}
+
+function sortTokenRows(rows) {
+  const key = state.tokenSortBy;
+  const dir = state.tokenSortDir === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    const va = getTokenSortValue(a, key);
+    const vb = getTokenSortValue(b, key);
+    if (typeof va === "string" || typeof vb === "string") {
+      const cmp = String(va).localeCompare(String(vb));
+      if (cmp !== 0) return cmp * dir;
+    } else if (vb !== va) {
+      return (va - vb) * dir;
+    }
+    const tsCmp = parseRunTimestampMs(b.run) - parseRunTimestampMs(a.run);
+    if (tsCmp !== 0) return tsCmp;
+    return b.modelLabel.localeCompare(a.modelLabel);
+  });
+}
+
+function toggleTokenSort(key) {
+  if (state.tokenSortBy === key) {
+    state.tokenSortDir = state.tokenSortDir === "desc" ? "asc" : "desc";
+  } else {
+    state.tokenSortBy = key;
+    state.tokenSortDir = key === "model" ? "asc" : "desc";
+  }
+  persistUiState();
+  renderTokenSignals(state.filtered);
+}
+
+function createTokenHeader(label, key) {
+  const th = document.createElement("th");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "sort-head";
+  const active = state.tokenSortBy === key;
+  const arrow = !active ? "" : state.tokenSortDir === "desc" ? " v" : " ^";
+  button.textContent = `${label}${arrow}`;
+  button.addEventListener("click", () => toggleTokenSort(key));
+  th.appendChild(button);
+  return th;
+}
+
 function renderTokenSignals(runs) {
   els.tokenChart.innerHTML = "";
-  const tokenRuns = runs
-    .filter((run) => (run.cachedTokens || 0) > 0 || (run.requestsTotal || 0) > 0)
-    .slice(0, 14);
+  const rows = computeTokenSignalRows(runs).filter(
+    (row) =>
+      row.prompts > 0 ||
+      row.input !== null ||
+      row.cached !== null ||
+      row.output !== null ||
+      row.thinking !== null ||
+      row.runtime !== null
+  );
 
-  if (!tokenRuns.length) {
+  if (!rows.length) {
     els.tokenChart.innerHTML = '<p class="muted">No token/request metadata for current filter.</p>';
     return;
   }
 
-  const maxCached = Math.max(...tokenRuns.map((run) => run.cachedTokens || 0), 1);
-  tokenRuns.forEach((run) => {
-    const row = createBarRow(
-      run.model,
-      run.cachedTokens || 0,
-      maxCached,
-      (value) => `${formatNum(value, 0)} cached`,
-      "blue",
-      () => openRunModal(run)
-    );
-    const value = row.querySelector(".bar-value");
-    value.innerHTML = `<span class="mono">${formatNum(run.cachedTokens || 0, 0)}</span><br><span class="muted">${formatNum(run.requestsTotal || 0, 0)} req</span>`;
-    els.tokenChart.appendChild(row);
+  sortTokenRows(rows);
+
+  const wrap = document.createElement("div");
+  wrap.className = "token-table-wrap";
+  const table = document.createElement("table");
+  table.className = "token-table";
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  trHead.appendChild(createTokenHeader("Model", "model"));
+  trHead.appendChild(createTokenHeader("Prompts", "prompts"));
+  trHead.appendChild(createTokenHeader("Input Tokens (total / avg)", "input"));
+  trHead.appendChild(createTokenHeader("Cached Tokens (total / avg)", "cached"));
+  trHead.appendChild(createTokenHeader("Output Tokens (total / avg)", "output"));
+  trHead.appendChild(createTokenHeader("Thinking Tokens (total / avg)", "thinking"));
+  trHead.appendChild(createTokenHeader("Total Runtime", "runtime_seconds"));
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable-row";
+    tr.innerHTML = `
+      <td>${row.modelLabel}</td>
+      <td class="mono">${formatNum(row.prompts, 0)}</td>
+      <td class="mono">${formatTotalAndAvg(row.input, row.prompts)}</td>
+      <td class="mono">${formatTotalAndAvg(row.cached, row.prompts)}</td>
+      <td class="mono">${formatTotalAndAvg(row.output, row.prompts)}</td>
+      <td class="mono">${formatTotalAndAvg(row.thinking, row.prompts)}</td>
+      <td class="mono">${formatRuntimeCell(row.runtime, row.runtimeHuman)}</td>
+    `;
+    tr.addEventListener("click", () => openRunModal(row.run));
+    tbody.appendChild(tr);
   });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  els.tokenChart.appendChild(wrap);
 }
 
 function renderTable(runs) {
@@ -1031,11 +1347,16 @@ function fillRunDetailsContent(run) {
     els.runModalContent.innerHTML = "";
     return;
   }
+  const runThinkingLevel = getConfiguredControl(run, "thinking_level");
+  const runReasoningEffort =
+    getConfiguredControl(run, "reasoning_effort") || getConfiguredControl(run, "effort");
   const detailPairs = [
     ["Task", run.task],
     ["Task Description", run.taskDescription],
     ["Tags", run.tagsDisplay],
     ["Model", run.model],
+    ["Thinking Level", runThinkingLevel],
+    ["Reasoning/Effort", runReasoningEffort],
     ["Timestamp", formatTs(run.timestamp)],
     ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],
     ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
@@ -1138,6 +1459,7 @@ function setupModalControls() {
 function render() {
   state.filtered = getFilteredRuns();
   renderTaskControls();
+  renderModelControls();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
   renderBestByTask();
@@ -1173,12 +1495,17 @@ function applyLoadedResult(result) {
 
   state.runs = result.runs;
   state.tasks = [...new Set(result.runs.map((run) => run.task))].sort((a, b) => a.localeCompare(b));
+  state.models = [...new Set(result.runs.map((run) => run.model))].sort((a, b) => a.localeCompare(b));
   state.sourceMode = result.mode;
   state.sourceFileCount = result.fileCount;
   state.warnings = result.warnings;
+  state.expandedLeaderboardModels = new Set();
 
   if (state.selectedTask !== "ALL" && !state.tasks.includes(state.selectedTask)) {
     state.selectedTask = "ALL";
+  }
+  if (state.selectedModel !== "ALL" && !state.models.includes(state.selectedModel)) {
+    state.selectedModel = "ALL";
   }
   if (state.selectedRunPath && !findRunByPath(state.selectedRunPath)) {
     state.selectedRunPath = null;
