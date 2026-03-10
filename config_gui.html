@@ -338,8 +338,26 @@
         color: var(--muted);
         font-size: 0.92rem;
       }
+      .command-sections {
+        display: grid;
+        gap: 0.8rem;
+      }
+      .live-section {
+        border: 1px solid #d5e4f3;
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 0.7rem;
+      }
+      .live-section-title {
+        margin: 0 0 0.55rem;
+        font-size: 0.84rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #174676;
+      }
       .token-estimate {
-        margin: 0 0 0.9rem;
+        margin: 0;
         padding: 0.55rem 0.65rem;
         border: 1px solid #d5e4f3;
         background: #f5f9ff;
@@ -352,7 +370,7 @@
         font-weight: 700;
       }
       .token-estimate-controls {
-        margin: 0 0 0.9rem;
+        margin: 0.65rem 0 0;
         display: grid;
         gap: 0.45rem;
       }
@@ -369,7 +387,50 @@
         font-weight: bolder;
       }
       .command-preview {
+        margin: 0 0 0.65rem;
+        padding: 0.62rem 0.66rem;
+        border: 1px solid #d5e4f3;
+        border-radius: 8px;
+        background: #f8fbff;
+        white-space: pre-wrap;
         min-height: 160px;
+      }
+      .prompt-preview-details {
+        margin-top: 0.68rem;
+        border: 1px solid #d5e4f3;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 0.45rem 0.55rem;
+      }
+      .prompt-preview-details > summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: #174676;
+      }
+      .prompt-preview-meta {
+        margin: 0.45rem 0 0.55rem;
+        font-size: 0.83rem;
+        color: #35526d;
+      }
+      .prompt-message-title {
+        margin: 0.48rem 0 0.28rem;
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #1f4d7b;
+      }
+      .prompt-message-preview {
+        margin: 0;
+        max-height: 240px;
+        overflow: auto;
+        padding: 0.56rem 0.6rem;
+        border: 1px solid #cfdeee;
+        border-radius: 6px;
+        background: #ffffff;
+        white-space: pre-wrap;
+        font-size: 0.83rem;
+        line-height: 1.35;
       }
       .cmd-token {
         word-break: break-word;
@@ -398,6 +459,7 @@
       .command-actions {
         display: flex;
         gap: 0.6rem;
+        flex-wrap: wrap;
       }
       .cli-help {
         margin-top: 1rem;
@@ -453,14 +515,14 @@
                   <textarea
                     id="input_path"
                     name="input_path"
-                    placeholder="/data/input/examples.csv&#10;/data/input/examples_2.csv"
+                    placeholder="data/input/examples.csv&#10;data/input/examples_2.csv"
                     required
                   ></textarea>
                   <span class="hint">Provide one path per line.</span>
                 </label>
                 <label
                   >Output CSV Path
-                  <input type="text" id="output_path" name="output_path" placeholder="/data/output/results.csv" />
+                  <input type="text" id="output_path" name="output_path" placeholder="data/output/results.csv" />
                   <span class="hint">Optional: dir for multi-file input or an existing file to resume.</span>
                 </label>
               </section>
@@ -708,7 +770,7 @@
               <div class="grid">
                 <label
                   >Labels CSV Path
-                  <input type="text" id="labels_path" name="labels_path" placeholder="/data/input/labels.csv" />
+                  <input type="text" id="labels_path" name="labels_path" placeholder="data/input/labels.csv" />
                 </label>
                 <label class="inline">
                   <input type="checkbox" id="metrics_only" name="metrics_only" />
@@ -1049,20 +1111,38 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       <aside class="command-panel">
         <h2>Live Command</h2>
         <p class="panel-note">Updates as you edit fields. Flags and values are color-coded for quick scanning.</p>
-        <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
-        <div class="command-actions">
-          <button type="button" id="copy-button">Copy Command</button>
-          <button type="button" id="reset-button">Reset Defaults</button>
-        </div>
-        <div id="prompt-token-estimate" class="token-estimate">
-          <strong>Shared prefix estimate:</strong> waiting for input...
-        </div>
-        <div class="token-estimate-controls">
-          <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
-          <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
-          <p id="prompt-token-estimate-status" class="token-estimate-status">
-            Shared-prefix estimate ignores row-specific CSV fields; sampling is optional.
-          </p>
+        <div class="command-sections">
+          <section class="live-section">
+            <h3 class="live-section-title">Command</h3>
+            <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
+            <div class="command-actions">
+              <button type="button" id="copy-button">Copy Command</button>
+              <button type="button" id="reset-button">Reset Defaults</button>
+            </div>
+            <details class="prompt-preview-details">
+              <summary>Prompt Preview (Exact API System/User Messages)</summary>
+              <p id="prompt-preview-meta" class="prompt-preview-meta">
+                Sample a CSV file to preview the first data row inside the prompt payload.
+              </p>
+              <p class="prompt-message-title">System</p>
+              <pre id="prompt-preview-system" class="prompt-message-preview">[system message preview]</pre>
+              <p class="prompt-message-title">User</p>
+              <pre id="prompt-preview-user" class="prompt-message-preview">[user message preview]</pre>
+            </details>
+          </section>
+          <section class="live-section">
+            <h3 class="live-section-title">Shared Prefix Estimate</h3>
+            <div id="prompt-token-estimate" class="token-estimate">
+              <strong>Shared prefix estimate:</strong> waiting for input...
+            </div>
+            <div class="token-estimate-controls">
+              <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
+              <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
+              <p id="prompt-token-estimate-status" class="token-estimate-status">
+                Shared-prefix estimate ignores row-specific CSV fields; sampling is optional.
+              </p>
+            </div>
+          </section>
         </div>
       </aside>
     </div>
@@ -1078,6 +1158,9 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       const commandOutput = document.getElementById("command-output");
       const promptTokenEstimate = document.getElementById("prompt-token-estimate");
       const promptTokenEstimateStatus = document.getElementById("prompt-token-estimate-status");
+      const promptPreviewSystem = document.getElementById("prompt-preview-system");
+      const promptPreviewUser = document.getElementById("prompt-preview-user");
+      const promptPreviewMeta = document.getElementById("prompt-preview-meta");
       const estimateCsvFileInput = document.getElementById("estimate-csv-file");
       const sampleCsvButton = document.getElementById("sample-csv-button");
       const copyButton = document.getElementById("copy-button");
@@ -1099,6 +1182,25 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       const PROMPT_ESTIMATE_SAMPLE_LIMIT = 100;
       const PROMPT_CACHE_HINT_TOKENS = 1024;
       const MAX_CACHE_PADDING_TOKENS = 200000;
+      const NODE_MARKER_LEFT = "\u27E6";
+      const NODE_MARKER_RIGHT = "\u27E7";
+      const LEGACY_NODE_MARKER_LEFT = "\u00E2\u017A\u00A6";
+      const LEGACY_NODE_MARKER_RIGHT = "\u00E2\u017A\u00A7";
+      const NODE_MARKER_VARIANTS = [
+        [NODE_MARKER_LEFT, NODE_MARKER_RIGHT],
+        [LEGACY_NODE_MARKER_LEFT, LEGACY_NODE_MARKER_RIGHT],
+      ];
+      const MANDATORY_SYSTEM_APPEND =
+        `Classify ONLY the text that is explicitly wrapped inside ${NODE_MARKER_LEFT} ${NODE_MARKER_RIGHT} ` +
+        "(the 'node' or its marked sub-span). " +
+        "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. " +
+        'If you cannot determine the class/label for the node, return "unclassified".';
+      const PROMPT_PREVIEW_PLACEHOLDER_ROW = Object.freeze({
+        leftContext: "[leftContext from first sampled CSV row]",
+        node: "[node from first sampled CSV row]",
+        rightContext: "[rightContext from first sampled CSV row]",
+        info: "[info from first sampled CSV row]",
+      });
       const CACHE_PADDING_PREFIX =
         "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN";
       const CACHE_PADDING_TOKEN = " cachepad";
@@ -1315,9 +1417,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const trimmedSystemPrompt =
           typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
         const effectiveSystemPrompt = trimmedSystemPrompt || defaultValues.system_prompt;
-        const mandatorySystemAppend =
-          "Classify ONLY the text wrapped inside [[ ]]. Use surrounding context as evidence only. If uncertain, return \"unclassified\".";
-        const systemMessage = `${effectiveSystemPrompt}\n\n${mandatorySystemAppend}`;
+        const systemMessage = `${effectiveSystemPrompt}\n\n${MANDATORY_SYSTEM_APPEND}`;
 
         const layoutRaw = (data.get("prompt_layout") || defaultValues.prompt_layout || "standard")
           .toString()
@@ -1326,6 +1426,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const layout = layoutRaw === "compact" ? "compact" : "standard";
         const includeExplanations = Boolean(data.get("include_explanations"));
         const enableCot = Boolean(data.get("enable_cot"));
+        const markerPair = `${NODE_MARKER_LEFT}...${NODE_MARKER_RIGHT}`;
         const fewShotRaw = (data.get("few_shot_examples") || "0").toString().trim();
         const parsedFewShot = Number.parseInt(fewShotRaw || "0", 10);
         const fewShotCount =
@@ -1334,16 +1435,16 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const userInstructions =
           layout === "standard"
             ? [
-                "You will receive left_context, node, right_context, info, and a marked example where node is wrapped as [[node]].",
-                "If the node contains inner [[...]] spans, classify only those marked spans; otherwise classify the full node.",
+                `You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as ${NODE_MARKER_LEFT}node${NODE_MARKER_RIGHT}.`,
+                `When the node itself contains inner ${markerPair} spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.`,
                 "Identify the label that best matches the required span according to the task definition.",
-                "The payload includes a classification_target helper indicating exactly what text must be classified.",
+                "The payload includes a classification_target helper indicating exactly which text must be classified.",
               ]
             : [
                 "You will receive left_context, node, and right_context fields for a text excerpt.",
-                "If the node contains inner [[...]] spans, classify only those marked spans; otherwise classify the full node.",
+                `If the node contains inner ${markerPair} spans, classify only those marked spans; otherwise classify the full node.`,
                 "Identify the label that best matches the required span according to the task definition.",
-                "The payload includes a classification_target helper indicating exactly what text must be classified.",
+                "The payload includes a classification_target helper indicating exactly which text must be classified.",
               ];
 
         if (enableCot) {
@@ -1365,7 +1466,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         }
 
         userInstructions.push(
-          'Set span_source to "node" when the entire node is being classified. If any inner [[...]] spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text.'
+          `Set span_source to "node" when the entire node is being classified. If any inner ${markerPair} spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text (join multiple marked spans with a single space, in order).`
         );
         userInstructions.push(
           "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
@@ -1395,24 +1496,57 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       function serializePayloadForEstimate(layout, payload) {
         return layout === "standard"
           ? JSON.stringify(payload, null, 2)
-          : JSON.stringify(payload);
+          : JSON.stringify(payload, null, 0);
+      }
+
+      function extractMarkedSpansForPair(nodeText, markerLeft, markerRight) {
+        const node = (nodeText || "").toString();
+        const spans = [];
+        let searchStart = 0;
+        while (searchStart < node.length) {
+          const leftIndex = node.indexOf(markerLeft, searchStart);
+          if (leftIndex < 0) {
+            break;
+          }
+          const spanStart = leftIndex + markerLeft.length;
+          const rightIndex = node.indexOf(markerRight, spanStart);
+          if (rightIndex < 0) {
+            break;
+          }
+          const span = node.slice(spanStart, rightIndex).trim();
+          if (span) {
+            spans.push(span);
+          }
+          searchStart = rightIndex + NODE_MARKER_RIGHT.length;
+        }
+        return spans;
+      }
+
+      function extractMarkedSpans(nodeText) {
+        for (const [markerLeft, markerRight] of NODE_MARKER_VARIANTS) {
+          const spans = extractMarkedSpansForPair(nodeText, markerLeft, markerRight);
+          if (spans.length > 0) {
+            return spans;
+          }
+        }
+        return [];
+      }
+
+      function hasAnyNodeMarker(text) {
+        const value = (text || "").toString();
+        return NODE_MARKER_VARIANTS.some(
+          ([markerLeft, markerRight]) =>
+            value.includes(markerLeft) || value.includes(markerRight)
+        );
       }
 
       function extractMarkedSpanTarget(nodeText) {
         const node = (nodeText || "").toString();
-        const matches = [];
-        const pattern = /\[\[([\s\S]*?)\]\]/g;
-        let match;
-        while ((match = pattern.exec(node)) !== null) {
-          const span = (match[1] || "").trim();
-          if (span) {
-            matches.push(span);
-          }
-        }
-        if (matches.length) {
+        const spans = extractMarkedSpans(node);
+        if (spans.length) {
           return {
             focus: "marked_subspan",
-            text: matches.join(" "),
+            text: spans.join(" "),
           };
         }
         return {
@@ -1422,14 +1556,19 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
       }
 
       function markNodeInContextForEstimate(left, node, right) {
-        const leftPart = (left || "").toString().trim();
-        const nodePartRaw = (node || "").toString().trim();
-        const rightPart = (right || "").toString().trim();
-        const nodePart =
-          nodePartRaw.includes("[[") || nodePartRaw.includes("]]")
-            ? nodePartRaw
-            : `[[${nodePartRaw}]]`;
-        return [leftPart, nodePart, rightPart].filter((part) => part.length > 0).join(" ");
+        const leftRaw = (left || "").toString();
+        const nodeRaw = (node || "").toString();
+        const rightRaw = (right || "").toString();
+        const leftPart = leftRaw.replace(/\s+$/u, "");
+        const rightPart = rightRaw.replace(/^\s+/u, "");
+        const leftSep =
+          leftPart.length === 0 ? "" : leftRaw.endsWith(" ") || leftRaw.endsWith("\n") ? "" : " ";
+        const rightSep =
+          rightPart.length === 0 ? "" : rightRaw.startsWith(" ") || rightRaw.startsWith("\n") ? "" : " ";
+        const nodePart = hasAnyNodeMarker(nodeRaw)
+          ? nodeRaw
+          : `${NODE_MARKER_LEFT}${nodeRaw}${NODE_MARKER_RIGHT}`;
+        return `${leftPart}${leftSep}${nodePart}${rightSep}${rightPart}`.trim();
       }
 
       function buildEstimateTargetPayload(layout, row) {
@@ -1559,6 +1698,66 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           paddingUnitsEstimate: shared.paddingUnitsEstimate,
           paddedSharedPrefixTokensEstimate: shared.paddedSharedPrefixTokensEstimate,
         };
+      }
+
+      function getPromptPreviewRow() {
+        if (Array.isArray(sampledEstimateRows) && sampledEstimateRows.length > 0) {
+          return {
+            row: sampledEstimateRows[0],
+            sampled: true,
+          };
+        }
+        return {
+          row: PROMPT_PREVIEW_PLACEHOLDER_ROW,
+          sampled: false,
+        };
+      }
+
+      function buildPromptPreview(data) {
+        const config = getPromptEstimateConfig(data);
+        const previewRowInfo = getPromptPreviewRow();
+        let userContent = config.instructionsText;
+        if (config.fewShotCount > 0) {
+          userContent +=
+            `\n\nHere are ${config.fewShotCount} labeled example(s) you should mimic when classifying:\n` +
+            "[few-shot examples are selected at runtime and are omitted from GUI preview]";
+        }
+        userContent += "\n\nNow classify this example:\n";
+        userContent += serializePayloadForEstimate(
+          config.layout,
+          buildEstimateTargetPayload(config.layout, previewRowInfo.row)
+        );
+        const suppressSystemMessage = Boolean(
+          (data.get("gemini_cached_content") || "").toString().trim()
+        );
+        return {
+          systemMessage: suppressSystemMessage
+            ? "[omitted: system message is not sent when --gemini_cached_content is set]"
+            : config.systemMessage,
+          userMessage: userContent,
+          sampled: previewRowInfo.sampled,
+          fewShotCount: config.fewShotCount,
+        };
+      }
+
+      function updatePromptPreview(data) {
+        if (!promptPreviewSystem || !promptPreviewUser || !promptPreviewMeta) {
+          return;
+        }
+        const preview = buildPromptPreview(data);
+        promptPreviewSystem.textContent = preview.systemMessage;
+        promptPreviewUser.textContent = preview.userMessage;
+
+        let metaText = preview.sampled
+          ? "Preview row source: first sampled CSV data row."
+          : "Preview row source: placeholder values (sample CSV to insert first data row).";
+        if (sampledEstimateSource) {
+          metaText += ` Source: ${sampledEstimateSource}.`;
+        }
+        if (preview.fewShotCount > 0) {
+          metaText += ` Few-shot examples configured (${preview.fewShotCount}) but resolved at runtime.`;
+        }
+        promptPreviewMeta.textContent = metaText;
       }
 
       function setPromptEstimateStatus(message, isError = false) {
@@ -1772,14 +1971,18 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
           }
           sampledEstimateRows = sampleEvenly(records, PROMPT_ESTIMATE_SAMPLE_LIMIT);
           sampledEstimateSource = sourceLabel;
-          updatePromptTokenEstimate(new FormData(form));
+          const data = new FormData(form);
+          updatePromptTokenEstimate(data);
+          updatePromptPreview(data);
           setPromptEstimateStatus(
             `Sampled ${sampledEstimateRows.length}/${records.length} rows from ${sourceLabel}.`
           );
         } catch (error) {
           sampledEstimateRows = null;
           sampledEstimateSource = "";
-          updatePromptTokenEstimate(new FormData(form));
+          const data = new FormData(form);
+          updatePromptTokenEstimate(data);
+          updatePromptPreview(data);
           setPromptEstimateStatus(error && error.message ? error.message : "CSV sampling failed.", true);
         } finally {
           if (sampleCsvButton) {
@@ -2108,6 +2311,7 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         latestCommandText = args.join(" ");
         commandOutput.innerHTML = renderCommandTokens(args);
         updatePromptTokenEstimate(data);
+        updatePromptPreview(data);
       }
 
       function ensureProviderRegistered(slug, labelHint) {

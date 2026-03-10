@@ -37,12 +37,20 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Prot
 from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
 
-NODE_MARKER_LEFT = "âź¦"
-NODE_MARKER_RIGHT = "âź§"
+NODE_MARKER_LEFT = "\u27E6"
+NODE_MARKER_RIGHT = "\u27E7"
+# Backward compatibility for legacy mojibake marker text that may still appear in older CSVs.
+LEGACY_NODE_MARKER_LEFT = "\u00E2\u017A\u00A6"
+LEGACY_NODE_MARKER_RIGHT = "\u00E2\u017A\u00A7"
+NODE_MARKER_VARIANTS: Tuple[Tuple[str, str], ...] = (
+    (NODE_MARKER_LEFT, NODE_MARKER_RIGHT),
+    (LEGACY_NODE_MARKER_LEFT, LEGACY_NODE_MARKER_RIGHT),
+)
 SPAN_SOURCE_NODE = "node"
 SPAN_SOURCE_MARKED_SUBSPAN = "marked_subspan"
 MANDATORY_SYSTEM_APPEND = (
-    "Classify ONLY the text that is explicitly wrapped inside âź¦ âź§ (the 'node' or its marked sub-span). "
+    f"Classify ONLY the text that is explicitly wrapped inside {NODE_MARKER_LEFT} {NODE_MARKER_RIGHT} "
+    "(the 'node' or its marked sub-span). "
     "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. "
     'If you cannot determine the class/label for the node, return "unclassified".'
 )
@@ -65,7 +73,21 @@ PROMPT_LOG_DETAIL_COMPACT = "compact"
 DEFAULT_PROMPT_LOG_DETAIL = PROMPT_LOG_DETAIL_FULL
 DEFAULT_FLUSH_ROWS = 100
 DEFAULT_FLUSH_SECONDS = 2.0
-DATA_ROOT_DIR = "/data"
+LEGACY_DATA_ROOT_DIR = "/data"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def detect_data_root_dir() -> str:
+    """Resolve the data root directory for this environment."""
+    configured_root = os.environ.get("DHAIBENCH_DATA_ROOT", "").strip()
+    if configured_root:
+        return os.path.abspath(os.path.expanduser(configured_root))
+    if os.name != "nt" and os.path.isdir(LEGACY_DATA_ROOT_DIR):
+        return LEGACY_DATA_ROOT_DIR
+    return os.path.join(SCRIPT_DIR, "data")
+
+
+DATA_ROOT_DIR = detect_data_root_dir()
 DEFAULT_INPUT_DIR = os.path.join(DATA_ROOT_DIR, "input")
 DEFAULT_OUTPUT_DIR = os.path.join(DATA_ROOT_DIR, "output")
 DEFAULT_METRICS_DIR = os.path.join(DATA_ROOT_DIR, "metrics")
@@ -83,6 +105,20 @@ def ensure_data_layout() -> None:
     """Create standard data directories when missing."""
     for path in (DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_METRICS_DIR, DEFAULT_LOGS_DIR):
         os.makedirs(path, exist_ok=True)
+
+
+def resolve_user_path(path: str) -> str:
+    """Resolve CLI/user paths, including legacy /data aliases."""
+    resolved = os.path.expanduser(path)
+    normalized = resolved.replace("\\", "/")
+    if normalized == LEGACY_DATA_ROOT_DIR or normalized.startswith(f"{LEGACY_DATA_ROOT_DIR}/"):
+        data_root_norm = os.path.normcase(os.path.normpath(DATA_ROOT_DIR))
+        legacy_root_norm = os.path.normcase(os.path.normpath(LEGACY_DATA_ROOT_DIR))
+        if data_root_norm != legacy_root_norm:
+            suffix = normalized[len(LEGACY_DATA_ROOT_DIR) :].lstrip("/")
+            mapped = os.path.join(DATA_ROOT_DIR, suffix) if suffix else DATA_ROOT_DIR
+            return os.path.normpath(mapped)
+    return resolved
 
 
 def build_artifact_path(output_csv_path: str, suffix: str, target_dir: str) -> str:
@@ -1200,7 +1236,7 @@ def resolve_output_path(
     """Determine the output path for an input file."""
     filename = build_default_output_filename(input_path, provider, model, timestamp_tag)
     if output_argument:
-        resolved_argument = os.path.expanduser(output_argument)
+        resolved_argument = resolve_user_path(output_argument)
         treat_as_directory = (
             multiple_inputs
             or resolved_argument.endswith(os.sep)
@@ -1225,7 +1261,11 @@ def mark_node_in_context(left: str, node: str, right: str) -> str:
 
     # Allow users to pre-mark parts of the node; if the input already contains markers,
     # keep it as-is instead of adding another pair.
-    if NODE_MARKER_LEFT in node or NODE_MARKER_RIGHT in node:
+    has_existing_marker = any(
+        marker_left in node or marker_right in node
+        for marker_left, marker_right in NODE_MARKER_VARIANTS
+    )
+    if has_existing_marker:
         marked_node = node
     else:
         marked_node = f"{NODE_MARKER_LEFT}{node}{NODE_MARKER_RIGHT}"
@@ -1234,12 +1274,10 @@ def mark_node_in_context(left: str, node: str, right: str) -> str:
     return combined.strip()
 
 
-def extract_marked_spans(node: str) -> List[str]:
-    """Return all substrings that have been explicitly wrapped in marker glyphs."""
+def _extract_marked_spans_for_pair(node: str, marker_left: str, marker_right: str) -> List[str]:
+    """Return all substrings wrapped in one specific marker pair."""
     spans: List[str] = []
     search_start = 0
-    marker_left = NODE_MARKER_LEFT
-    marker_right = NODE_MARKER_RIGHT
     while True:
         left_idx = node.find(marker_left, search_start)
         if left_idx == -1:
@@ -1253,6 +1291,15 @@ def extract_marked_spans(node: str) -> List[str]:
             spans.append(span)
         search_start = right_idx + len(marker_right)
     return spans
+
+
+def extract_marked_spans(node: str) -> List[str]:
+    """Return all substrings that have been explicitly wrapped in marker glyphs."""
+    for marker_left, marker_right in NODE_MARKER_VARIANTS:
+        spans = _extract_marked_spans_for_pair(node, marker_left, marker_right)
+        if spans:
+            return spans
+    return []
 
 
 def resolve_span_contract(node: str) -> Tuple[str, str]:
@@ -2057,7 +2104,7 @@ class PromptLogWriter:
         flush_rows: int = DEFAULT_FLUSH_ROWS,
         flush_seconds: float = DEFAULT_FLUSH_SECONDS,
     ) -> None:
-        self.path = os.path.expanduser(path)
+        self.path = resolve_user_path(path)
         self.flush_rows = max(1, int(flush_rows))
         self.flush_seconds = max(0.0, float(flush_seconds))
         self._rows_since_flush = 0
@@ -2604,7 +2651,7 @@ def _load_legacy_prompt_log_records_best_effort(path: str) -> Tuple[List[Dict[st
 
 def iter_prompt_log_records(path: str) -> Iterator[Dict[str, Any]]:
     """Iterate prompt-log records from NDJSON or legacy JSON-array files."""
-    resolved = os.path.expanduser(path)
+    resolved = resolve_user_path(path)
     format_name = detect_prompt_log_format(resolved)
     if format_name in {"missing", "empty"}:
         return
@@ -2683,7 +2730,7 @@ def get_last_run_command_from_prompt_log(path: str) -> Optional[str]:
 
 def migrate_legacy_prompt_log_to_ndjson(path: str) -> bool:
     """Migrate legacy JSON-array prompt log to NDJSON in place, with backup."""
-    resolved = os.path.expanduser(path)
+    resolved = resolve_user_path(path)
     format_name = detect_prompt_log_format(resolved)
     if format_name != "json_array":
         return False
@@ -2734,7 +2781,7 @@ def migrate_legacy_prompt_log_to_ndjson(path: str) -> bool:
 
 def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
     """Print a compact error summary for a prompt log file (NDJSON or JSON-array)."""
-    log_path = os.path.expanduser(path)
+    log_path = resolve_user_path(path)
     if not os.path.exists(log_path):
         logging.error("Prompt log does not exist: %s", log_path)
         return 1
@@ -4118,6 +4165,69 @@ class OpenAIConnector:
 # --------------------------- Prompt Builder -------------------------------- #
 
 
+def build_user_instruction_lines(
+    layout: str,
+    enable_cot: bool,
+    include_explanation: bool,
+) -> List[str]:
+    """Build the shared user-instruction lines used in prompt payloads."""
+    marker_pair = f"{NODE_MARKER_LEFT}...{NODE_MARKER_RIGHT}"
+    if layout == "standard":
+        user_instructions = [
+            (
+                "You will receive a text excerpt with separate left/right context fields and a marked "
+                f"example where the node is wrapped as {NODE_MARKER_LEFT}node{NODE_MARKER_RIGHT}."
+            ),
+            (
+                f"When the node itself contains inner {marker_pair} spans, those marked passages are the "
+                "classification target; the rest of the node and the contexts remain useful evidence only."
+            ),
+            "Identify the label that best matches the required span according to the task definition.",
+            "The payload includes a classification_target helper indicating exactly which text must be classified.",
+        ]
+    else:
+        user_instructions = [
+            "You will receive left_context, node, and right_context fields for a text excerpt.",
+            (
+                f"If the node contains inner {marker_pair} spans, classify only those marked spans; "
+                "otherwise classify the full node."
+            ),
+            "Identify the label that best matches the required span according to the task definition.",
+            "The payload includes a classification_target helper indicating exactly which text must be classified.",
+        ]
+
+    if enable_cot:
+        user_instructions.insert(
+            2,
+            "Think through the linguistic evidence step-by-step before committing to the label.",
+        )
+
+    if include_explanation:
+        json_instruction = (
+            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1]), "
+            "node_echo (string), span_source (string)."
+        )
+    else:
+        json_instruction = (
+            "Return a JSON object with keys: label (string), confidence (float in [0,1]), node_echo (string), "
+            'span_source (string). Do not include an explanation field.'
+        )
+    user_instructions.append(json_instruction)
+    user_instructions.append(
+        'Set span_source to "node" when the entire node is being classified. '
+        f'If any inner {marker_pair} spans exist, set span_source to "marked_subspan" and set node_echo '
+        "to exactly the marked text (join multiple marked spans with a single space, in order)."
+    )
+    user_instructions.append(
+        "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
+    )
+    user_instructions.append(
+        "Contract: if node_echo or span_source fail to meet these requirements, the response will be rejected."
+    )
+    user_instructions.append("Do not include any text outside the JSON object.")
+    return user_instructions
+
+
 def build_prompt_artifacts(
     example: Example,
     system_prompt: Optional[str],
@@ -4158,51 +4268,11 @@ def build_prompt_artifacts(
         )
     system_msg = f"{system_msg.rstrip()}\n\n{MANDATORY_SYSTEM_APPEND}"
 
-    if layout == "standard":
-        user_instructions = [
-            "You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as âź¦nodeâź§.",
-            "When the node itself contains inner âź¦...âź§ spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.",
-            "Identify the label that best matches the required span according to the task definition.",
-            "The payload includes a classification_target helper indicating exactly which text must be classified.",
-        ]
-    else:
-        user_instructions = [
-            "You will receive left_context, node, and right_context fields for a text excerpt.",
-            "If the node contains inner âź¦...âź§ spans, classify only those marked spans; otherwise classify the full node.",
-            "Identify the label that best matches the required span according to the task definition.",
-            "The payload includes a classification_target helper indicating exactly which text must be classified.",
-        ]
-
-    if enable_cot:
-        user_instructions.insert(
-            2,
-            "Think through the linguistic evidence step-by-step before committing to the label.",
-        )
-
-    if include_explanation:
-        json_instruction = (
-            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1]), "
-            "node_echo (string), span_source (string)."
-        )
-    else:
-        json_instruction = (
-            "Return a JSON object with keys: label (string), confidence (float in [0,1]), node_echo (string), "
-            'span_source (string). Do not include an explanation field.'
-        )
-
-    user_instructions.append(json_instruction)
-    user_instructions.append(
-        'Set span_source to "node" when the entire node is being classified. '
-        'If any inner âź¦...âź§ spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text '
-        "(join multiple marked spans with a single space, in order)."
+    user_instructions = build_user_instruction_lines(
+        layout=layout,
+        enable_cot=enable_cot,
+        include_explanation=include_explanation,
     )
-    user_instructions.append(
-        "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
-    )
-    user_instructions.append(
-        "Contract: if node_echo or span_source fail to meet these requirements, the response will be rejected."
-    )
-    user_instructions.append("Do not include any text outside the JSON object.")
 
     user_content_prefix = "\n".join(user_instructions)
 
@@ -6067,7 +6137,7 @@ def process_metrics_only_output(
     label_map: Optional[Dict[str, str]],
 ) -> Tuple[int, int, int]:
     """Compute metrics from an already-produced output CSV without model/API calls."""
-    resolved_output = os.path.expanduser(output_path)
+    resolved_output = resolve_user_path(output_path)
     if not os.path.exists(resolved_output):
         raise FileNotFoundError(f"Output CSV does not exist: {resolved_output}")
 
@@ -6706,10 +6776,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.metrics_only and args.summarize_log_errors:
         parser.error("--metrics_only and --summarize-log-errors cannot be used together.")
     if args.update_models:
-        return update_model_catalog(args.models_providers, args.models_output)
+        return update_model_catalog(args.models_providers, resolve_user_path(args.models_output))
     if args.summarize_log_errors:
         return summarize_prompt_log_errors(
-            args.summarize_log_errors,
+            resolve_user_path(args.summarize_log_errors),
             top_examples=args.summarize_log_errors_top,
         )
 
@@ -6741,20 +6811,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     overall_start = time.perf_counter()
-    input_paths = [os.path.expanduser(path) for path in args.input]
+    input_paths = [resolve_user_path(path) for path in args.input]
 
     if args.metrics_only:
         if args.output:
             logging.warning(
-                "--output is ignored in --metrics_only mode. Metrics are written to /data/metrics."
+                "--output is ignored in --metrics_only mode. Metrics are written to %s.",
+                DEFAULT_METRICS_DIR,
             )
         if args.create_gemini_cache:
             logging.warning("--create_gemini_cache is ignored in --metrics_only mode.")
 
         label_map: Optional[Dict[str, str]] = None
         if args.labels:
-            logging.info("Loading labels from %s", args.labels)
-            label_map = read_label_file(args.labels)
+            labels_path = resolve_user_path(args.labels)
+            logging.info("Loading labels from %s", labels_path)
+            label_map = read_label_file(labels_path)
 
         calibration_enabled = args.calibration
         if calibration_enabled and not ensure_calibration_dependencies():
@@ -6918,8 +6990,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     label_map: Optional[Dict[str, str]] = None
     if args.labels:
-        logging.info("Loading labels from %s", args.labels)
-        label_map = read_label_file(args.labels)
+        labels_path = resolve_user_path(args.labels)
+        logging.info("Loading labels from %s", labels_path)
+        label_map = read_label_file(labels_path)
     else:
         logging.info("Using truth column embedded in the input files.")
 
