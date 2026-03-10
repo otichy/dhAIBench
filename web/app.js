@@ -1,6 +1,7 @@
 const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
 const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
 const METRICS_SERVER_DIR = "../data/metrics";
+const METRICS_SERVER_DIR_CANDIDATES = [METRICS_SERVER_DIR, "./metrics", "./data/metrics"];
 
 const state = {
   runs: [],
@@ -64,20 +65,52 @@ function isFileProtocol() {
   return window.location.protocol === "file:";
 }
 
+function isExplicitUrlOrAbsolutePath(path) {
+  return /^(https?:)?\/\//i.test(path) || path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+}
+
+function normalizeSlashes(path) {
+  return String(path || "").replace(/\\/g, "/");
+}
+
+function trimTrailingSlash(path) {
+  return normalizeSlashes(path).replace(/\/+$/, "");
+}
+
+function uniqueNonEmptyStrings(values) {
+  const seen = new Set();
+  const out = [];
+  (values || []).forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function joinPath(baseDir, name) {
+  const base = trimTrailingSlash(baseDir);
+  const fileName = normalizeSlashes(name).replace(/^\/+/, "");
+  return base ? `${base}/${fileName}` : fileName;
+}
+
 function getFileNameFromPath(filePath) {
-  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const normalized = normalizeSlashes(filePath);
   const parts = normalized.split("/");
   return parts[parts.length - 1] || normalized;
 }
 
 function normalizeMetricsPath(filePath) {
-  const normalized = String(filePath || "").replace(/\\/g, "/").trim();
+  const normalized = normalizeSlashes(filePath).trim();
   if (!normalized) {
     return normalized;
   }
 
   // Keep explicit URLs and absolute paths unchanged.
-  if (/^(https?:)?\/\//i.test(normalized) || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+  if (isExplicitUrlOrAbsolutePath(normalized)) {
     return normalized;
   }
 
@@ -91,7 +124,7 @@ function normalizeMetricsPath(filePath) {
 }
 
 function getDirectoryFromPath(filePath) {
-  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const normalized = normalizeSlashes(filePath);
   const idx = normalized.lastIndexOf("/");
   return idx >= 0 ? normalized.slice(0, idx) : "";
 }
@@ -111,7 +144,7 @@ function metricFileToRunStem(fileName) {
 }
 
 function mapMetricsPathToSiblingDir(filePath, siblingDir) {
-  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const normalized = normalizeSlashes(filePath);
   if (normalized.includes("/metrics/")) {
     return normalized.replace("/metrics/", `/${siblingDir}/`);
   }
@@ -376,57 +409,169 @@ function dedupeRuns(runs) {
   return Array.from(byFile.values());
 }
 
+function parseManifestBaseDirs(manifest) {
+  if (!manifest || typeof manifest !== "object") {
+    return [];
+  }
+
+  const fromArray = Array.isArray(manifest.metrics_base_dirs) ? manifest.metrics_base_dirs : [];
+  const fromSingle = typeof manifest.metrics_base_dir === "string" ? [manifest.metrics_base_dir] : [];
+  const fromLegacy = typeof manifest.metrics_base_url === "string" ? [manifest.metrics_base_url] : [];
+
+  return uniqueNonEmptyStrings([...fromArray, ...fromSingle, ...fromLegacy]).map((dir) =>
+    trimTrailingSlash(dir)
+  );
+}
+
+function buildServerMetricPathCandidates(rawPath, manifestBaseDirs = []) {
+  const normalized = normalizeSlashes(rawPath).trim();
+  if (!normalized) {
+    return [];
+  }
+
+  if (isExplicitUrlOrAbsolutePath(normalized)) {
+    return [normalized];
+  }
+
+  const fileName = getFileNameFromPath(normalized);
+  const baseDirs = uniqueNonEmptyStrings([...manifestBaseDirs, ...METRICS_SERVER_DIR_CANDIDATES]).map((dir) =>
+    trimTrailingSlash(dir)
+  );
+
+  const directCandidates = [normalized];
+  if (normalized.startsWith("./")) {
+    directCandidates.push(normalized.replace(/^\.\/+/, ""));
+  } else if (!normalized.startsWith("../")) {
+    directCandidates.push(`./${normalized}`);
+  }
+
+  const byFileName = fileName ? baseDirs.map((dir) => joinPath(dir, fileName)) : [];
+  if (fileName) {
+    byFileName.push(fileName, `./${fileName}`);
+  }
+
+  return uniqueNonEmptyStrings([...directCandidates, ...byFileName]);
+}
+
+function getDirectoryListingCandidates() {
+  return uniqueNonEmptyStrings(METRICS_SERVER_DIR_CANDIDATES).map((dir) => trimTrailingSlash(dir));
+}
+
 async function discoverMetricFilesFromServer() {
   try {
     const manifestRes = await fetch(METRICS_MANIFEST_PATH, { cache: "no-store" });
     if (manifestRes.ok) {
       const manifest = await manifestRes.json();
       if (Array.isArray(manifest.metrics_files) && manifest.metrics_files.length) {
-        return manifest.metrics_files;
+        return {
+          files: manifest.metrics_files,
+          source: "manifest",
+          manifestBaseDirs: parseManifestBaseDirs(manifest),
+        };
       }
     }
   } catch (_) {
     // Fallback below.
   }
 
-  const dirRes = await fetch(`${METRICS_SERVER_DIR}/`, { cache: "no-store" });
-  if (!dirRes.ok) {
-    throw new Error(`Unable to load metrics manifest or metrics directory listing from ${METRICS_SERVER_DIR}/.`);
+  const listingDirs = getDirectoryListingCandidates();
+  const listingErrors = [];
+
+  for (const dir of listingDirs) {
+    try {
+      const dirRes = await fetch(`${dir}/`, { cache: "no-store" });
+      if (!dirRes.ok) {
+        listingErrors.push(`${dir}/ -> HTTP ${dirRes.status}`);
+        continue;
+      }
+
+      const html = await dirRes.text();
+      const matches = [...html.matchAll(/href=\"([^\"]+_metrics\.json)\"/gi)];
+      const files = uniqueNonEmptyStrings(
+        matches.map((match) => {
+          const href = decodeURIComponent(match[1]);
+          if (isExplicitUrlOrAbsolutePath(href) || href.startsWith("./") || href.startsWith("../")) {
+            return href;
+          }
+          return joinPath(dir, href);
+        })
+      );
+
+      if (files.length) {
+        return {
+          files: files.sort(),
+          source: "directory-listing",
+          manifestBaseDirs: [],
+        };
+      }
+
+      listingErrors.push(`${dir}/ -> no *_metrics.json links`);
+    } catch (error) {
+      listingErrors.push(`${dir}/ -> ${error.message}`);
+    }
   }
-  const html = await dirRes.text();
-  const matches = [...html.matchAll(/href=\"([^\"]+_metrics\.json)\"/gi)];
-  const files = matches.map((match) => `${METRICS_SERVER_DIR}/${decodeURIComponent(match[1])}`);
-  if (!files.length) {
-    throw new Error(`No *_metrics.json files discovered on server path ${METRICS_SERVER_DIR}/.`);
+
+  const detailText = listingErrors.length
+    ? ` Tried: ${listingErrors.slice(0, 3).join(" | ")}${listingErrors.length > 3 ? ` | ...and ${listingErrors.length - 3} more` : ""}`
+    : "";
+  throw new Error(`Unable to load metrics manifest or discover metrics directory listings.${detailText}`);
+}
+
+async function loadRunFromServerCandidates(rawPath, manifestBaseDirs, warnings) {
+  const candidates = buildServerMetricPathCandidates(rawPath, manifestBaseDirs);
+  if (!candidates.length) {
+    warnings.push({
+      file: String(rawPath || ""),
+      message: "Empty metrics path entry.",
+    });
+    return null;
   }
-  return files.sort();
+
+  const candidateErrors = [];
+  for (const candidatePath of candidates) {
+    try {
+      const res = await fetch(candidatePath, { cache: "no-store" });
+      if (!res.ok) {
+        candidateErrors.push(`${candidatePath}: HTTP ${res.status}`);
+        continue;
+      }
+
+      const text = await res.text();
+      const parseWarnings = [];
+      const run = parseMetricText(candidatePath, text, parseWarnings);
+      if (run) {
+        return run;
+      }
+
+      parseWarnings.forEach((warning) => {
+        candidateErrors.push(`${candidatePath}: ${warning.message}`);
+      });
+    } catch (error) {
+      candidateErrors.push(`${candidatePath}: ${error.message}`);
+    }
+  }
+
+  const details = candidateErrors.slice(0, 2).join(" | ");
+  const overflow =
+    candidateErrors.length > 2 ? ` | ...and ${candidateErrors.length - 2} more attempts` : "";
+  warnings.push({
+    file: String(rawPath),
+    message: details ? `Failed all path candidates. ${details}${overflow}` : "Failed all path candidates.",
+  });
+  return null;
 }
 
 async function loadFromServer() {
-  const files = await discoverMetricFilesFromServer();
+  const discovery = await discoverMetricFilesFromServer();
+  const files = discovery.files;
+  const manifestBaseDirs = discovery.manifestBaseDirs || [];
   const warnings = [];
   const runs = [];
 
   for (const path of files) {
-    try {
-      const res = await fetch(path, { cache: "no-store" });
-      if (!res.ok) {
-        warnings.push({
-          file: path,
-          message: `HTTP ${res.status} while loading file.`,
-        });
-        continue;
-      }
-      const text = await res.text();
-      const run = parseMetricText(path, text, warnings);
-      if (run) {
-        runs.push(run);
-      }
-    } catch (error) {
-      warnings.push({
-        file: path,
-        message: `Failed to fetch file (${error.message}).`,
-      });
+    const run = await loadRunFromServerCandidates(path, manifestBaseDirs, warnings);
+    if (run) {
+      runs.push(run);
     }
   }
 

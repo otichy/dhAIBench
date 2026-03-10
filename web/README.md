@@ -26,4 +26,9 @@ In server mode, the app auto-loads metrics via:
 1. `web/metrics-manifest.json` if present
 2. otherwise `../data/metrics/` directory listing fallback
 
-`web/generate_metrics_manifest.py` is optional optimization only.
+Manifest notes:
+- `metrics_files` is authoritative when present.
+- If a listed path 404s, the app retries by filename in common dirs (`../data/metrics`, `./metrics`, `./data/metrics`).
+- Optional `metrics_base_dirs` in the manifest customizes/extends those retry directories.
+
+`web/generate_metrics_manifest.py` is optional optimization only, and now writes `metrics_base_dirs` by default.

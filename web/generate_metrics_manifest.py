@@ -7,6 +7,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+DEFAULT_METRICS_BASE_DIRS = [
+    "../data/metrics",
+    "./metrics",
+    "./data/metrics",
+]
+
 
 def main() -> int:
     web_dir = Path(__file__).resolve().parent
@@ -24,6 +30,7 @@ def main() -> int:
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "metrics_base_dirs": DEFAULT_METRICS_BASE_DIRS,
         "metrics_files": files,
     }
 
