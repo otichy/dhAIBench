@@ -2839,7 +2839,9 @@ def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
             error_type = str(attempt.get("error_type", "")).strip() or infer_error_type(error_message)
             error_category = str(attempt.get("error_category", "")).strip()
             if not error_category:
-                if is_request_timeout_error(TimeoutError(error_message)):
+                # Avoid wrapping in TimeoutError here; its class name would always
+                # force timeout categorization even for unrelated messages.
+                if is_request_timeout_error(RuntimeError(error_message)):
                     error_category = "request_timeout"
                 elif is_malformed_model_response_error(ValueError(error_message)):
                     error_category = "malformed_provider_response"
@@ -3175,6 +3177,11 @@ class OpenAIConnector:
                 logging.debug("Unable to set api_key dynamically on OpenAI client instance.")
         elif self.client_type == "legacy":
             self._client.api_key = api_key
+
+    @property
+    def request_timeout_seconds(self) -> Optional[float]:
+        """Configured per-request timeout in seconds, or None when disabled."""
+        return self._request_timeout_seconds
 
     def _refresh_access_token_if_needed(self, force_refresh: bool = False) -> None:
         if self._access_token_provider is None:
@@ -4946,6 +4953,7 @@ def classify_example(
         }
         if include_full_prompt_log:
             log_entry["request"] = copy.deepcopy(messages)
+        attempt_started_at = time.perf_counter()
         try:
             result = connector.complete(
                 model=model,
@@ -5010,6 +5018,7 @@ def classify_example(
                 "total_tokens": result.total_tokens,
                 "usage_metadata": result.usage_metadata,
             }
+            log_entry["duration_seconds"] = round(time.perf_counter() - attempt_started_at, 3)
             if include_full_prompt_log:
                 response_log["text"] = raw
             log_entry["response"] = response_log
@@ -5247,6 +5256,8 @@ def classify_example(
                 variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
             ), interaction_logs
         except Exception as exc:  # noqa: BLE001 - surface API errors to user
+            attempt_duration_seconds = time.perf_counter() - attempt_started_at
+            log_entry["duration_seconds"] = round(attempt_duration_seconds, 3)
             last_error = exc
             strict_control_error = (
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
@@ -5255,6 +5266,11 @@ def classify_example(
             empty_response_error = is_empty_model_response_error(exc)
             timeout_error = is_request_timeout_error(exc)
             malformed_response_error = is_malformed_model_response_error(exc)
+            request_timeout_seconds = connector.request_timeout_seconds
+            if request_timeout_seconds is not None:
+                log_entry["configured_request_timeout_seconds"] = request_timeout_seconds
+                if timeout_error and attempt_duration_seconds + 0.25 >= request_timeout_seconds:
+                    log_entry["timeout_likely_hit_client_limit"] = True
             if isinstance(exc, json.JSONDecodeError) and attempt < max_retries:
                 # Give the model deterministic feedback about why the previous output was rejected.
                 validator_patch_message = {
@@ -5283,10 +5299,11 @@ def classify_example(
                 else max_retries
             )
             logging.warning(
-                "Attempt %d/%d failed for example %s: %s",
+                "Attempt %d/%d failed for example %s after %.2fs: %s",
                 attempt,
                 attempt_limit,
                 example.example_id,
+                attempt_duration_seconds,
                 exc,
             )
             if strict_control_error:
