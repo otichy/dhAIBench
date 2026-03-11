@@ -72,6 +72,7 @@ On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 
 When `--output` is omitted, each input file produces `data/output/<input_basename>__<provider>__<model>__<timestamp>.csv`. Metrics JSON and chart artifacts are written to `data/metrics`, and prompt/session logs are written to `data/logs`. Set `DHAIBENCH_DATA_ROOT` to override the root directory (for example `/data` in containers).
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
+Use `--unclassified` (alias `--unlcassified`) together with resume mode to automatically remove existing rows whose `prediction` is `unclassified` and re-prompt only those IDs.
 When `--threads` is greater than `1`, classification requests run concurrently but output rows are still written in input order, so resume behavior remains unchanged.
 
 ### Metrics-Only Recompute (No API Calls)
@@ -282,6 +283,10 @@ python benchmark_agent.py ^
 - `--flush_seconds`: flush CSV + prompt log after N seconds even when row threshold is not reached (default `2.0`).
 - `--logprobs`: explicitly enable token log probabilities (disabled by default for better large-run throughput).
 - `--metrics_only`: skip API calls and recompute metrics directly from existing output CSV(s) passed via `--input`.
+- `--task_name`: optional task name stored in metrics metadata (falls back to inferred filename task when omitted).
+- `--task_description`: optional free-text task description stored in metrics metadata.
+- `--tags`: optional metrics tags (semicolon-delimited string recommended) stored in metrics metadata.
+- `--unclassified` (alias `--unlcassified`): in resume mode, automatically re-prompt IDs currently labeled `unclassified`.
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
 - `--validator_timeout`: per-request validator timeout (seconds).

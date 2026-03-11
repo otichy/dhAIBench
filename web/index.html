@@ -29,22 +29,13 @@
       <section class="panel">
         <h2>Filters</h2>
         <label class="field">
-          <span>Task</span>
-          <select id="taskSelect"></select>
+          <span>Task (multi-select)</span>
+          <select id="taskSelect" multiple size="6"></select>
+          <small class="field-hint">Use Ctrl/Cmd or Shift for quick range selection.</small>
         </label>
         <label class="field">
-          <span>Model Search</span>
-          <input id="modelSearch" type="search" placeholder="e.g. gpt5, gemini, qwen">
-        </label>
-        <label class="field">
-          <span>Sort Runs By</span>
-          <select id="sortSelect">
-            <option value="accuracy">Accuracy</option>
-            <option value="macro_f1">Macro F1</option>
-            <option value="cached_tokens">Cached Tokens</option>
-            <option value="attempts_total">Requests</option>
-            <option value="timestamp">Most Recent</option>
-          </select>
+          <span>Model (multi-select)</span>
+          <select id="modelSelect" multiple size="8"></select>
         </label>
         <label class="checkbox">
           <input id="hideNoAccuracy" type="checkbox">
@@ -53,17 +44,24 @@
       </section>
 
       <section class="panel">
-        <h2>Tasks</h2>
-        <div id="taskChips" class="chips"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Models</h2>
-        <div id="modelChips" class="chips"></div>
+        <h2>Tags</h2>
+        <div id="tagChips" class="chips"></div>
       </section>
     </aside>
 
     <main class="main">
+      <section class="metric-dock">
+        <label class="field metric-dock-field">
+          <span>Metrics</span>
+          <select id="sortSelect">
+            <option value="accuracy">Accuracy</option>
+            <option value="macro_f1">Macro F1</option>
+            <option value="macro_precision">Macro Precision</option>
+            <option value="macro_recall">Macro Recall</option>
+          </select>
+        </label>
+      </section>
+
       <header class="hero">
         <div class="hero-copy">
           <h2 id="heroTitle">All Tasks</h2>
@@ -115,16 +113,13 @@
       </section>
 
       <section class="grid">
-        <article class="card">
+        <article class="card card-wide">
           <h3>Leaderboard (Selected Task, Grouped by Model)</h3>
+          <div id="leaderboardTabs" class="leaderboard-tabs"></div>
           <div id="leaderboardChart" class="chart"></div>
         </article>
-        <article class="card">
-          <h3>Best Run Per Task</h3>
-          <div id="taskBestChart" class="chart"></div>
-        </article>
         <article class="card card-wide">
-          <h3>Token / Request Signals (Selected Task, Sortable)</h3>
+          <h3>Prompt Token Profile (Stacked) + Radar (Selected Tasks/Models)</h3>
           <div id="tokenChart" class="chart"></div>
         </article>
       </section>

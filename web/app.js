@@ -8,13 +8,14 @@ const state = {
   filtered: [],
   tasks: [],
   models: [],
-  selectedTask: "ALL",
-  selectedModel: "ALL",
+  tags: [],
+  selectedTasks: [],
+  selectedModels: [],
+  selectedTags: [],
   selectedRunPath: null,
-  modelQuery: "",
   sortBy: "accuracy",
-  tokenSortBy: "runtime_seconds",
-  tokenSortDir: "desc",
+  leaderboardTab: "chart",
+  radarAxis: "task",
   hideNoAccuracy: false,
   theme: "dark",
   sourceMode: "none",
@@ -27,12 +28,11 @@ const state = {
 
 const els = {
   taskSelect: document.querySelector("#taskSelect"),
-  modelSearch: document.querySelector("#modelSearch"),
+  modelSelect: document.querySelector("#modelSelect"),
   sortSelect: document.querySelector("#sortSelect"),
   hideNoAccuracy: document.querySelector("#hideNoAccuracy"),
   themeToggle: document.querySelector("#themeToggle"),
-  taskChips: document.querySelector("#taskChips"),
-  modelChips: document.querySelector("#modelChips"),
+  tagChips: document.querySelector("#tagChips"),
   heroTitle: document.querySelector("#heroTitle"),
   heroSubtitle: document.querySelector("#heroSubtitle"),
   btnAutoServer: document.querySelector("#btnAutoServer"),
@@ -44,8 +44,8 @@ const els = {
   kpiTasks: document.querySelector("#kpiTasks"),
   kpiBestAccuracy: document.querySelector("#kpiBestAccuracy"),
   kpiRequests: document.querySelector("#kpiRequests"),
+  leaderboardTabs: document.querySelector("#leaderboardTabs"),
   leaderboardChart: document.querySelector("#leaderboardChart"),
-  taskBestChart: document.querySelector("#taskBestChart"),
   tokenChart: document.querySelector("#tokenChart"),
   runsTableBody: document.querySelector("#runsTableBody"),
   tableMeta: document.querySelector("#tableMeta"),
@@ -55,6 +55,24 @@ const els = {
   runModalContent: document.querySelector("#runModalContent"),
   runModalClose: document.querySelector("#runModalClose"),
   barRowTemplate: document.querySelector("#barRowTemplate"),
+};
+
+const METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
+const PERCENT_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
+const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "table", "best_by_task"]);
+const LEADERBOARD_TABLE_METRICS = ["accuracy", "macro_f1", "macro_precision", "macro_recall"];
+
+const METRIC_LABELS = {
+  accuracy: "Accuracy",
+  macro_f1: "Macro F1",
+  macro_precision: "Macro Precision",
+  macro_recall: "Macro Recall",
+};
+
+const RADAR_AXIS_LABELS = {
+  task: "Task",
+  tag: "Tag",
 };
 
 function supportsDirectoryPicker() {
@@ -340,6 +358,8 @@ function normalizeRun(filePath, payload) {
   const tags = parseSemicolonTags(payload.tags);
 
   const accuracy = toPct(safeNum(payload.accuracy));
+  const macroPrecision = toPct(safeNum(payload.macro_precision));
+  const macroRecall = toPct(safeNum(payload.macro_recall));
   const macroF1 = toPct(safeNum(payload.macro_f1));
 
   return {
@@ -354,6 +374,8 @@ function normalizeRun(filePath, payload) {
     model: modelFromMetrics || nameParts.model,
     timestamp: ts,
     accuracy,
+    macroPrecision,
+    macroRecall,
     macroF1,
     totalExamples:
       safeNum(payload.total_examples) ??
@@ -382,7 +404,12 @@ function normalizeRun(filePath, payload) {
     truthLabelCount: safeNum(payload.truth_label_count),
     labelMetricsAvailable:
       payload.label_metrics_available !== false &&
-      (safeNum(payload.accuracy) !== null || safeNum(payload.macro_f1) !== null),
+      (
+        safeNum(payload.accuracy) !== null ||
+        safeNum(payload.macro_precision) !== null ||
+        safeNum(payload.macro_recall) !== null ||
+        safeNum(payload.macro_f1) !== null
+      ),
     labelMetricsReason: payload.label_metrics_reason || null,
     modelDetails,
     usageSummary: usage,
@@ -733,12 +760,12 @@ function updateSourceStatus() {
 
 function persistUiState() {
   const payload = {
-    selectedTask: state.selectedTask,
-    selectedModel: state.selectedModel,
-    modelQuery: state.modelQuery,
+    selectedTasks: state.selectedTasks,
+    selectedModels: state.selectedModels,
+    selectedTags: state.selectedTags,
     sortBy: state.sortBy,
-    tokenSortBy: state.tokenSortBy,
-    tokenSortDir: state.tokenSortDir,
+    leaderboardTab: state.leaderboardTab,
+    radarAxis: state.radarAxis,
     hideNoAccuracy: state.hideNoAccuracy,
     theme: state.theme,
   };
@@ -757,23 +784,27 @@ function restoreUiState() {
     }
     const payload = JSON.parse(raw);
     if (payload && typeof payload === "object") {
-      if (typeof payload.selectedTask === "string") {
-        state.selectedTask = payload.selectedTask;
+      if (Array.isArray(payload.selectedTasks)) {
+        state.selectedTasks = uniqueNonEmptyStrings(payload.selectedTasks);
+      } else if (typeof payload.selectedTask === "string" && payload.selectedTask !== "ALL") {
+        state.selectedTasks = [payload.selectedTask];
       }
-      if (typeof payload.selectedModel === "string") {
-        state.selectedModel = payload.selectedModel;
+      if (Array.isArray(payload.selectedModels)) {
+        state.selectedModels = uniqueNonEmptyStrings(payload.selectedModels);
+      } else if (typeof payload.selectedModel === "string" && payload.selectedModel !== "ALL") {
+        state.selectedModels = [payload.selectedModel];
       }
-      if (typeof payload.modelQuery === "string") {
-        state.modelQuery = payload.modelQuery;
+      if (Array.isArray(payload.selectedTags)) {
+        state.selectedTags = uniqueNonEmptyStrings(payload.selectedTags);
       }
-      if (typeof payload.sortBy === "string") {
+      if (typeof payload.sortBy === "string" && METRIC_KEYS.has(payload.sortBy)) {
         state.sortBy = payload.sortBy;
       }
-      if (typeof payload.tokenSortBy === "string") {
-        state.tokenSortBy = payload.tokenSortBy;
+      if (typeof payload.leaderboardTab === "string" && LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
+        state.leaderboardTab = payload.leaderboardTab;
       }
-      if (payload.tokenSortDir === "asc" || payload.tokenSortDir === "desc") {
-        state.tokenSortDir = payload.tokenSortDir;
+      if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
+        state.radarAxis = payload.radarAxis;
       }
       if (typeof payload.hideNoAccuracy === "boolean") {
         state.hideNoAccuracy = payload.hideNoAccuracy;
@@ -788,7 +819,6 @@ function restoreUiState() {
 }
 
 function applyUiStateToControls() {
-  els.modelSearch.value = state.modelQuery;
   els.sortSelect.value = state.sortBy;
   els.hideNoAccuracy.checked = state.hideNoAccuracy;
   els.themeToggle.checked = state.theme === "dark";
@@ -798,30 +828,112 @@ function applyTheme() {
   document.documentElement.setAttribute("data-theme", state.theme);
 }
 
-function setSelectedTask(task) {
-  state.selectedTask = task;
-  if (els.taskSelect.value !== task) {
-    els.taskSelect.value = task;
-  }
+function sanitizeSelections(selectedValues, allowedValues) {
+  const allowedSet = new Set(allowedValues || []);
+  return uniqueNonEmptyStrings(selectedValues || []).filter((value) => allowedSet.has(value));
+}
+
+function isAllSelected(values) {
+  return !Array.isArray(values) || values.length === 0;
+}
+
+function setSelectedTasks(values) {
+  state.selectedTasks = sanitizeSelections(values, state.tasks);
   persistUiState();
   render();
 }
 
-function setSelectedModel(model) {
-  state.selectedModel = model;
+function setSelectedModels(values) {
+  state.selectedModels = sanitizeSelections(values, state.models);
   persistUiState();
   render();
+}
+
+function setSelectedTags(values) {
+  state.selectedTags = sanitizeSelections(values, state.tags);
+  persistUiState();
+  render();
+}
+
+function toggleTagSelection(tag) {
+  if (tag === "ALL") {
+    setSelectedTags([]);
+    return;
+  }
+  if (state.selectedTags.includes(tag)) {
+    setSelectedTags(state.selectedTags.filter((value) => value !== tag));
+    return;
+  }
+  setSelectedTags([...state.selectedTags, tag]);
+}
+
+function setRadarAxis(axis) {
+  if (!RADAR_AXIS_KEYS.has(axis) || state.radarAxis === axis) {
+    return;
+  }
+  state.radarAxis = axis;
+  persistUiState();
+  renderTokenSignals(state.filtered);
+}
+
+function setLeaderboardTab(tab) {
+  if (!LEADERBOARD_TAB_KEYS.has(tab) || state.leaderboardTab === tab) {
+    return;
+  }
+  state.leaderboardTab = tab;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function syncTaskSelectValue() {
+  const selected = new Set(state.selectedTasks);
+  Array.from(els.taskSelect.options).forEach((option) => {
+    option.selected = selected.has(option.value);
+  });
+}
+
+function syncModelSelectValue() {
+  const selected = new Set(state.selectedModels);
+  Array.from(els.modelSelect.options).forEach((option) => {
+    option.selected = selected.has(option.value);
+  });
+}
+
+function getSelectValues(selectElement) {
+  return Array.from(selectElement.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
+}
+
+function clearSelectionForAll(values) {
+  const normalized = uniqueNonEmptyStrings(values || []);
+  if (!normalized.length) {
+    return [];
+  }
+  if (!normalized.includes("ALL")) {
+    return normalized;
+  }
+  if (normalized.length === 1) {
+    return [];
+  }
+  return normalized.filter((value) => value !== "ALL");
+}
+
+function setTaskSelectionFromSelect(values) {
+  setSelectedTasks(clearSelectionForAll(values));
+}
+
+function setModelSelectionFromSelect(values) {
+  setSelectedModels(clearSelectionForAll(values));
 }
 
 function setupFilters() {
-  els.taskSelect.addEventListener("change", (event) => {
-    setSelectedTask(event.target.value);
+  els.taskSelect.addEventListener("change", () => {
+    setTaskSelectionFromSelect(getSelectValues(els.taskSelect));
   });
 
-  els.modelSearch.addEventListener("input", (event) => {
-    state.modelQuery = event.target.value.trim().toLowerCase();
-    persistUiState();
-    render();
+  els.modelSelect.addEventListener("change", () => {
+    setModelSelectionFromSelect(getSelectValues(els.modelSelect));
   });
 
   els.sortSelect.addEventListener("change", (event) => {
@@ -883,28 +995,114 @@ function setupSourceControls() {
   });
 }
 
+function getMetricValueForRun(run, key) {
+  if (key === "accuracy") return run.accuracy;
+  if (key === "macro_f1") return run.macroF1;
+  if (key === "macro_precision") return run.macroPrecision;
+  if (key === "macro_recall") return run.macroRecall;
+  return null;
+}
+
 function scoreForSort(run, key) {
-  if (key === "accuracy") return run.accuracy ?? -Infinity;
-  if (key === "macro_f1") return run.macroF1 ?? -Infinity;
-  if (key === "cached_tokens") return run.cachedTokens ?? -Infinity;
-  if (key === "attempts_total") return run.requestsTotal ?? -Infinity;
-  if (key === "timestamp") return parseRunTimestampMs(run);
-  return -Infinity;
+  return getMetricValueForRun(run, key) ?? -Infinity;
+}
+
+function isPercentMetric(metricKey) {
+  return PERCENT_METRIC_KEYS.has(metricKey);
+}
+
+function formatMetric(metricKey, value, digits = 2, suffix = "") {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "N/A";
+  }
+  const unit = isPercentMetric(metricKey) ? "%" : "";
+  return `${formatNum(value, digits)}${unit}${suffix}`;
+}
+
+function getRunSampleSize(run) {
+  const candidates = [run.totalExamples, run.predictionCount, run.truthLabelCount];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 1) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function computeApproximateCi95(metricValue, sampleSize) {
+  if (typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
+    return null;
+  }
+  if (typeof sampleSize !== "number" || !Number.isFinite(sampleSize) || sampleSize <= 1) {
+    return null;
+  }
+  const p = Math.max(0, Math.min(1, metricValue / 100));
+  const standardError = Math.sqrt((p * (1 - p)) / sampleSize);
+  const margin = 1.96 * standardError * 100;
+  return {
+    low: Math.max(0, metricValue - margin),
+    high: Math.min(100, metricValue + margin),
+    sampleSize,
+  };
+}
+
+function getRunMetricConfidence(run, metricKey) {
+  if (!isPercentMetric(metricKey)) {
+    return null;
+  }
+  const metricValue = getMetricValueForRun(run, metricKey);
+  const sampleSize = getRunSampleSize(run);
+  return computeApproximateCi95(metricValue, sampleSize);
+}
+
+function getMeanMetricConfidence(runs, metricKey, meanValue) {
+  if (!isPercentMetric(metricKey)) {
+    return null;
+  }
+  const ciRows = runs
+    .map((run) => getRunMetricConfidence(run, metricKey))
+    .filter((row) => row && typeof row.low === "number" && typeof row.high === "number");
+  if (!ciRows.length) {
+    return null;
+  }
+  const standardErrorsSquared = ciRows.map((ci) => {
+    const margin = (ci.high - ci.low) / 2;
+    const sePercent = margin / 1.96;
+    const se = sePercent / 100;
+    return se * se;
+  });
+  const meanSe = Math.sqrt(standardErrorsSquared.reduce((sum, value) => sum + value, 0)) / ciRows.length;
+  const margin = 1.96 * meanSe * 100;
+  return {
+    low: Math.max(0, meanValue - margin),
+    high: Math.min(100, meanValue + margin),
+    sampleSize: ciRows.reduce((sum, ci) => sum + (ci.sampleSize || 0), 0),
+  };
+}
+
+function formatCiRange(ci) {
+  if (!ci) {
+    return "";
+  }
+  return ` | CI ${formatNum(ci.low, 2)}-${formatNum(ci.high, 2)}%`;
 }
 
 function getFilteredRuns() {
-  const query = state.modelQuery;
-  const selectedTask = state.selectedTask;
-  const selectedModel = state.selectedModel;
+  const selectedTasks = state.selectedTasks;
+  const selectedModels = state.selectedModels;
+  const selectedTags = state.selectedTags;
   let runs = state.runs.filter((run) => {
-    if (selectedTask !== "ALL" && run.task !== selectedTask) {
+    if (!isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
       return false;
     }
-    if (selectedModel !== "ALL" && run.model !== selectedModel) {
+    if (!isAllSelected(selectedModels) && !selectedModels.includes(run.model)) {
       return false;
     }
-    if (query && !run.model.toLowerCase().includes(query) && !run.fileName.toLowerCase().includes(query)) {
-      return false;
+    if (!isAllSelected(selectedTags)) {
+      const runTags = Array.isArray(run.tags) ? run.tags : [];
+      if (!runTags.some((tag) => selectedTags.includes(tag))) {
+        return false;
+      }
     }
     if (state.hideNoAccuracy && run.accuracy === null) {
       return false;
@@ -916,7 +1114,10 @@ function getFilteredRuns() {
     const valueA = scoreForSort(a, state.sortBy);
     const valueB = scoreForSort(b, state.sortBy);
     if (valueB !== valueA) return valueB - valueA;
-    return (b.macroF1 ?? -Infinity) - (a.macroF1 ?? -Infinity);
+    const f1A = scoreForSort(a, "macro_f1");
+    const f1B = scoreForSort(b, "macro_f1");
+    if (f1B !== f1A) return f1B - f1A;
+    return parseRunTimestampMs(b) - parseRunTimestampMs(a);
   });
 
   return runs;
@@ -942,49 +1143,56 @@ function renderTaskControls() {
     .map((task) => `<option value="${task}">${task === "ALL" ? "All Tasks" : task}</option>`)
     .join("");
 
-  if (!tasks.includes(state.selectedTask)) {
-    state.selectedTask = "ALL";
+  state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+  if (isAllSelected(state.selectedTasks)) {
+    const first = els.taskSelect.querySelector('option[value="ALL"]');
+    if (first) {
+      first.selected = true;
+    }
+  } else {
+    syncTaskSelectValue();
   }
-  els.taskSelect.value = state.selectedTask;
-
-  const counts = state.runs.reduce((acc, run) => {
-    acc[run.task] = (acc[run.task] || 0) + 1;
-    return acc;
-  }, {});
-
-  els.taskChips.innerHTML = "";
-  tasks.forEach((task) => {
-    const button = document.createElement("button");
-    button.className = `chip${state.selectedTask === task ? " active" : ""}`;
-    button.textContent = task === "ALL" ? `All (${state.runs.length})` : `${task} (${counts[task] || 0})`;
-    button.type = "button";
-    button.addEventListener("click", () => setSelectedTask(task));
-    els.taskChips.appendChild(button);
-  });
 }
 
 function renderModelControls() {
   const models = ["ALL", ...state.models];
+
+  els.modelSelect.innerHTML = models
+    .map((model) => `<option value="${model}">${model === "ALL" ? "All Models" : model}</option>`)
+    .join("");
+
+  state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
+  if (isAllSelected(state.selectedModels)) {
+    const first = els.modelSelect.querySelector('option[value="ALL"]');
+    if (first) {
+      first.selected = true;
+    }
+  } else {
+    syncModelSelectValue();
+  }
+}
+
+function renderTagControls() {
+  const tags = ["ALL", ...state.tags];
+  state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
+
   const counts = state.runs.reduce((acc, run) => {
-    acc[run.model] = (acc[run.model] || 0) + 1;
+    const runTags = Array.isArray(run.tags) ? run.tags : [];
+    runTags.forEach((tag) => {
+      acc[tag] = (acc[tag] || 0) + 1;
+    });
     return acc;
   }, {});
 
-  if (!models.includes(state.selectedModel)) {
-    state.selectedModel = "ALL";
-  }
-
-  els.modelChips.innerHTML = "";
-  models.forEach((model) => {
+  els.tagChips.innerHTML = "";
+  tags.forEach((tag) => {
+    const isActive = tag === "ALL" ? isAllSelected(state.selectedTags) : state.selectedTags.includes(tag);
     const button = document.createElement("button");
-    button.className = `chip${state.selectedModel === model ? " active" : ""}`;
-    button.textContent =
-      model === "ALL"
-        ? `All Models (${state.runs.length})`
-        : `${model} (${counts[model] || 0})`;
+    button.className = `chip${isActive ? " active" : ""}`;
     button.type = "button";
-    button.addEventListener("click", () => setSelectedModel(model));
-    els.modelChips.appendChild(button);
+    button.textContent = tag === "ALL" ? `All Tags (${state.runs.length})` : `${tag} (${counts[tag] || 0})`;
+    button.addEventListener("click", () => toggleTagSelection(tag));
+    els.tagChips.appendChild(button);
   });
 }
 
@@ -1003,16 +1211,21 @@ function renderKpis(runs) {
     : "N/A";
   els.kpiRequests.textContent = formatNum(totalRequests, 0);
 
-  els.heroTitle.textContent = state.selectedTask === "ALL" ? "All Tasks" : state.selectedTask;
-  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs loaded.`;
+  const selectedTaskCount = state.selectedTasks.length;
+  els.heroTitle.textContent = selectedTaskCount === 0 ? "All Tasks" : `${selectedTaskCount} Task(s) Selected`;
+  const selectedModelCount = state.selectedModels.length;
+  const modelScope = selectedModelCount === 0 ? "all models" : `${selectedModelCount} model(s)`;
+  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in view (${modelScope}).`;
 }
 
-function createBarRow(label, value, max, formatter, colorClass, onClick) {
+function createBarRow(label, value, max, formatter, colorClass, onClick, ci = null) {
   const node = els.barRowTemplate.content.firstElementChild.cloneNode(true);
   const labelEl = node.querySelector(".bar-label");
+  const trackEl = node.querySelector(".bar-track");
   const fillEl = node.querySelector(".bar-fill");
   const valueEl = node.querySelector(".bar-value");
   labelEl.textContent = label;
+  labelEl.title = label;
 
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
   fillEl.style.width = `${ratio * 100}%`;
@@ -1021,6 +1234,17 @@ function createBarRow(label, value, max, formatter, colorClass, onClick) {
     fillEl.style.background = "linear-gradient(90deg, #f59e0b, #ea580c)";
   } else if (colorClass === "blue") {
     fillEl.style.background = "linear-gradient(90deg, #2563eb, #1e3a8a)";
+  }
+
+  if (ci && typeof ci.low === "number" && typeof ci.high === "number" && max > 0) {
+    const lowClamped = Math.max(0, Math.min(max, ci.low));
+    const highClamped = Math.max(lowClamped, Math.min(max, ci.high));
+    const ciRange = document.createElement("span");
+    ciRange.className = "bar-ci-range";
+    ciRange.style.left = `${(lowClamped / max) * 100}%`;
+    ciRange.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.6)}%`;
+    ciRange.title = `95% CI ${formatNum(lowClamped, 2)}-${formatNum(highClamped, 2)}%`;
+    trackEl.appendChild(ciRange);
   }
 
   if (typeof onClick === "function") {
@@ -1036,18 +1260,45 @@ function createBarRow(label, value, max, formatter, colorClass, onClick) {
     });
   }
 
-  valueEl.textContent = formatter(value);
+  valueEl.textContent = formatter(value, ci);
   return node;
 }
 
-function renderLeaderboard(runs) {
-  els.leaderboardChart.innerHTML = "";
-  const source = runs.filter((run) => run.accuracy !== null);
-
-  if (!source.length) {
-    els.leaderboardChart.innerHTML = '<p class="muted">No runs with accuracy in current filter.</p>';
+function renderLeaderboardTabControls() {
+  if (!els.leaderboardTabs) {
     return;
   }
+  els.leaderboardTabs.innerHTML = "";
+  const tabs = [
+    { key: "chart", label: "Chart" },
+    { key: "table", label: "Metrics Table" },
+    { key: "best_by_task", label: "Best Run Per Task" },
+  ];
+  tabs.forEach((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `leaderboard-tab-btn${state.leaderboardTab === tab.key ? " active" : ""}`;
+    button.textContent = tab.label;
+    button.setAttribute("aria-pressed", state.leaderboardTab === tab.key ? "true" : "false");
+    button.addEventListener("click", () => setLeaderboardTab(tab.key));
+    els.leaderboardTabs.appendChild(button);
+  });
+}
+
+function renderLeaderboardChart(container, runs) {
+  const metricKey = state.sortBy;
+  const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const source = runs.filter((run) => getMetricValueForRun(run, metricKey) !== null);
+
+  if (!source.length) {
+    container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
+    return;
+  }
+
+  const ciNote = document.createElement("p");
+  ciNote.className = "leaderboard-ci-note muted";
+  ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
+  container.appendChild(ciNote);
 
   const groups = new Map();
   source.forEach((run) => {
@@ -1060,31 +1311,37 @@ function renderLeaderboard(runs) {
 
   const entries = Array.from(groups.entries()).map(([model, modelRuns]) => {
     const runsSorted = [...modelRuns].sort((a, b) => {
-      if ((b.accuracy || 0) !== (a.accuracy || 0)) {
-        return (b.accuracy || 0) - (a.accuracy || 0);
+      const scoreA = scoreForSort(a, metricKey);
+      const scoreB = scoreForSort(b, metricKey);
+      if (scoreB !== scoreA) {
+        return scoreB - scoreA;
       }
       return parseRunTimestampMs(b) - parseRunTimestampMs(a);
     });
     if (runsSorted.length === 1) {
+      const run = runsSorted[0];
+      const score = scoreForSort(run, metricKey);
       return {
         type: "run",
-        key: runsSorted[0].filePath,
-        label: getRunModelDisplayName(runsSorted[0]),
-        score: runsSorted[0].accuracy || 0,
-        run: runsSorted[0],
+        key: run.filePath,
+        label: getRunModelDisplayName(run),
+        score: Number.isFinite(score) ? score : 0,
+        ci: getRunMetricConfidence(run, metricKey),
+        run,
       };
     }
 
-    const avgAccuracy =
-      runsSorted.reduce((sum, run) => sum + (run.accuracy || 0), 0) / runsSorted.length;
+    const avgMetric =
+      runsSorted.reduce((sum, run) => sum + (getMetricValueForRun(run, metricKey) ?? 0), 0) / runsSorted.length;
     const sharedSuffix = getSharedRunEffortSuffix(runsSorted);
     const groupLabel = sharedSuffix ? `${model} ${sharedSuffix}` : model;
     return {
       type: "group",
       key: model,
       label: groupLabel,
-      score: avgAccuracy,
-      avgAccuracy,
+      score: avgMetric,
+      avgMetric,
+      ci: getMeanMetricConfidence(runsSorted, metricKey, avgMetric),
       runs: runsSorted,
     };
   });
@@ -1099,14 +1356,15 @@ function renderLeaderboard(runs) {
   const maxScore = Math.max(...entries.map((entry) => entry.score), 1);
   entries.forEach((entry) => {
     if (entry.type === "run") {
-      els.leaderboardChart.appendChild(
+      container.appendChild(
         createBarRow(
           entry.label,
           entry.score,
           maxScore,
-          (value) => `${formatNum(value, 2)}%`,
+          (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
-          () => openRunModal(entry.run)
+          () => openRunModal(entry.run),
+          entry.ci
         )
       );
       return;
@@ -1129,10 +1387,12 @@ function renderLeaderboard(runs) {
     summary.appendChild(
       createBarRow(
         `${entry.label} (${entry.runs.length})`,
-        entry.avgAccuracy || 0,
+        entry.avgMetric || 0,
         maxScore,
-        (value) => `${formatNum(value, 2)}% avg`,
-        null
+        (value, ci) => `${formatMetric(metricKey, value)} avg${formatCiRange(ci)}`,
+        null,
+        null,
+        entry.ci
       )
     );
     details.appendChild(summary);
@@ -1140,50 +1400,159 @@ function renderLeaderboard(runs) {
     const runsWrap = document.createElement("div");
     runsWrap.className = "leaderboard-group-runs";
     entry.runs.forEach((run) => {
+      const runCi = getRunMetricConfidence(run, metricKey);
       runsWrap.appendChild(
         createBarRow(
           getRunModelDisplayName(run),
-          run.accuracy || 0,
+          getMetricValueForRun(run, metricKey) ?? 0,
           maxScore,
-          (value) => `${formatNum(value, 2)}%`,
+          (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
-          () => openRunModal(run)
+          () => openRunModal(run),
+          runCi
         )
       );
     });
     details.appendChild(runsWrap);
-    els.leaderboardChart.appendChild(details);
+    container.appendChild(details);
   });
 }
 
-function renderBestByTask() {
-  els.taskBestChart.innerHTML = "";
+function renderLeaderboardMetricsTable(container, runs) {
+  const metricKey = state.sortBy;
+  const source = runs.filter((run) =>
+    LEADERBOARD_TABLE_METRICS.some((key) => getMetricValueForRun(run, key) !== null)
+  );
+
+  if (!source.length) {
+    container.innerHTML = '<p class="muted">No run-level metric values in current filter.</p>';
+    return;
+  }
+
+  const bestByMetric = {};
+  LEADERBOARD_TABLE_METRICS.forEach((key) => {
+    const values = source
+      .map((run) => getMetricValueForRun(run, key))
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    bestByMetric[key] = values.length ? Math.max(...values) : null;
+  });
+
+  const sorted = [...source].sort((a, b) => {
+    const diff = scoreForSort(b, metricKey) - scoreForSort(a, metricKey);
+    if (diff !== 0) {
+      return diff;
+    }
+    return parseRunTimestampMs(b) - parseRunTimestampMs(a);
+  });
+
+  const summary = document.createElement("p");
+  summary.className = "leaderboard-metrics-summary muted";
+  summary.textContent = "Highlighted cells mark best score per metric in the current selection.";
+  container.appendChild(summary);
+
+  const wrap = document.createElement("div");
+  wrap.className = "leaderboard-metrics-wrap";
+  const table = document.createElement("table");
+  table.className = "leaderboard-metrics-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Run", "Accuracy", "Macro F1", "Macro Precision", "Macro Recall"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  sorted.forEach((run) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable-row";
+    if (run.filePath === state.selectedRunPath) {
+      tr.classList.add("selected-row");
+    }
+    tr.addEventListener("click", () => {
+      state.selectedRunPath = run.filePath;
+      openRunModal(run);
+      render();
+    });
+
+    const runCell = document.createElement("td");
+    runCell.className = "leaderboard-run-cell";
+    runCell.title = `${run.task} / ${getRunModelDisplayName(run)} / ${run.fileName}`;
+    runCell.textContent = `${run.task} / ${getRunModelDisplayName(run)}`;
+    tr.appendChild(runCell);
+
+    LEADERBOARD_TABLE_METRICS.forEach((key) => {
+      const value = getMetricValueForRun(run, key);
+      const td = document.createElement("td");
+      td.className = "mono";
+      td.textContent = value == null ? "N/A" : `${formatNum(value, 2)}%`;
+      if (value != null && bestByMetric[key] != null && Math.abs(value - bestByMetric[key]) < 1e-9) {
+        td.classList.add("metric-best");
+        td.title = `Best ${METRIC_LABELS[key]} in current selection`;
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+function renderLeaderboard(runs) {
+  renderLeaderboardTabControls();
+  els.leaderboardChart.innerHTML = "";
+
+  const panel = document.createElement("div");
+  panel.className = "leaderboard-panel";
+  els.leaderboardChart.appendChild(panel);
+
+  if (state.leaderboardTab === "table") {
+    renderLeaderboardMetricsTable(panel, runs);
+    return;
+  }
+  if (state.leaderboardTab === "best_by_task") {
+    renderBestByTask(panel, runs);
+    return;
+  }
+  renderLeaderboardChart(panel, runs);
+}
+
+function renderBestByTask(container, runs) {
+  const metricKey = state.sortBy;
+  const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const bestByTask = {};
 
-  state.runs.forEach((run) => {
-    if (run.accuracy === null) return;
-    if (!bestByTask[run.task] || run.accuracy > bestByTask[run.task].accuracy) {
-      bestByTask[run.task] = run;
+  runs.forEach((run) => {
+    const metricValue = getMetricValueForRun(run, metricKey);
+    if (metricValue === null || Number.isNaN(metricValue)) return;
+    const current = bestByTask[run.task];
+    if (!current || metricValue > current.metricValue) {
+      bestByTask[run.task] = { run, metricValue };
     }
   });
 
   const items = Object.values(bestByTask)
-    .sort((a, b) => b.accuracy - a.accuracy)
+    .sort((a, b) => b.metricValue - a.metricValue)
     .slice(0, 16);
 
   if (!items.length) {
-    els.taskBestChart.innerHTML = '<p class="muted">No task-level accuracy data found.</p>';
+    container.innerHTML = `<p class="muted">No task-level ${metricLabel.toLowerCase()} data found.</p>`;
     return;
   }
 
-  const max = Math.max(...items.map((run) => run.accuracy));
-  items.forEach((run) => {
-    els.taskBestChart.appendChild(
+  const max = Math.max(...items.map((item) => item.metricValue), 1);
+  items.forEach(({ run, metricValue }) => {
+    container.appendChild(
       createBarRow(
         `${run.task} / ${getRunModelDisplayName(run)}`,
-        run.accuracy,
+        metricValue,
         max,
-        (value) => `${formatNum(value, 2)}%`,
+        (value) => formatMetric(metricKey, value),
         "warm",
         () => openRunModal(run)
       )
@@ -1195,154 +1564,374 @@ function getPromptCountForRun(run) {
   return run.requestsTotal ?? run.attemptsWithUsage ?? run.predictionCount ?? run.totalExamples ?? 0;
 }
 
-function formatTotalAndAvg(total, prompts) {
-  if (total === null || total === undefined || Number.isNaN(total)) {
-    return "N/A";
-  }
-  const avg = prompts > 0 ? total / prompts : null;
-  if (avg === null || Number.isNaN(avg)) {
-    return `${formatNum(total, 0)} / N/A`;
-  }
-  return `${formatNum(total, 0)} / ${formatNum(avg, 2)}`;
+const TOKEN_SEGMENTS = [
+  { key: "avgInput", label: "Input", color: "#6ea8ff" },
+  { key: "avgCached", label: "Cached", color: "#50e3c2" },
+  { key: "avgOutput", label: "Output", color: "#ffb36b" },
+  { key: "avgThinking", label: "Thinking", color: "#f472b6" },
+];
+
+const RADAR_COLORS = ["#6ea8ff", "#50e3c2", "#ffb36b", "#f472b6", "#facc15", "#22d3ee", "#fb7185", "#4ade80"];
+
+function toNonNegativeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function formatRuntimeCell(seconds, humanText = "") {
-  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
-    return "N/A";
-  }
-  const human = asTrimmedString(humanText);
-  return human ? `${human} (${formatNum(seconds, 2)}s)` : `${formatNum(seconds, 2)}s`;
+function averageOrZero(total, denominator) {
+  return denominator > 0 ? total / denominator : 0;
 }
 
-function computeTokenSignalRows(runs) {
-  return runs.map((run) => {
-    const prompts = getPromptCountForRun(run);
-    const input = run.inputTokensTotal;
-    const cached = run.cachedInputTokensTotal ?? run.cachedTokens;
-    const output = run.outputTokensTotal;
-    const thinking = run.thinkingTokensTotal;
-    const runtime = run.overallTimeSeconds;
-    return {
-      run,
-      modelLabel: getRunModelDisplayName(run),
-      prompts,
-      input,
-      cached,
-      output,
-      thinking,
-      runtime,
-      runtimeHuman: run.overallTimeHuman,
-    };
+function computeRunSignalRows(runs) {
+  return runs
+    .map((run) => {
+      const prompts = toNonNegativeNumber(getPromptCountForRun(run));
+      const avgInput = averageOrZero(toNonNegativeNumber(run.inputTokensTotal), prompts);
+      const avgCached = averageOrZero(toNonNegativeNumber(run.cachedInputTokensTotal ?? run.cachedTokens), prompts);
+      const avgOutput = averageOrZero(toNonNegativeNumber(run.outputTokensTotal), prompts);
+      const avgThinking = averageOrZero(toNonNegativeNumber(run.thinkingTokensTotal), prompts);
+      return {
+        run,
+        model: run.model || "unknown",
+        modelDisplay: getRunModelDisplayName(run),
+        task: run.task || "unknown",
+        prompts,
+        avgInput,
+        avgCached,
+        avgOutput,
+        avgThinking,
+        totalAvg: avgInput + avgCached + avgOutput + avgThinking,
+      };
+    })
+    .sort((a, b) => {
+      const modelCmp = a.model.localeCompare(b.model);
+      if (modelCmp !== 0) return modelCmp;
+      const displayCmp = a.modelDisplay.localeCompare(b.modelDisplay);
+      if (displayCmp !== 0) return displayCmp;
+      const tsCmp = parseRunTimestampMs(b.run) - parseRunTimestampMs(a.run);
+      if (tsCmp !== 0) return tsCmp;
+      return a.run.fileName.localeCompare(b.run.fileName);
+    });
+}
+
+function appendTokenLegend(container) {
+  const legend = document.createElement("div");
+  legend.className = "token-legend";
+  TOKEN_SEGMENTS.forEach((segment) => {
+    const item = document.createElement("div");
+    item.className = "token-legend-item";
+    const swatch = document.createElement("span");
+    swatch.className = "token-legend-swatch";
+    swatch.style.background = segment.color;
+    const label = document.createElement("span");
+    label.textContent = segment.label;
+    item.appendChild(swatch);
+    item.appendChild(label);
+    legend.appendChild(item);
   });
+  container.appendChild(legend);
 }
 
-function getTokenSortValue(row, key) {
-  if (key === "model") return row.modelLabel.toLowerCase();
-  if (key === "prompts") return row.prompts ?? -Infinity;
-  if (key === "input") return row.input ?? -Infinity;
-  if (key === "cached") return row.cached ?? -Infinity;
-  if (key === "output") return row.output ?? -Infinity;
-  if (key === "thinking") return row.thinking ?? -Infinity;
-  if (key === "runtime_seconds") return row.runtime ?? -Infinity;
-  return -Infinity;
+function truncateAxisLabel(label, maxChars = 14) {
+  const text = String(label || "");
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars - 1)}...`;
 }
 
-function sortTokenRows(rows) {
-  const key = state.tokenSortBy;
-  const dir = state.tokenSortDir === "asc" ? 1 : -1;
-  rows.sort((a, b) => {
-    const va = getTokenSortValue(a, key);
-    const vb = getTokenSortValue(b, key);
-    if (typeof va === "string" || typeof vb === "string") {
-      const cmp = String(va).localeCompare(String(vb));
-      if (cmp !== 0) return cmp * dir;
-    } else if (vb !== va) {
-      return (va - vb) * dir;
+function buildRadarAxisDataset(runs, metricKey, axisMode) {
+  const axesCandidates = (
+    axisMode === "tag"
+      ? (
+          state.selectedTags.length
+            ? state.selectedTags
+            : [...new Set(runs.flatMap((run) => run.tags || []))].sort((a, b) => a.localeCompare(b))
+        )
+      : (
+          state.selectedTasks.length
+            ? state.selectedTasks
+            : [...new Set(runs.map((run) => run.task))].sort((a, b) => a.localeCompare(b))
+        )
+  ).filter((axisValue) =>
+    runs.some((run) =>
+      axisMode === "tag"
+        ? (run.tags || []).includes(axisValue)
+        : run.task === axisValue
+    )
+  );
+
+  const modelCandidates = (state.selectedModels.length
+    ? state.selectedModels
+    : [...new Set(runs.map((run) => run.model))].sort((a, b) => a.localeCompare(b))
+  ).filter((model) => runs.some((run) => run.model === model));
+
+  const series = modelCandidates.map((model) => {
+    const values = axesCandidates.map((axisValue) => {
+      const matches = runs.filter((run) =>
+        run.model === model &&
+        (axisMode === "tag" ? (run.tags || []).includes(axisValue) : run.task === axisValue)
+      );
+      const numeric = matches
+        .map((run) => getMetricValueForRun(run, metricKey))
+        .filter((value) => typeof value === "number" && Number.isFinite(value));
+      if (!numeric.length) {
+        return 0;
+      }
+      return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+    });
+    const nonZero = values.filter((value) => value > 0);
+    const mean = nonZero.length
+      ? nonZero.reduce((sum, value) => sum + value, 0) / nonZero.length
+      : 0;
+    return { model, values, mean };
+  });
+
+  const useAutoTopModels = state.selectedModels.length === 0 && series.length > 8;
+  const visibleSeries = useAutoTopModels
+    ? [...series]
+        .sort((a, b) => {
+          if (b.mean !== a.mean) return b.mean - a.mean;
+          return a.model.localeCompare(b.model);
+        })
+        .slice(0, 8)
+    : series;
+
+  return {
+    axes: axesCandidates,
+    series: visibleSeries,
+    hiddenModelCount: Math.max(0, series.length - visibleSeries.length),
+  };
+}
+
+function buildRadarSvg(tasks, seriesRows, metricKey) {
+  const ns = "http://www.w3.org/2000/svg";
+  const size = 360;
+  const center = size / 2;
+  const radius = 126;
+  const metricIsPercent = isPercentMetric(metricKey);
+  const axisMaxima = tasks.map((_, index) => {
+    if (metricIsPercent) {
+      return 100;
     }
-    const tsCmp = parseRunTimestampMs(b.run) - parseRunTimestampMs(a.run);
-    if (tsCmp !== 0) return tsCmp;
-    return b.modelLabel.localeCompare(a.modelLabel);
+    return Math.max(
+      ...seriesRows.map((row) => toNonNegativeNumber(row.values[index])),
+      1
+    );
   });
-}
 
-function toggleTokenSort(key) {
-  if (state.tokenSortBy === key) {
-    state.tokenSortDir = state.tokenSortDir === "desc" ? "asc" : "desc";
-  } else {
-    state.tokenSortBy = key;
-    state.tokenSortDir = key === "model" ? "asc" : "desc";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "radar-svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Radar chart comparing model proficiency across selected dimensions");
+
+  const angleFor = (index) => -Math.PI / 2 + (2 * Math.PI * index) / tasks.length;
+  const pointAt = (angle, dist) => [center + Math.cos(angle) * dist, center + Math.sin(angle) * dist];
+
+  for (let step = 1; step <= 5; step += 1) {
+    const dist = (radius * step) / 5;
+    const points = tasks
+      .map((_, index) => pointAt(angleFor(index), dist))
+      .map((xy) => xy.join(","))
+      .join(" ");
+    const ring = document.createElementNS(ns, "polygon");
+    ring.setAttribute("class", "radar-grid");
+    ring.setAttribute("points", points);
+    svg.appendChild(ring);
   }
-  persistUiState();
-  renderTokenSignals(state.filtered);
+
+  tasks.forEach((task, index) => {
+    const [x2, y2] = pointAt(angleFor(index), radius);
+    const axisLine = document.createElementNS(ns, "line");
+    axisLine.setAttribute("class", "radar-axis");
+    axisLine.setAttribute("x1", String(center));
+    axisLine.setAttribute("y1", String(center));
+    axisLine.setAttribute("x2", String(x2));
+    axisLine.setAttribute("y2", String(y2));
+    svg.appendChild(axisLine);
+
+    const [lx, ly] = pointAt(angleFor(index), radius + 18);
+    const text = document.createElementNS(ns, "text");
+    text.setAttribute("class", "radar-label");
+    text.setAttribute("x", String(lx));
+    text.setAttribute("y", String(ly));
+    text.setAttribute("text-anchor", lx >= center + 8 ? "start" : lx <= center - 8 ? "end" : "middle");
+    text.textContent = truncateAxisLabel(task);
+    svg.appendChild(text);
+  });
+
+  seriesRows.forEach((row, idx) => {
+    const color = RADAR_COLORS[idx % RADAR_COLORS.length];
+    const points = tasks
+      .map((_, axisIndex) => {
+        const raw = toNonNegativeNumber(row.values[axisIndex]);
+        const axisMax = axisMaxima[axisIndex] || 1;
+        const normalized = Math.max(0, Math.min(1, raw / axisMax));
+        return pointAt(angleFor(axisIndex), radius * normalized);
+      })
+      .map((xy) => xy.join(","))
+      .join(" ");
+    const polygon = document.createElementNS(ns, "polygon");
+    polygon.setAttribute("class", "radar-series");
+    polygon.setAttribute("points", points);
+    polygon.setAttribute("fill", color);
+    polygon.setAttribute("stroke", color);
+    svg.appendChild(polygon);
+  });
+
+  return svg;
 }
 
-function createTokenHeader(label, key) {
-  const th = document.createElement("th");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "sort-head";
-  const active = state.tokenSortBy === key;
-  const arrow = !active ? "" : state.tokenSortDir === "desc" ? " v" : " ^";
-  button.textContent = `${label}${arrow}`;
-  button.addEventListener("click", () => toggleTokenSort(key));
-  th.appendChild(button);
-  return th;
+function renderRadarPanel(panel, runs) {
+  const metricKey = state.sortBy;
+  const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const axisMode = state.radarAxis;
+  const axisLabel = RADAR_AXIS_LABELS[axisMode] || "Axis";
+  const header = document.createElement("h4");
+  header.className = "token-radar-header";
+  header.textContent = `Proficiency by ${axisLabel.toLowerCase()} (${metricLabel})`;
+  panel.appendChild(header);
+
+  const toggleWrap = document.createElement("div");
+  toggleWrap.className = "radar-mode-toggle";
+  ["task", "tag"].forEach((mode) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `radar-mode-btn${state.radarAxis === mode ? " active" : ""}`;
+    button.textContent = mode === "task" ? "Per Task" : "Per Tag";
+    button.setAttribute("aria-pressed", state.radarAxis === mode ? "true" : "false");
+    button.addEventListener("click", () => setRadarAxis(mode));
+    toggleWrap.appendChild(button);
+  });
+  panel.appendChild(toggleWrap);
+
+  const dataset = buildRadarAxisDataset(runs, metricKey, axisMode);
+  if (dataset.axes.length < 3) {
+    const msg = document.createElement("p");
+    msg.className = "muted";
+    msg.textContent = `Select at least 3 ${axisLabel.toLowerCase()}s to render a radar profile.`;
+    panel.appendChild(msg);
+    return;
+  }
+  if (!dataset.series.length) {
+    const msg = document.createElement("p");
+    msg.className = "muted";
+    msg.textContent = `No model data for the selected metric/${axisLabel.toLowerCase()}s.`;
+    panel.appendChild(msg);
+    return;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "radar-wrap";
+  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey));
+
+  const legend = document.createElement("div");
+  legend.className = "radar-legend";
+  const suffix = isPercentMetric(metricKey) ? "%" : "";
+  dataset.series.forEach((row, idx) => {
+    const entry = document.createElement("div");
+    entry.className = "radar-legend-row";
+    const line = document.createElement("span");
+    line.className = "radar-legend-line";
+    line.style.background = RADAR_COLORS[idx % RADAR_COLORS.length];
+    const text = document.createElement("span");
+    text.className = "mono";
+    text.textContent = `${row.model} | avg ${formatNum(row.mean, 2)}${suffix}`;
+    entry.appendChild(line);
+    entry.appendChild(text);
+    legend.appendChild(entry);
+  });
+  wrap.appendChild(legend);
+
+  if (dataset.hiddenModelCount > 0) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = `Radar shows top ${dataset.series.length} models by average ${metricLabel.toLowerCase()}.`;
+    wrap.appendChild(note);
+  }
+
+  panel.appendChild(wrap);
 }
 
 function renderTokenSignals(runs) {
   els.tokenChart.innerHTML = "";
-  const rows = computeTokenSignalRows(runs).filter(
-    (row) =>
-      row.prompts > 0 ||
-      row.input !== null ||
-      row.cached !== null ||
-      row.output !== null ||
-      row.thinking !== null ||
-      row.runtime !== null
-  );
-
-  if (!rows.length) {
+  const runRows = computeRunSignalRows(runs).filter((row) => row.prompts > 0 || row.totalAvg > 0);
+  if (!runRows.length) {
     els.tokenChart.innerHTML = '<p class="muted">No token/request metadata for current filter.</p>';
     return;
   }
 
-  sortTokenRows(rows);
+  const layout = document.createElement("div");
+  layout.className = "token-visual-grid";
 
-  const wrap = document.createElement("div");
-  wrap.className = "token-table-wrap";
-  const table = document.createElement("table");
-  table.className = "token-table";
-  const thead = document.createElement("thead");
-  const trHead = document.createElement("tr");
-  trHead.appendChild(createTokenHeader("Model", "model"));
-  trHead.appendChild(createTokenHeader("Prompts", "prompts"));
-  trHead.appendChild(createTokenHeader("Input Tokens (total / avg)", "input"));
-  trHead.appendChild(createTokenHeader("Cached Tokens (total / avg)", "cached"));
-  trHead.appendChild(createTokenHeader("Output Tokens (total / avg)", "output"));
-  trHead.appendChild(createTokenHeader("Thinking Tokens (total / avg)", "thinking"));
-  trHead.appendChild(createTokenHeader("Total Runtime", "runtime_seconds"));
-  thead.appendChild(trHead);
-  table.appendChild(thead);
+  const stackPanel = document.createElement("section");
+  stackPanel.className = "token-stack-panel";
+  const stackHeader = document.createElement("h4");
+  stackHeader.className = "token-stack-header";
+  stackHeader.textContent = "Average tokens per prompt by run (sorted by model name)";
+  stackPanel.appendChild(stackHeader);
+  appendTokenLegend(stackPanel);
 
-  const tbody = document.createElement("tbody");
-  rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.className = "clickable-row";
-    tr.innerHTML = `
-      <td>${row.modelLabel}</td>
-      <td class="mono">${formatNum(row.prompts, 0)}</td>
-      <td class="mono">${formatTotalAndAvg(row.input, row.prompts)}</td>
-      <td class="mono">${formatTotalAndAvg(row.cached, row.prompts)}</td>
-      <td class="mono">${formatTotalAndAvg(row.output, row.prompts)}</td>
-      <td class="mono">${formatTotalAndAvg(row.thinking, row.prompts)}</td>
-      <td class="mono">${formatRuntimeCell(row.runtime, row.runtimeHuman)}</td>
-    `;
-    tr.addEventListener("click", () => openRunModal(row.run));
-    tbody.appendChild(tr);
+  const rowsWrap = document.createElement("div");
+  rowsWrap.className = "token-rows";
+  const rowLimit = 60;
+  runRows.slice(0, rowLimit).forEach((row) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "token-row";
+    rowEl.style.cursor = "pointer";
+
+    const head = document.createElement("div");
+    head.className = "token-row-head";
+    const modelLabel = document.createElement("span");
+    modelLabel.className = "token-model-label";
+    modelLabel.textContent = row.modelDisplay;
+    modelLabel.title = row.modelDisplay;
+    const meta = document.createElement("span");
+    meta.className = "mono";
+    meta.textContent = `${row.task} | avg ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)}`;
+    head.appendChild(modelLabel);
+    head.appendChild(meta);
+    rowEl.appendChild(head);
+
+    const track = document.createElement("div");
+    track.className = "token-stack-track";
+    const total = row.totalAvg;
+    TOKEN_SEGMENTS.forEach((segment) => {
+      const value = row[segment.key];
+      const percent = total > 0 ? (value / total) * 100 : 0;
+      const seg = document.createElement("div");
+      seg.className = "token-segment";
+      seg.style.width = `${percent}%`;
+      seg.style.background = segment.color;
+      seg.title = `${segment.label}: ${formatNum(value, 2)} avg/prompt`;
+      track.appendChild(seg);
+    });
+    rowEl.appendChild(track);
+
+    const values = document.createElement("div");
+    values.className = "token-row-values mono";
+    values.textContent = `in ${formatNum(row.avgInput, 2)} | cached ${formatNum(row.avgCached, 2)} | out ${formatNum(row.avgOutput, 2)} | think ${formatNum(row.avgThinking, 2)}`;
+    rowEl.appendChild(values);
+
+    rowEl.addEventListener("click", () => openRunModal(row.run));
+    rowsWrap.appendChild(rowEl);
   });
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-  els.tokenChart.appendChild(wrap);
+  stackPanel.appendChild(rowsWrap);
+
+  if (runRows.length > rowLimit) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = `Showing ${rowLimit} of ${runRows.length} runs. Narrow filters to focus.`;
+    stackPanel.appendChild(note);
+  }
+
+  const radarPanel = document.createElement("section");
+  radarPanel.className = "token-radar-panel";
+  renderRadarPanel(radarPanel, runs);
+
+  layout.appendChild(stackPanel);
+  layout.appendChild(radarPanel);
+  els.tokenChart.appendChild(layout);
 }
 
 function renderTable(runs) {
@@ -1508,6 +2097,8 @@ function fillRunDetailsContent(run) {
     ["Timestamp", formatTs(run.timestamp)],
     ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],
     ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
+    ["Macro Precision", run.macroPrecision == null ? "N/A" : `${formatNum(run.macroPrecision, 2)}%`],
+    ["Macro Recall", run.macroRecall == null ? "N/A" : `${formatNum(run.macroRecall, 2)}%`],
     ["Predictions", formatNum(run.predictionCount, 0)],
     ["Evaluated Examples", formatNum(run.totalExamples, 0)],
     ["Truth Label Count", formatNum(run.truthLabelCount, 0)],
@@ -1608,9 +2199,9 @@ function render() {
   state.filtered = getFilteredRuns();
   renderTaskControls();
   renderModelControls();
+  renderTagControls();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
-  renderBestByTask();
   renderTokenSignals(state.filtered);
   renderTable(state.filtered);
 }
@@ -1619,7 +2210,6 @@ function renderError(message, preserveExisting = false) {
   els.heroSubtitle.innerHTML = `<span class="warn">${message}</span>`;
   if (!preserveExisting) {
     els.leaderboardChart.innerHTML = "";
-    els.taskBestChart.innerHTML = "";
     els.tokenChart.innerHTML = "";
     els.runsTableBody.innerHTML = "";
     closeRunModal();
@@ -1644,17 +2234,15 @@ function applyLoadedResult(result) {
   state.runs = result.runs;
   state.tasks = [...new Set(result.runs.map((run) => run.task))].sort((a, b) => a.localeCompare(b));
   state.models = [...new Set(result.runs.map((run) => run.model))].sort((a, b) => a.localeCompare(b));
+  state.tags = [...new Set(result.runs.flatMap((run) => run.tags || []))].sort((a, b) => a.localeCompare(b));
   state.sourceMode = result.mode;
   state.sourceFileCount = result.fileCount;
   state.warnings = result.warnings;
   state.expandedLeaderboardModels = new Set();
 
-  if (state.selectedTask !== "ALL" && !state.tasks.includes(state.selectedTask)) {
-    state.selectedTask = "ALL";
-  }
-  if (state.selectedModel !== "ALL" && !state.models.includes(state.selectedModel)) {
-    state.selectedModel = "ALL";
-  }
+  state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+  state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
+  state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
   if (state.selectedRunPath && !findRunByPath(state.selectedRunPath)) {
     state.selectedRunPath = null;
   }

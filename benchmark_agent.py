@@ -2958,6 +2958,45 @@ def load_existing_output_predictions(
     return existing_fieldnames, predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
 
+def is_unclassified_prediction_label(label: Optional[str]) -> bool:
+    """Return True when a prediction label should be treated as unclassified."""
+    return str(label or "").strip().casefold() == "unclassified"
+
+
+def remove_output_rows_by_id(output_path: str, ids_to_remove: set[str]) -> int:
+    """Remove rows whose ID is in ids_to_remove from an output CSV in-place."""
+    if not ids_to_remove:
+        return 0
+
+    temp_path = f"{output_path}.tmp"
+    removed_rows = 0
+    try:
+        with open(output_path, "r", encoding="utf-8-sig", newline="") as source_handle:
+            reader = csv.DictReader(source_handle, delimiter=";")
+            fieldnames = [name for name in (reader.fieldnames or []) if name]
+            if not fieldnames:
+                return 0
+
+            with open(temp_path, "w", encoding="utf-8", newline="") as target_handle:
+                writer = csv.DictWriter(target_handle, fieldnames=fieldnames, delimiter=";")
+                writer.writeheader()
+                for row in reader:
+                    example_id = str(row.get("ID", "")).strip()
+                    if example_id and example_id in ids_to_remove:
+                        removed_rows += 1
+                        continue
+                    writer.writerow({name: row.get(name, "") for name in fieldnames})
+
+        os.replace(temp_path, output_path)
+        return removed_rows
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
 def read_truth_labels_from_output(path: str) -> Tuple[Dict[str, Optional[str]], bool]:
     """Load truth labels from an existing output CSV keyed by ID."""
     labels: Dict[str, Optional[str]] = {}
@@ -4592,6 +4631,64 @@ def generate_calibration_plot(
     logging.info("Saved calibration plot to %s", output_path)
 
 
+def compute_calibration_metrics(
+    confidences: List[float],
+    correctness: List[bool],
+    bin_count: int = 10,
+) -> Dict[str, Any]:
+    """Compute scalar calibration metrics from confidence/correctness pairs."""
+    if len(confidences) != len(correctness):
+        raise ValueError("Length mismatch between confidences and correctness.")
+
+    sample_count = len(confidences)
+    safe_bins = max(1, int(bin_count))
+    if sample_count == 0:
+        return {
+            "available": False,
+            "sample_count": 0,
+            "bin_count": safe_bins,
+            "ece": None,
+            "mce": None,
+            "brier_score": None,
+        }
+
+    capped_conf = [min(1.0, max(0.0, float(value))) for value in confidences]
+    numeric_correct = [1.0 if bool(flag) else 0.0 for flag in correctness]
+
+    # Brier score: mean squared error between confidence and outcome.
+    brier_score = sum((c - y) ** 2 for c, y in zip(capped_conf, numeric_correct)) / sample_count
+
+    bin_totals = [0] * safe_bins
+    bin_correct = [0.0] * safe_bins
+    bin_conf_sum = [0.0] * safe_bins
+    for conf, corr in zip(capped_conf, numeric_correct):
+        index = min(safe_bins - 1, int(conf * safe_bins))
+        bin_totals[index] += 1
+        bin_correct[index] += corr
+        bin_conf_sum[index] += conf
+
+    ece = 0.0
+    mce = 0.0
+    for idx in range(safe_bins):
+        total = bin_totals[idx]
+        if total <= 0:
+            continue
+        avg_acc = bin_correct[idx] / total
+        avg_conf = bin_conf_sum[idx] / total
+        gap = abs(avg_acc - avg_conf)
+        ece += (total / sample_count) * gap
+        mce = max(mce, gap)
+
+    return {
+        "available": True,
+        "sample_count": sample_count,
+        "bin_count": safe_bins,
+        "ece": ece,
+        "mce": mce,
+        "brier_score": brier_score,
+    }
+
+
 def generate_confusion_heatmap(
     confusion: Dict[str, Dict[str, int]],
     labels: List[str],
@@ -5410,6 +5507,7 @@ def process_dataset(
 
     resume_mode = os.path.isfile(output_path) and os.path.getsize(output_path) > 0
     writer_fieldnames = list(fieldnames)
+    reprompt_unclassified = bool(getattr(args, "reprompt_unclassified", False))
     if resume_mode:
         (
             existing_fieldnames,
@@ -5425,6 +5523,32 @@ def process_dataset(
             )
             resume_mode = False
         else:
+            if reprompt_unclassified:
+                reprompt_ids = sorted(
+                    example_id
+                    for example_id, prediction in existing_predictions.items()
+                    if is_unclassified_prediction_label(prediction.label)
+                )
+                if reprompt_ids:
+                    removed_rows = remove_output_rows_by_id(output_path, set(reprompt_ids))
+                    logging.info(
+                        "Reprompt-unclassified mode: removed %d row(s) across %d ID(s) with prediction='unclassified' from %s.",
+                        removed_rows,
+                        len(reprompt_ids),
+                        output_path,
+                    )
+                    (
+                        existing_fieldnames,
+                        existing_predictions,
+                        existing_prompt_tokens,
+                        existing_completion_tokens,
+                        existing_reported_tokens,
+                    ) = load_existing_output_predictions(output_path)
+                else:
+                    logging.info(
+                        "Reprompt-unclassified mode enabled, but no existing rows with prediction='unclassified' were found."
+                    )
+
             writer_fieldnames = existing_fieldnames
             predictions.update(existing_predictions)
             total_prompt_tokens += existing_prompt_tokens
@@ -5443,6 +5567,11 @@ def process_dataset(
                     "Resuming into an older output schema; new rows cannot populate columns: %s",
                     ", ".join(missing_columns),
                 )
+    elif reprompt_unclassified:
+        logging.info(
+            "Reprompt-unclassified mode requested, but %s does not exist yet; running a full pass.",
+            output_path,
+        )
 
     processed_ids = set(predictions.keys())
     processed_in_input = sum(1 for ex in examples if ex.example_id in processed_ids)
@@ -5996,10 +6125,10 @@ def process_dataset(
 
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
-        "task_name": "",
+        "task_name": str(getattr(args, "task_name", "") or "").strip(),
         "prompt_layout": args.prompt_layout,
-        "task_description": "",
-        "tags": "",
+        "task_description": str(getattr(args, "task_description", "") or "").strip(),
+        "tags": normalize_metrics_tags_value(getattr(args, "tags", "")),
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
@@ -6007,6 +6136,7 @@ def process_dataset(
         "truth_label_count": len(evaluated_truths),
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),
+        "calibration_metrics": compute_calibration_metrics(confidences, correctness),
     }
     metrics.update(prompt_time_window)
     if evaluated_truths:
@@ -6250,10 +6380,10 @@ def process_metrics_only_output(
     metrics_output = build_artifact_path(resolved_output, "_metrics.json", DEFAULT_METRICS_DIR)
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
-        "task_name": "",
+        "task_name": str(getattr(args, "task_name", "") or "").strip(),
         "prompt_layout": None,
-        "task_description": "",
-        "tags": "",
+        "task_description": str(getattr(args, "task_description", "") or "").strip(),
+        "tags": normalize_metrics_tags_value(getattr(args, "tags", "")),
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
@@ -6263,6 +6393,7 @@ def process_metrics_only_output(
         "truth_label_count": len(evaluated_truths),
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),
+        "calibration_metrics": compute_calibration_metrics(confidences, correctness),
     }
     metrics.update(prompt_time_window)
     if label_map and has_truth_column:
@@ -6338,6 +6469,38 @@ def main(argv: Optional[List[str]] = None) -> int:
             "<input>__<provider>__<model>__<timestamp>.csv alongside each input file. "
             "If the resolved output CSV already exists, the run resumes from the first ID "
             "not present in that file."
+        ),
+    )
+    parser.add_argument(
+        "--task_name",
+        default="",
+        help=(
+            "Optional task name stored in metrics metadata. "
+            "If omitted, it is inferred from the output filename."
+        ),
+    )
+    parser.add_argument(
+        "--task_description",
+        default="",
+        help="Optional free-text task description stored in metrics metadata.",
+    )
+    parser.add_argument(
+        "--tags",
+        default="",
+        help=(
+            "Optional metrics tags (semicolon-delimited string recommended), "
+            "stored in metrics metadata."
+        ),
+    )
+    parser.add_argument(
+        "--unclassified",
+        "--unlcassified",
+        dest="reprompt_unclassified",
+        action="store_true",
+        help=(
+            "Resume helper: when --output points to an existing CSV, remove rows whose "
+            "prediction is 'unclassified' and re-prompt only those IDs. "
+            "Alias --unlcassified is accepted for compatibility."
         ),
     )
     parser.add_argument("--model", help="Model name (e.g., gpt-4-turbo).")
@@ -6819,6 +6982,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "--output is ignored in --metrics_only mode. Metrics are written to %s.",
                 DEFAULT_METRICS_DIR,
             )
+        if args.reprompt_unclassified:
+            logging.warning("--unclassified is ignored in --metrics_only mode.")
         if args.create_gemini_cache:
             logging.warning("--create_gemini_cache is ignored in --metrics_only mode.")
 

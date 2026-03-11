@@ -1,10 +1,12 @@
 import argparse
 import csv
+import logging
 import os
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -59,11 +61,45 @@ def _build_args(threads: int) -> argparse.Namespace:
         prompt_cache_key="shared-cache-key",
         requesty_auto_cache=True,
         threads=threads,
+        reprompt_unclassified=False,
     )
 
 
 class _DummyConnector:
     pass
+
+
+def _reset_root_logging() -> None:
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+
+@contextmanager
+def _isolated_data_dirs(tmpdir: str):
+    data_root = os.path.join(tmpdir, "bench_data")
+    input_dir = os.path.join(data_root, "input")
+    output_dir = os.path.join(data_root, "output")
+    metrics_dir = os.path.join(data_root, "metrics")
+    logs_dir = os.path.join(data_root, "logs")
+    for path in (input_dir, output_dir, metrics_dir, logs_dir):
+        os.makedirs(path, exist_ok=True)
+    with (
+        patch.object(ba, "DATA_ROOT_DIR", data_root),
+        patch.object(ba, "DEFAULT_INPUT_DIR", input_dir),
+        patch.object(ba, "DEFAULT_OUTPUT_DIR", output_dir),
+        patch.object(ba, "DEFAULT_METRICS_DIR", metrics_dir),
+        patch.object(ba, "DEFAULT_LOGS_DIR", logs_dir),
+    ):
+        try:
+            yield
+        finally:
+            logging.shutdown()
+            _reset_root_logging()
 
 
 class MultithreadSmokeTests(unittest.TestCase):
@@ -119,78 +155,79 @@ class MultithreadSmokeTests(unittest.TestCase):
         stub, call_records = self._make_stub(ids)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            input_path = os.path.join(tmpdir, "input.csv")
-            output_path = os.path.join(tmpdir, "output.csv")
-            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
-            metrics_path = ba.build_artifact_path(output_path, "_metrics.json", ba.DEFAULT_METRICS_DIR)
-            _write_input_csv(input_path, ids)
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
+                metrics_path = ba.build_artifact_path(output_path, "_metrics.json", ba.DEFAULT_METRICS_DIR)
+                _write_input_csv(input_path, ids)
 
-            with patch.object(ba, "classify_example", side_effect=stub):
-                _, _, _, halted = ba.process_dataset(
-                    connector=_DummyConnector(),
-                    input_path=input_path,
-                    output_path=output_path,
-                    args=args,
-                    include_explanation=True,
-                    calibration_enabled=False,
-                    label_map=None,
-                    resolved_api_base_url=None,
-                    validator_client=None,
-                    before_example_hook=None,
-                    run_command="python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
-                    run_command_argv=[
-                        "benchmark_agent.py",
-                        "--threads",
-                        "4",
-                        "--input",
-                        "input.csv",
-                        "--model",
-                        "gpt-4o-mini",
-                    ],
+                with patch.object(ba, "classify_example", side_effect=stub):
+                    _, _, _, halted = ba.process_dataset(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
+                        run_command_argv=[
+                            "benchmark_agent.py",
+                            "--threads",
+                            "4",
+                            "--input",
+                            "input.csv",
+                            "--model",
+                            "gpt-4o-mini",
+                        ],
+                    )
+
+                output_ids = _read_output_ids(output_path)
+                log_records = _read_json_log(log_path)
+                run_command_records = [
+                    record
+                    for record in log_records
+                    if isinstance(record, dict) and record.get("record_type") == "run_command"
+                ]
+                self.assertFalse(halted)
+                self.assertEqual(output_ids, ids)
+                self.assertEqual(len(call_records), len(ids))
+                self.assertGreaterEqual(len({record["thread_id"] for record in call_records}), 2)
+                self.assertTrue(
+                    all(record["prompt_cache_key"] == "shared-cache-key" for record in call_records)
                 )
-
-            output_ids = _read_output_ids(output_path)
-            log_records = _read_json_log(log_path)
-            run_command_records = [
-                record
-                for record in log_records
-                if isinstance(record, dict) and record.get("record_type") == "run_command"
-            ]
-            self.assertFalse(halted)
-            self.assertEqual(output_ids, ids)
-            self.assertEqual(len(call_records), len(ids))
-            self.assertGreaterEqual(len({record["thread_id"] for record in call_records}), 2)
-            self.assertTrue(
-                all(record["prompt_cache_key"] == "shared-cache-key" for record in call_records)
-            )
-            self.assertTrue(all(record["gemini_cached_content"] is None for record in call_records))
-            self.assertTrue(all(record["requesty_auto_cache"] is True for record in call_records))
-            self.assertEqual(len(run_command_records), 1)
-            self.assertTrue(os.path.exists(metrics_path))
-            with open(metrics_path, "r", encoding="utf-8") as handle:
-                metrics_payload = ba.json.load(handle)
-            self.assertFalse(metrics_payload.get("label_metrics_available", True))
-            self.assertNotIn("accuracy", metrics_payload)
-            self.assertEqual(metrics_payload.get("prediction_count"), len(ids))
-            self.assertEqual(metrics_payload.get("truth_label_count"), 0)
-            self.assertEqual(metrics_payload.get("task_name"), "output")
-            self.assertEqual(metrics_payload.get("task_description"), "")
-            self.assertEqual(metrics_payload.get("tags"), "")
-            model_details = metrics_payload.get("model_details")
-            self.assertIsInstance(model_details, dict)
-            self.assertIn("provider", model_details)
-            self.assertIn("model_requested", model_details)
-            self.assertIn("model_for_requests", model_details)
-            self.assertIn("api_base_url", model_details)
-            self.assertIn("chat_completions_endpoint", model_details)
-            self.assertEqual(
-                run_command_records[0].get("reason"),
-                "initial_run",
-            )
-            self.assertEqual(
-                run_command_records[0].get("command"),
-                "python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
-            )
+                self.assertTrue(all(record["gemini_cached_content"] is None for record in call_records))
+                self.assertTrue(all(record["requesty_auto_cache"] is True for record in call_records))
+                self.assertEqual(len(run_command_records), 1)
+                self.assertTrue(os.path.exists(metrics_path))
+                with open(metrics_path, "r", encoding="utf-8") as handle:
+                    metrics_payload = ba.json.load(handle)
+                self.assertFalse(metrics_payload.get("label_metrics_available", True))
+                self.assertNotIn("accuracy", metrics_payload)
+                self.assertEqual(metrics_payload.get("prediction_count"), len(ids))
+                self.assertEqual(metrics_payload.get("truth_label_count"), 0)
+                self.assertEqual(metrics_payload.get("task_name"), "output")
+                self.assertEqual(metrics_payload.get("task_description"), "")
+                self.assertEqual(metrics_payload.get("tags"), "")
+                model_details = metrics_payload.get("model_details")
+                self.assertIsInstance(model_details, dict)
+                self.assertIn("provider", model_details)
+                self.assertIn("model_requested", model_details)
+                self.assertIn("model_for_requests", model_details)
+                self.assertIn("api_base_url", model_details)
+                self.assertIn("chat_completions_endpoint", model_details)
+                self.assertEqual(
+                    run_command_records[0].get("reason"),
+                    "initial_run",
+                )
+                self.assertEqual(
+                    run_command_records[0].get("command"),
+                    "python benchmark_agent.py --threads 4 --input input.csv --model gpt-4o-mini",
+                )
 
     def test_resume_keeps_order_and_processes_only_missing_ids(self) -> None:
         ids = ["id1", "id2", "id3", "id4", "id5"]
@@ -198,78 +235,150 @@ class MultithreadSmokeTests(unittest.TestCase):
         stub, call_records = self._make_stub(ids)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            input_path = os.path.join(tmpdir, "input.csv")
-            output_path = os.path.join(tmpdir, "output.csv")
-            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
-            _write_input_csv(input_path, ids)
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
+                _write_input_csv(input_path, ids)
 
-            with open(output_path, "w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle, delimiter=";")
-                writer.writerow(["ID", "prediction"])
-                writer.writerow(["id1", "existing_label_1"])
-                writer.writerow(["id2", "existing_label_2"])
-            with open(log_path, "w", encoding="utf-8") as handle:
-                ba.json.dump(
-                    [
-                        {
-                            "record_type": "run_command",
-                            "timestamp": ba.utc_timestamp(),
-                            "resume_mode": False,
-                            "reason": "initial_run",
-                            "command": "python benchmark_agent.py --threads 1 --input input.csv --model old-model",
-                            "argv": ["benchmark_agent.py", "--threads", "1", "--input", "input.csv", "--model", "old-model"],
-                        }
-                    ],
-                    handle,
-                    ensure_ascii=False,
-                    indent=2,
+                with open(output_path, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle, delimiter=";")
+                    writer.writerow(["ID", "prediction"])
+                    writer.writerow(["id1", "existing_label_1"])
+                    writer.writerow(["id2", "existing_label_2"])
+                with open(log_path, "w", encoding="utf-8") as handle:
+                    ba.json.dump(
+                        [
+                            {
+                                "record_type": "run_command",
+                                "timestamp": ba.utc_timestamp(),
+                                "resume_mode": False,
+                                "reason": "initial_run",
+                                "command": "python benchmark_agent.py --threads 1 --input input.csv --model old-model",
+                                "argv": ["benchmark_agent.py", "--threads", "1", "--input", "input.csv", "--model", "old-model"],
+                            }
+                        ],
+                        handle,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+
+                with patch.object(ba, "classify_example", side_effect=stub):
+                    _, _, _, halted = ba.process_dataset(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
+                        run_command_argv=[
+                            "benchmark_agent.py",
+                            "--threads",
+                            "3",
+                            "--input",
+                            "input.csv",
+                            "--model",
+                            "gpt-4o-mini",
+                        ],
+                    )
+
+                output_ids = _read_output_ids(output_path)
+                log_records = _read_json_log(log_path)
+                run_command_records = [
+                    record
+                    for record in log_records
+                    if isinstance(record, dict) and record.get("record_type") == "run_command"
+                ]
+                processed_ids = {record["id"] for record in call_records}
+                self.assertFalse(halted)
+                self.assertEqual(output_ids, ids)
+                self.assertEqual(processed_ids, {"id3", "id4", "id5"})
+                self.assertEqual(len(call_records), 3)
+                self.assertEqual(len(run_command_records), 2)
+                self.assertEqual(
+                    run_command_records[-1].get("reason"),
+                    "resume_command_changed",
+                )
+                self.assertEqual(
+                    run_command_records[-1].get("command"),
+                    "python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
                 )
 
-            with patch.object(ba, "classify_example", side_effect=stub):
-                _, _, _, halted = ba.process_dataset(
-                    connector=_DummyConnector(),
-                    input_path=input_path,
-                    output_path=output_path,
-                    args=args,
-                    include_explanation=True,
-                    calibration_enabled=False,
-                    label_map=None,
-                    resolved_api_base_url=None,
-                    validator_client=None,
-                    before_example_hook=None,
-                    run_command="python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
-                    run_command_argv=[
-                        "benchmark_agent.py",
-                        "--threads",
-                        "3",
-                        "--input",
-                        "input.csv",
-                        "--model",
-                        "gpt-4o-mini",
-                    ],
-                )
+    def test_resume_reprompts_only_unclassified_rows(self) -> None:
+        ids = ["id1", "id2", "id3"]
+        args = _build_args(threads=1)
+        args.reprompt_unclassified = True
+        call_ids: List[str] = []
 
-            output_ids = _read_output_ids(output_path)
-            log_records = _read_json_log(log_path)
-            run_command_records = [
-                record
-                for record in log_records
-                if isinstance(record, dict) and record.get("record_type") == "run_command"
+        def stub_unclassified_only(*_args: Any, **kwargs: Any):
+            example = kwargs["example"]
+            call_ids.append(example.example_id)
+            prediction = ba.Prediction(
+                label="fixed_label",
+                explanation="fixed explanation",
+                confidence=0.75,
+                raw_response="{}",
+                prompt_tokens=9,
+                completion_tokens=3,
+                total_tokens=12,
+                node_echo=example.node,
+                span_source=ba.SPAN_SOURCE_NODE,
+                shared_prefix_tokens_estimate=1200,
+                variable_prompt_tokens_estimate=40,
+            )
+            attempt_logs = [
+                {
+                    "attempt": 1,
+                    "timestamp": ba.utc_timestamp(),
+                    "status": "success",
+                    "response": {"usage_metadata": {}},
+                }
             ]
-            processed_ids = {record["id"] for record in call_records}
-            self.assertFalse(halted)
-            self.assertEqual(output_ids, ids)
-            self.assertEqual(processed_ids, {"id3", "id4", "id5"})
-            self.assertEqual(len(call_records), 3)
-            self.assertEqual(len(run_command_records), 2)
-            self.assertEqual(
-                run_command_records[-1].get("reason"),
-                "resume_command_changed",
-            )
-            self.assertEqual(
-                run_command_records[-1].get("command"),
-                "python benchmark_agent.py --threads 3 --input input.csv --model gpt-4o-mini",
-            )
+            return prediction, attempt_logs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                _write_input_csv(input_path, ids)
+
+                with open(output_path, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle, delimiter=";")
+                    writer.writerow(["ID", "leftContext", "node", "rightContext", "info", "truth", "prediction"])
+                    writer.writerow(["id1", "L_id1", "N_id1", "R_id1", "", "", "singular"])
+                    writer.writerow(["id2", "L_id2", "N_id2", "R_id2", "", "", "unclassified"])
+                    writer.writerow(["id3", "L_id3", "N_id3", "R_id3", "", "", "plural"])
+
+                with patch.object(ba, "classify_example", side_effect=stub_unclassified_only):
+                    _, _, _, halted = ba.process_dataset(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --unclassified",
+                        run_command_argv=["benchmark_agent.py", "--unclassified"],
+                    )
+
+                self.assertFalse(halted)
+                self.assertEqual(call_ids, ["id2"])
+
+                with open(output_path, "r", encoding="utf-8-sig", newline="") as handle:
+                    rows = list(csv.DictReader(handle, delimiter=";"))
+                self.assertEqual(len(rows), 3)
+                id2_rows = [row for row in rows if row.get("ID") == "id2"]
+                self.assertEqual(len(id2_rows), 1)
+                self.assertEqual(id2_rows[0].get("prediction"), "fixed_label")
 
 
 if __name__ == "__main__":

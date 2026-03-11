@@ -525,6 +525,10 @@
                   <input type="text" id="output_path" name="output_path" placeholder="data/output/results.csv" />
                   <span class="hint">Optional: dir for multi-file input or an existing file to resume.</span>
                 </label>
+                <label class="inline">
+                  <input type="checkbox" id="reprompt_unclassified" name="reprompt_unclassified" />
+                  <span>Resume mode: re-prompt only <code>unclassified</code> rows (<code>--unclassified</code>)</span>
+                </label>
               </section>
               <section class="core-column">
                 <h3 class="core-column-title">Model/Provider</h3>
@@ -772,6 +776,24 @@
                   >Labels CSV Path
                   <input type="text" id="labels_path" name="labels_path" placeholder="data/input/labels.csv" />
                 </label>
+                <label
+                  >Task Name (metrics metadata)
+                  <input type="text" id="task_name" name="task_name" placeholder="OE_number" />
+                </label>
+                <label
+                  >Task Description (metrics metadata)
+                  <input
+                    type="text"
+                    id="task_description"
+                    name="task_description"
+                    placeholder="Old English noun number classification benchmark"
+                  />
+                </label>
+                <label
+                  >Tags (metrics metadata)
+                  <input type="text" id="tags" name="tags" placeholder="old-english;number;morphology" />
+                  <span class="hint">Use semicolons to separate tags (for example: <code>tag1;tag2;tag3</code>).</span>
+                </label>
                 <label class="inline">
                   <input type="checkbox" id="metrics_only" name="metrics_only" />
                   <span>Metrics-only mode (reuse existing output CSV in <code>--input</code>)</span>
@@ -898,7 +920,10 @@
             For the full current reference, run <code>python benchmark_agent.py --help</code> in your terminal.
           </p>
           <pre>usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
-                          [--output OUTPUT] [--model MODEL]
+                          [--output OUTPUT] [--unclassified]
+                          [--task_name TASK_NAME]
+                          [--task_description TASK_DESCRIPTION]
+                          [--tags TAGS] [--model MODEL]
                           [--temperature TEMPERATURE] [--top_p TOP_P]
                           [--top_k TOP_K]
                           [--service_tier {standard,flex,priority}]
@@ -953,6 +978,17 @@ options:
                         alongside each input file. If the resolved output CSV
                         already exists, the run resumes from the first ID not
                         present in that file.
+  --unclassified        Resume helper: when --output points to an existing
+                        CSV, remove rows whose prediction is 'unclassified'
+                        and re-prompt only those IDs.
+  --task_name TASK_NAME
+                        Optional task name stored in metrics metadata. If
+                        omitted, it is inferred from the output filename.
+  --task_description TASK_DESCRIPTION
+                        Optional free-text task description stored in metrics
+                        metadata.
+  --tags TAGS           Optional metrics tags (semicolon-delimited string
+                        recommended), stored in metrics metadata.
   --model MODEL         Model name (e.g., gpt-4-turbo).
   --metrics_only, --metrics-only
                         Skip model/API calls and compute metrics from existing
@@ -1251,6 +1287,10 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         validator_exhausted_policy: "accept_blank_confidence",
         validator_debug: false,
         metrics_only: false,
+        reprompt_unclassified: false,
+        task_name: "",
+        task_description: "",
+        tags: "",
       };
 
       const providerDefaults = {
@@ -1340,9 +1380,16 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         keep_gemini_cache:
           "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
         labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
+        task_name:
+          "Optional task name written to metrics metadata. Leave blank to infer from output filename.",
+        task_description: "Optional free-text task description written to metrics metadata.",
+        tags:
+          "Optional metrics tags. Use semicolon-separated tags (for example: tag1;tag2;tag3).",
         metrics_only:
           "Skip API calls and only recompute metrics from existing output CSVs listed in input_path. Truth labels come from output truth column and can be overridden via labels_path.",
         output_path: "Optional output CSV file path, or output directory when running multiple inputs. Set an existing output file to resume.",
+        reprompt_unclassified:
+          "When checked, emits --unclassified so resume mode re-prompts only rows currently labeled unclassified.",
         api_key_var: "Environment variable that stores the API key or access token used for this run.",
         api_base_var: "Environment variable containing the provider base URL.",
         calibration: "Generate calibration outputs in addition to regular metrics.",
@@ -1374,17 +1421,19 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
 
       function shellQuote(value) {
         if (value === undefined || value === null) {
-          return "''";
+          return '""';
         }
         const stringValue = String(value);
         if (!stringValue.length) {
-          return "''";
+          return '""';
         }
         if (/^[A-Za-z0-9._@%+=:,\\/\\-]+$/.test(stringValue)) {
           return stringValue;
         }
-        const escaped = stringValue.replace(/'/g, "'\"'\"'");
-        return "'" + escaped + "'";
+        // Use Windows-friendly quoting for generated commands (cmd/PowerShell):
+        // wrap in double quotes and escape embedded quotes by doubling them.
+        const escaped = stringValue.replace(/"/g, '""');
+        return `"${escaped}"`;
       }
 
       function escapeHtml(value) {
@@ -2084,6 +2133,24 @@ Tip: this GUI is a command builder. You can still edit any generated CLI flag ma
         const outputValue = data.get("output_path")?.toString().trim();
         if (outputValue) {
           args.push("--output", shellQuote(outputValue));
+        }
+        if (data.get("reprompt_unclassified")) {
+          args.push("--unclassified");
+        }
+
+        const taskName = data.get("task_name")?.toString().trim() ?? "";
+        if (taskName) {
+          args.push("--task_name", shellQuote(taskName));
+        }
+
+        const taskDescription = data.get("task_description")?.toString().trim() ?? "";
+        if (taskDescription) {
+          args.push("--task_description", shellQuote(taskDescription));
+        }
+
+        const tags = data.get("tags")?.toString().trim() ?? "";
+        if (tags) {
+          args.push("--tags", shellQuote(tags));
         }
 
         const provider = data.get("provider");

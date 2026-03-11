@@ -95,7 +95,7 @@ code {
   grid-template-columns: 320px 1fr;
   border: 1px solid var(--line);
   border-radius: 28px;
-  overflow: hidden;
+  overflow: visible;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0));
   box-shadow: var(--shadow-hard);
 }
@@ -108,7 +108,6 @@ code {
   position: sticky;
   top: 1rem;
   align-self: start;
-  height: calc(100vh - 2rem);
   overflow: auto;
 }
 
@@ -247,6 +246,11 @@ html[data-theme="light"] .theme-icon::after {
   color: var(--muted);
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 input:not([type="checkbox"]),
 select,
 .btn {
@@ -275,6 +279,11 @@ select:focus,
 select option {
   background: var(--surface-input);
   color: var(--ink);
+}
+
+select[multiple] {
+  min-height: 140px;
+  padding: 0.35rem;
 }
 
 .btn {
@@ -340,6 +349,40 @@ select option {
 
 .main {
   padding: 1.35rem;
+  position: relative;
+}
+
+.metric-dock {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.85rem;
+  pointer-events: none;
+}
+
+.metric-dock-field {
+  margin: 0;
+  width: min(360px, 94%);
+  padding: 0.58rem 0.64rem;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--paper-strong) 92%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-soft);
+  pointer-events: auto;
+}
+
+.metric-dock-field span {
+  text-align: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metric-dock-field select {
+  text-align: center;
 }
 
 .hero {
@@ -496,9 +539,68 @@ select option {
 }
 
 #leaderboardChart {
+  gap: 0.4rem;
+}
+
+.leaderboard-tabs {
+  display: inline-flex;
+  gap: 0.36rem;
+  margin-bottom: 0.52rem;
+}
+
+.leaderboard-tab-btn {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.28rem 0.72rem;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.leaderboard-tab-btn.active {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
+  border-color: transparent;
+  color: #031017;
+}
+
+.leaderboard-panel {
   max-height: 560px;
   overflow-y: auto;
   padding-right: 0.25rem;
+}
+
+.leaderboard-ci-note {
+  margin: 0 0 0.42rem;
+  font-size: 0.73rem;
+}
+
+.leaderboard-metrics-summary {
+  margin: 0 0 0.45rem;
+  font-size: 0.74rem;
+}
+
+.leaderboard-metrics-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+}
+
+.leaderboard-metrics-table {
+  min-width: 720px;
+}
+
+.leaderboard-run-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-best {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  font-weight: 700;
 }
 
 .leaderboard-group {
@@ -541,7 +643,7 @@ select option {
 
 .leaderboard-summary .bar-row {
   flex: 1;
-  grid-template-columns: minmax(160px, 1.2fr) 3fr 92px;
+  grid-template-columns: minmax(160px, 1.2fr) 3fr minmax(190px, 1.1fr);
 }
 
 .leaderboard-summary .bar-label {
@@ -581,6 +683,10 @@ select option {
   font-size: 0.79rem;
 }
 
+.leaderboard-panel .bar-row {
+  grid-template-columns: minmax(160px, 1.25fr) 3fr minmax(185px, 1.2fr);
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 3fr 80px;
@@ -615,6 +721,7 @@ select option {
   border-radius: 999px;
   height: 11px;
   overflow: hidden;
+  position: relative;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
@@ -624,10 +731,23 @@ select option {
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
+.bar-ci-range {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 80%, white 20%);
+  background: color-mix(in srgb, var(--accent-2) 25%, transparent);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
 .bar-value {
   text-align: right;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .muted {
@@ -669,6 +789,167 @@ select option {
   border-radius: 16px;
   background: color-mix(in srgb, var(--paper) 98%, black 2%);
   max-height: 430px;
+}
+
+.token-visual-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.token-stack-panel,
+.token-radar-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  padding: 0.72rem;
+}
+
+.token-stack-header,
+.token-radar-header {
+  margin: 0 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.token-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.token-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.token-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.token-rows {
+  display: grid;
+  gap: 0.52rem;
+}
+
+.token-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.5rem 0.58rem;
+  background: color-mix(in srgb, var(--paper) 98%, var(--accent) 2%);
+}
+
+.token-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.77rem;
+  margin-bottom: 0.36rem;
+}
+
+.token-model-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-stack-track {
+  height: 13px;
+  border-radius: 999px;
+  background: var(--bar-track);
+  overflow: hidden;
+  display: flex;
+}
+
+.token-segment {
+  height: 100%;
+}
+
+.token-row-values {
+  margin-top: 0.34rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.radar-wrap {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.radar-mode-toggle {
+  display: inline-flex;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+
+.radar-mode-btn {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.26rem 0.62rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.radar-mode-btn.active {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
+  border-color: transparent;
+  color: #031017;
+}
+
+.radar-svg {
+  width: 100%;
+  max-width: 460px;
+  aspect-ratio: 1 / 1;
+}
+
+.radar-grid {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.radar-axis {
+  stroke: color-mix(in srgb, var(--muted) 45%, transparent);
+  stroke-width: 1;
+}
+
+.radar-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.radar-series {
+  fill-opacity: 0.12;
+  stroke-width: 2;
+}
+
+.radar-legend {
+  display: grid;
+  gap: 0.26rem;
+}
+
+.radar-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  font-size: 0.74rem;
+}
+
+.radar-legend-line {
+  width: 16px;
+  height: 3px;
+  border-radius: 999px;
 }
 
 .token-table {
@@ -908,6 +1189,11 @@ tbody tr.selected-row {
     padding: 0.9rem;
   }
 
+  .metric-dock {
+    top: 0;
+    margin-bottom: 0.65rem;
+  }
+
   .hero {
     flex-direction: column;
     align-items: flex-start;
@@ -932,6 +1218,11 @@ tbody tr.selected-row {
     grid-template-columns: minmax(90px, 1fr) 2fr 70px;
   }
 
+  .leaderboard-panel .bar-row,
+  .leaderboard-summary .bar-row {
+    grid-template-columns: minmax(110px, 1fr) 2fr minmax(130px, 1.2fr);
+  }
+
   .details-grid {
     grid-template-columns: 1fr;
   }
@@ -940,7 +1231,11 @@ tbody tr.selected-row {
     grid-template-columns: 1fr;
   }
 
-  #leaderboardChart {
+  .token-visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .leaderboard-panel {
     max-height: 420px;
   }
 

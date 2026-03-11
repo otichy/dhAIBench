@@ -1,9 +1,11 @@
 import argparse
 import csv
 import json
+import logging
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -76,38 +78,72 @@ def _prediction_for(example: ba.Example) -> ba.Prediction:
     )
 
 
+def _reset_root_logging() -> None:
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+
+@contextmanager
+def _isolated_data_dirs(tmpdir: str):
+    data_root = os.path.join(tmpdir, "bench_data")
+    input_dir = os.path.join(data_root, "input")
+    output_dir = os.path.join(data_root, "output")
+    metrics_dir = os.path.join(data_root, "metrics")
+    logs_dir = os.path.join(data_root, "logs")
+    for path in (input_dir, output_dir, metrics_dir, logs_dir):
+        os.makedirs(path, exist_ok=True)
+    with (
+        patch.object(ba, "DATA_ROOT_DIR", data_root),
+        patch.object(ba, "DEFAULT_INPUT_DIR", input_dir),
+        patch.object(ba, "DEFAULT_OUTPUT_DIR", output_dir),
+        patch.object(ba, "DEFAULT_METRICS_DIR", metrics_dir),
+        patch.object(ba, "DEFAULT_LOGS_DIR", logs_dir),
+    ):
+        try:
+            yield
+        finally:
+            logging.shutdown()
+            _reset_root_logging()
+
+
 class PromptLogNdjsonTests(unittest.TestCase):
     def test_main_defaults_logprobs_off_and_new_flush_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_csv = os.path.join(tmpdir, "existing_output.csv")
-            with open(output_csv, "w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=["ID", "prediction"], delimiter=";")
-                writer.writeheader()
-                writer.writerow({"ID": "1", "prediction": "NOUN"})
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                with open(output_csv, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=["ID", "prediction"], delimiter=";")
+                    writer.writeheader()
+                    writer.writerow({"ID": "1", "prediction": "NOUN"})
 
-            captured: Dict[str, Any] = {}
+                captured: Dict[str, Any] = {}
 
-            def fake_metrics(
-                output_path: str,
-                args: argparse.Namespace,
-                calibration_enabled: bool,
-                label_map: Any,
-            ):
-                captured["args"] = args
-                self.assertEqual(output_path, output_csv)
-                self.assertFalse(calibration_enabled)
-                self.assertIsNone(label_map)
-                return (0, 0, 0)
+                def fake_metrics(
+                    output_path: str,
+                    args: argparse.Namespace,
+                    calibration_enabled: bool,
+                    label_map: Any,
+                ):
+                    captured["args"] = args
+                    self.assertEqual(output_path, output_csv)
+                    self.assertFalse(calibration_enabled)
+                    self.assertIsNone(label_map)
+                    return (0, 0, 0)
 
-            with patch.object(ba, "process_metrics_only_output", side_effect=fake_metrics):
-                exit_code = ba.main(["--metrics_only", "--input", output_csv])
+                with patch.object(ba, "process_metrics_only_output", side_effect=fake_metrics):
+                    exit_code = ba.main(["--metrics_only", "--input", output_csv])
 
-            self.assertEqual(exit_code, 0)
-            parsed_args = captured["args"]
-            self.assertFalse(parsed_args.logprobs)
-            self.assertEqual(parsed_args.prompt_log_detail, "full")
-            self.assertEqual(parsed_args.flush_rows, 100)
-            self.assertEqual(parsed_args.flush_seconds, 2.0)
+                self.assertEqual(exit_code, 0)
+                parsed_args = captured["args"]
+                self.assertFalse(parsed_args.logprobs)
+                self.assertEqual(parsed_args.prompt_log_detail, "full")
+                self.assertEqual(parsed_args.flush_rows, 100)
+                self.assertEqual(parsed_args.flush_seconds, 2.0)
 
     def test_prompt_log_writer_emits_ndjson(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,81 +185,82 @@ class PromptLogNdjsonTests(unittest.TestCase):
 
     def test_resume_migrates_legacy_prompt_log_to_ndjson(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            input_path = os.path.join(tmpdir, "input.csv")
-            output_path = os.path.join(tmpdir, "out.csv")
-            log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
-            _write_input(input_path, ["id1", "id2"])
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "out.csv")
+                log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
+                _write_input(input_path, ["id1", "id2"])
 
-            with open(output_path, "w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle, delimiter=";")
-                writer.writerow(["ID", "prediction"])
-                writer.writerow(["id1", "existing"])
+                with open(output_path, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle, delimiter=";")
+                    writer.writerow(["ID", "prediction"])
+                    writer.writerow(["id1", "existing"])
 
-            with open(log_path, "w", encoding="utf-8") as handle:
-                json.dump(
-                    [
+                with open(log_path, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        [
+                            {
+                                "record_type": "run_command",
+                                "timestamp": ba.utc_timestamp(),
+                                "resume_mode": False,
+                                "reason": "initial_run",
+                                "command": "python benchmark_agent.py --threads 1 --model old",
+                                "argv": ["benchmark_agent.py", "--threads", "1", "--model", "old"],
+                            }
+                        ],
+                        handle,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+
+                def fake_classify_example(*_args: Any, **kwargs: Any):
+                    example = kwargs["example"]
+                    prediction = _prediction_for(example)
+                    attempt_logs = [
                         {
-                            "record_type": "run_command",
+                            "attempt": 1,
                             "timestamp": ba.utc_timestamp(),
-                            "resume_mode": False,
-                            "reason": "initial_run",
-                            "command": "python benchmark_agent.py --threads 1 --model old",
-                            "argv": ["benchmark_agent.py", "--threads", "1", "--model", "old"],
+                            "request": [{"role": "user", "content": "payload"}],
+                            "response": {"text": "x", "prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+                            "status": "success",
+                            "parsed_payload": {"label": "X", "confidence": 0.5},
                         }
-                    ],
-                    handle,
-                    ensure_ascii=False,
-                    indent=2,
-                )
+                    ]
+                    return prediction, attempt_logs
 
-            def fake_classify_example(*_args: Any, **kwargs: Any):
-                example = kwargs["example"]
-                prediction = _prediction_for(example)
-                attempt_logs = [
-                    {
-                        "attempt": 1,
-                        "timestamp": ba.utc_timestamp(),
-                        "request": [{"role": "user", "content": "payload"}],
-                        "response": {"text": "x", "prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-                        "status": "success",
-                        "parsed_payload": {"label": "X", "confidence": 0.5},
-                    }
+                args = _build_args(prompt_log_detail="full", flush_rows=1, flush_seconds=0.0)
+                with patch.object(ba, "classify_example", side_effect=fake_classify_example):
+                    ba.process_dataset(
+                        connector=object(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --threads 2 --model gpt-4o-mini",
+                        run_command_argv=[
+                            "benchmark_agent.py",
+                            "--threads",
+                            "2",
+                            "--model",
+                            "gpt-4o-mini",
+                        ],
+                    )
+
+                self.assertTrue(os.path.exists(log_path + ".legacy.json"))
+                self.assertEqual(ba.detect_prompt_log_format(log_path), "ndjson")
+                records = list(ba.iter_prompt_log_records(log_path))
+                self.assertTrue(any(record.get("record_type") == "example_result" for record in records))
+                run_commands = [
+                    record
+                    for record in records
+                    if isinstance(record, dict) and record.get("record_type") == "run_command"
                 ]
-                return prediction, attempt_logs
-
-            args = _build_args(prompt_log_detail="full", flush_rows=1, flush_seconds=0.0)
-            with patch.object(ba, "classify_example", side_effect=fake_classify_example):
-                ba.process_dataset(
-                    connector=object(),
-                    input_path=input_path,
-                    output_path=output_path,
-                    args=args,
-                    include_explanation=True,
-                    calibration_enabled=False,
-                    label_map=None,
-                    resolved_api_base_url=None,
-                    validator_client=None,
-                    before_example_hook=None,
-                    run_command="python benchmark_agent.py --threads 2 --model gpt-4o-mini",
-                    run_command_argv=[
-                        "benchmark_agent.py",
-                        "--threads",
-                        "2",
-                        "--model",
-                        "gpt-4o-mini",
-                    ],
-                )
-
-            self.assertTrue(os.path.exists(log_path + ".legacy.json"))
-            self.assertEqual(ba.detect_prompt_log_format(log_path), "ndjson")
-            records = list(ba.iter_prompt_log_records(log_path))
-            self.assertTrue(any(record.get("record_type") == "example_result" for record in records))
-            run_commands = [
-                record
-                for record in records
-                if isinstance(record, dict) and record.get("record_type") == "run_command"
-            ]
-            self.assertEqual(len(run_commands), 2)
+                self.assertEqual(len(run_commands), 2)
 
     def test_migrate_corrupted_legacy_json_array_recovers_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
