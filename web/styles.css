@@ -725,10 +725,50 @@ select[multiple] {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+.bar-track.with-label {
+  height: 18px;
+}
+
 .bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-3));
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.bar-track-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 0.45rem;
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 3;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.85),
+    0 0 1px rgba(0, 0, 0, 0.9);
+  background: linear-gradient(
+    90deg,
+    rgba(2, 8, 18, 0.52) 0%,
+    rgba(2, 8, 18, 0.24) 62%,
+    rgba(2, 8, 18, 0.06) 100%
+  );
+}
+
+html[data-theme="light"] .bar-track-label {
+  color: #0f172a;
+  text-shadow: none;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.82) 0%,
+    rgba(255, 255, 255, 0.58) 62%,
+    rgba(255, 255, 255, 0.14) 100%
+  );
 }
 
 .bar-ci-range {
@@ -739,6 +779,7 @@ select[multiple] {
   background: color-mix(in srgb, var(--accent-2) 25%, transparent);
   border-radius: 999px;
   pointer-events: none;
+  z-index: 2;
 }
 
 .bar-value {
@@ -1067,6 +1108,7 @@ tbody tr.selected-row {
   border-radius: 14px;
   overflow: hidden;
   display: grid;
+  grid-template-rows: minmax(180px, 300px) auto;
   background: color-mix(in srgb, var(--paper) 95%, black 5%);
   color: inherit;
   text-decoration: none;
@@ -1075,8 +1117,8 @@ tbody tr.selected-row {
 
 .chart-preview img {
   width: 100%;
-  height: 180px;
-  object-fit: cover;
+  height: 100%;
+  object-fit: contain;
   display: block;
   background: color-mix(in srgb, var(--paper) 90%, black 10%);
 }

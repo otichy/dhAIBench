@@ -1218,7 +1218,7 @@ function renderKpis(runs) {
   els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in view (${modelScope}).`;
 }
 
-function createBarRow(label, value, max, formatter, colorClass, onClick, ci = null) {
+function createBarRow(label, value, max, formatter, colorClass, onClick, ci = null, insideBarText = "") {
   const node = els.barRowTemplate.content.firstElementChild.cloneNode(true);
   const labelEl = node.querySelector(".bar-label");
   const trackEl = node.querySelector(".bar-track");
@@ -1234,6 +1234,16 @@ function createBarRow(label, value, max, formatter, colorClass, onClick, ci = nu
     fillEl.style.background = "linear-gradient(90deg, #f59e0b, #ea580c)";
   } else if (colorClass === "blue") {
     fillEl.style.background = "linear-gradient(90deg, #2563eb, #1e3a8a)";
+  }
+
+  const insideLabel = asTrimmedString(insideBarText);
+  if (insideLabel) {
+    const trackLabel = document.createElement("span");
+    trackLabel.className = "bar-track-label";
+    trackLabel.textContent = insideLabel;
+    trackLabel.title = insideLabel;
+    trackEl.classList.add("with-label");
+    trackEl.appendChild(trackLabel);
   }
 
   if (ci && typeof ci.low === "number" && typeof ci.high === "number" && max > 0) {
@@ -1262,6 +1272,13 @@ function createBarRow(label, value, max, formatter, colorClass, onClick, ci = nu
 
   valueEl.textContent = formatter(value, ci);
   return node;
+}
+
+function getConcatenatedTaskLabel(runs) {
+  const tasks = [...new Set((runs || []).map((run) => asTrimmedString(run.task)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  return tasks.join(" + ");
 }
 
 function renderLeaderboardTabControls() {
@@ -1299,6 +1316,7 @@ function renderLeaderboardChart(container, runs) {
   ciNote.className = "leaderboard-ci-note muted";
   ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
   container.appendChild(ciNote);
+  const hasMultipleTasks = new Set(runs.map((run) => asTrimmedString(run.task)).filter(Boolean)).size > 1;
 
   const groups = new Map();
   source.forEach((run) => {
@@ -1364,7 +1382,8 @@ function renderLeaderboardChart(container, runs) {
           (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
           () => openRunModal(entry.run),
-          entry.ci
+          entry.ci,
+          hasMultipleTasks ? entry.run.task : ""
         )
       );
       return;
@@ -1392,7 +1411,8 @@ function renderLeaderboardChart(container, runs) {
         (value, ci) => `${formatMetric(metricKey, value)} avg${formatCiRange(ci)}`,
         null,
         null,
-        entry.ci
+        entry.ci,
+        hasMultipleTasks ? getConcatenatedTaskLabel(entry.runs) : ""
       )
     );
     details.appendChild(summary);
@@ -1409,7 +1429,8 @@ function renderLeaderboardChart(container, runs) {
           (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
           () => openRunModal(run),
-          runCi
+          runCi,
+          hasMultipleTasks ? run.task : ""
         )
       );
     });
