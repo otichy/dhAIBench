@@ -794,6 +794,41 @@ def is_request_timeout_error(exc: BaseException) -> bool:
     return any(marker in text for marker in markers)
 
 
+def is_retryable_provider_server_error(exc: BaseException) -> bool:
+    """Best-effort detection for transient provider-side 5xx/server failures."""
+    status_code: Optional[int] = None
+    for attr_name in ("status_code", "status", "http_status", "code"):
+        raw_value = getattr(exc, attr_name, None)
+        if raw_value is None:
+            continue
+        try:
+            status_code = int(str(raw_value).strip())
+            break
+        except (TypeError, ValueError):
+            continue
+
+    if status_code is not None and 500 <= status_code <= 599:
+        return True
+
+    class_name = exc.__class__.__name__.strip().lower()
+    if "internalservererror" in class_name:
+        return True
+
+    text = str(exc).strip().lower()
+    if not text:
+        return False
+    markers = (
+        "service unavailable",
+        "internal server error",
+        "bad gateway",
+        "gateway timeout",
+        "upstream connect error",
+        "connection termination",
+        "temporarily unavailable",
+    )
+    return any(marker in text for marker in markers)
+
+
 def is_malformed_model_response_error(exc: BaseException) -> bool:
     """Best-effort detection for malformed provider completion payloads."""
     text = str(exc).strip().lower()
@@ -2876,6 +2911,8 @@ def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
                 # force timeout categorization even for unrelated messages.
                 if is_request_timeout_error(RuntimeError(error_message)):
                     error_category = "request_timeout"
+                elif is_retryable_provider_server_error(RuntimeError(error_message)):
+                    error_category = "provider_server_error"
                 elif is_malformed_model_response_error(ValueError(error_message)):
                     error_category = "malformed_provider_response"
                 else:
@@ -3006,6 +3043,8 @@ def _collect_timeout_probe_run_stats(
             if not error_category:
                 if is_request_timeout_error(RuntimeError(error_message)):
                     error_category = "request_timeout"
+                elif is_retryable_provider_server_error(RuntimeError(error_message)):
+                    error_category = "provider_server_error"
                 elif is_malformed_model_response_error(ValueError(error_message)):
                     error_category = "malformed_provider_response"
                 else:
@@ -5795,6 +5834,7 @@ def classify_example(
             resource_exhausted_error = is_retryable_resource_exhausted_error(exc)
             empty_response_error = is_empty_model_response_error(exc)
             timeout_error = is_request_timeout_error(exc)
+            provider_server_error = is_retryable_provider_server_error(exc)
             malformed_response_error = is_malformed_model_response_error(exc)
             request_timeout_seconds = connector.request_timeout_seconds
             if request_timeout_seconds is not None:
@@ -5819,6 +5859,8 @@ def classify_example(
                 log_entry["error_category"] = "resource_exhausted"
             elif timeout_error:
                 log_entry["error_category"] = "request_timeout"
+            elif provider_server_error:
+                log_entry["error_category"] = "provider_server_error"
             elif malformed_response_error:
                 log_entry["error_category"] = "malformed_provider_response"
             log_entry["error"] = str(exc)
@@ -5923,6 +5965,32 @@ def classify_example(
             node_echo=None,
             span_source=None,
             validator_status="accepted_after_request_timeout",
+            validator_reason=detail,
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+        ), interaction_logs
+    if is_retryable_provider_server_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        logging.error(
+            "Provider transient server error for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence. Detail: %s",
+            example.example_id,
+            max_retries,
+            detail,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_provider_server_error",
             validator_reason=detail,
             shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
             variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
