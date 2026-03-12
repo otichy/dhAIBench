@@ -92,6 +92,10 @@ DEFAULT_INPUT_DIR = os.path.join(DATA_ROOT_DIR, "input")
 DEFAULT_OUTPUT_DIR = os.path.join(DATA_ROOT_DIR, "output")
 DEFAULT_METRICS_DIR = os.path.join(DATA_ROOT_DIR, "metrics")
 DEFAULT_LOGS_DIR = os.path.join(DATA_ROOT_DIR, "logs")
+DEFAULT_TIMEOUT_PROBE_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "timeout_probe")
+DEFAULT_TIMEOUT_PROBE_SAMPLE_SIZE = 60
+DEFAULT_TIMEOUT_PROBE_REPEATS = 2
+TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS = 120.0
 RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
 OLD_RUN_BASENAME_RE = re.compile(
     rf"^(?P<task>.+?)_out_(?P<tail>.+?)_(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
@@ -1415,6 +1419,35 @@ class PromptBuildArtifacts:
     variable_payload_text: str
     shared_prefix_tokens_estimate: int
     variable_payload_tokens_estimate: int
+
+
+@dataclass
+class TimeoutProbeScenario:
+    name: str
+    threads: int
+    request_timeout_seconds: Optional[float]
+    max_retries: int
+    retry_delay: float
+    request_interval_ms: int
+
+
+@dataclass
+class TimeoutProbeRunResult:
+    scenario: str
+    repeat_index: int
+    output_path: str
+    log_path: str
+    elapsed_seconds: float
+    total_examples: int
+    successful_examples: int
+    error_attempts: int
+    timeout_attempts: int
+    timeout_examples: int
+    non_timeout_error_attempts: int
+    near_limit_timeout_attempts: int
+    timeout_duration_median: Optional[float]
+    timeout_duration_p95: Optional[float]
+    timed_out_example_ids: List[str]
 
 
 PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
@@ -2888,6 +2921,503 @@ def summarize_prompt_log_errors(path: str, top_examples: int = 20) -> int:
             final_status,
         )
 
+    return 0
+
+
+def _percentile_linear(sorted_values: List[float], quantile: float) -> Optional[float]:
+    """Compute a percentile using linear interpolation on a pre-sorted list."""
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    q = min(1.0, max(0.0, quantile))
+    position = (len(sorted_values) - 1) * q
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return sorted_values[lower]
+    weight = position - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+
+def _build_timeout_probe_subset(input_path: str, output_path: str, sample_size: int) -> int:
+    """Write a deterministic input subset with the first N data rows from the source CSV."""
+    safe_size = max(1, int(sample_size))
+    with open(input_path, "r", encoding="utf-8-sig", newline="") as source_handle:
+        reader = csv.reader(source_handle, delimiter=";")
+        header = next(reader, None)
+        if not header:
+            raise ValueError(f"Input CSV has no header row: {input_path}")
+        rows: List[List[str]] = []
+        for row in reader:
+            rows.append(row)
+            if len(rows) >= safe_size:
+                break
+
+    if not rows:
+        raise ValueError(f"Input CSV has no data rows: {input_path}")
+
+    ensure_directory(output_path)
+    with open(output_path, "w", encoding="utf-8", newline="") as target_handle:
+        writer = csv.writer(target_handle, delimiter=";")
+        writer.writerow(header)
+        writer.writerows(rows)
+    return len(rows)
+
+
+def _collect_timeout_probe_run_stats(
+    log_path: str,
+    configured_timeout_seconds: Optional[float],
+) -> Dict[str, Any]:
+    """Extract timeout/error telemetry from one probe run prompt log."""
+    examples_total = 0
+    successful_examples = 0
+    error_attempts = 0
+    timeout_attempts = 0
+    timeout_examples = 0
+    non_timeout_error_attempts = 0
+    near_limit_timeout_attempts = 0
+    timeout_durations: List[float] = []
+    timed_out_example_ids: List[str] = []
+
+    for record in iter_prompt_log_records(log_path):
+        if not isinstance(record, dict):
+            continue
+        attempts_obj = record.get("attempts")
+        if not isinstance(attempts_obj, list):
+            continue
+        example_id = str(record.get("example_id", "")).strip() or "<missing-id>"
+        examples_total += 1
+
+        last_status = ""
+        last_error_category = ""
+        for attempt in attempts_obj:
+            if not isinstance(attempt, dict):
+                continue
+            status = str(attempt.get("status", "")).strip().lower()
+            if status:
+                last_status = status
+            if status != "error":
+                continue
+
+            error_attempts += 1
+            error_message = str(attempt.get("error", "")).strip()
+            error_category = str(attempt.get("error_category", "")).strip().lower()
+            if not error_category:
+                if is_request_timeout_error(RuntimeError(error_message)):
+                    error_category = "request_timeout"
+                elif is_malformed_model_response_error(ValueError(error_message)):
+                    error_category = "malformed_provider_response"
+                else:
+                    error_category = "uncategorized"
+
+            if error_category == "request_timeout":
+                timeout_attempts += 1
+                last_error_category = error_category
+                duration_seconds = parse_optional_float(attempt.get("duration_seconds"))
+                if duration_seconds is not None:
+                    timeout_durations.append(duration_seconds)
+                    if (
+                        configured_timeout_seconds is not None
+                        and configured_timeout_seconds > 0
+                        and duration_seconds + 0.25 >= configured_timeout_seconds
+                    ):
+                        near_limit_timeout_attempts += 1
+                elif parse_optional_bool(attempt.get("timeout_likely_hit_client_limit")) is True:
+                    near_limit_timeout_attempts += 1
+            else:
+                non_timeout_error_attempts += 1
+                last_error_category = error_category
+
+        if last_status and last_status != "error":
+            successful_examples += 1
+
+        final_prediction = record.get("final_prediction")
+        validator_status = (
+            str(final_prediction.get("validator_status", "")).strip()
+            if isinstance(final_prediction, dict)
+            else ""
+        )
+        timed_out_final = validator_status == "accepted_after_request_timeout"
+        if not timed_out_final and last_status == "error" and last_error_category == "request_timeout":
+            timed_out_final = True
+        if timed_out_final:
+            timeout_examples += 1
+            timed_out_example_ids.append(example_id)
+
+    sorted_durations = sorted(timeout_durations)
+    return {
+        "examples_total": examples_total,
+        "successful_examples": successful_examples,
+        "error_attempts": error_attempts,
+        "timeout_attempts": timeout_attempts,
+        "timeout_examples": timeout_examples,
+        "non_timeout_error_attempts": non_timeout_error_attempts,
+        "near_limit_timeout_attempts": near_limit_timeout_attempts,
+        "timeout_duration_median": _percentile_linear(sorted_durations, 0.5),
+        "timeout_duration_p95": _percentile_linear(sorted_durations, 0.95),
+        "timed_out_example_ids": sorted(set(timed_out_example_ids)),
+    }
+
+
+def _cleanup_timeout_probe_metrics_artifacts(output_path: str) -> None:
+    """Delete probe-only metric artifacts to avoid polluting regular leaderboard datasets."""
+    probe_artifacts = (
+        build_artifact_path(output_path, "_metrics.json", DEFAULT_METRICS_DIR),
+        build_artifact_path(output_path, "_confusion_heatmap.png", DEFAULT_METRICS_DIR),
+        build_artifact_path(output_path, "_calibration.png", DEFAULT_METRICS_DIR),
+    )
+    for path in probe_artifacts:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                logging.debug("Unable to remove timeout probe artifact: %s", path)
+
+
+def _compute_timeout_id_stability(results: List[TimeoutProbeRunResult]) -> float:
+    """Return overlap ratio between intersection and union of timeout IDs across runs."""
+    if not results:
+        return 0.0
+    id_sets = [set(item.timed_out_example_ids) for item in results]
+    union_ids: set[str] = set().union(*id_sets) if id_sets else set()
+    if not union_ids:
+        return 0.0
+    intersection_ids = set(id_sets[0])
+    for current in id_sets[1:]:
+        intersection_ids &= current
+    return len(intersection_ids) / len(union_ids)
+
+
+def _run_timeout_probe(
+    *,
+    args: argparse.Namespace,
+    input_path: str,
+    provider: str,
+    api_key: str,
+    api_base_url: Optional[str],
+    access_token_provider: Optional[AccessTokenProvider],
+    include_explanation: bool,
+    label_map: Optional[Dict[str, str]],
+    invocation_command: str,
+    invocation_tokens: List[str],
+) -> int:
+    """Execute a controlled timeout probe matrix and print a compact diagnosis."""
+    if len(args.input) != 1:
+        raise ValueError("--timeout_probe currently supports exactly one --input file.")
+
+    probe_output_dir = resolve_user_path(args.timeout_probe_output_dir)
+    os.makedirs(probe_output_dir, exist_ok=True)
+
+    probe_timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    input_stem = os.path.splitext(os.path.basename(input_path))[0]
+    model_slug = sanitize_model_identifier(args.model or "model")
+    provider_slug = sanitize_model_identifier(provider or "provider")
+    subset_path = os.path.join(
+        probe_output_dir,
+        f"{input_stem}__timeout_probe_input__{probe_timestamp}.csv",
+    )
+    subset_rows = _build_timeout_probe_subset(input_path, subset_path, args.timeout_probe_size)
+    logging.info(
+        "Timeout probe subset created: %s (%d rows sampled from %s).",
+        subset_path,
+        subset_rows,
+        input_path,
+    )
+
+    current_timeout = args.request_timeout_seconds if args.request_timeout_seconds and args.request_timeout_seconds > 0 else None
+    scenarios: List[TimeoutProbeScenario] = [
+        TimeoutProbeScenario(
+            name="low_pressure",
+            threads=1,
+            request_timeout_seconds=TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS,
+            max_retries=1,
+            retry_delay=0.0,
+            request_interval_ms=300,
+        ),
+        TimeoutProbeScenario(
+            name="current",
+            threads=max(1, int(args.threads)),
+            request_timeout_seconds=current_timeout,
+            max_retries=max(1, int(args.max_retries)),
+            retry_delay=max(0.0, float(args.retry_delay)),
+            request_interval_ms=max(0, int(args.request_interval_ms)),
+        ),
+    ]
+    if args.timeout_probe_relaxed:
+        relaxed_timeout = current_timeout if current_timeout is not None else TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS
+        relaxed_timeout = max(TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS, relaxed_timeout)
+        scenarios.append(
+            TimeoutProbeScenario(
+                name="relaxed_timeout",
+                threads=max(1, int(args.threads)),
+                request_timeout_seconds=relaxed_timeout,
+                max_retries=max(1, int(args.max_retries)),
+                retry_delay=max(0.0, float(args.retry_delay)),
+                request_interval_ms=max(0, int(args.request_interval_ms)),
+            )
+        )
+
+    deduped_scenarios: List[TimeoutProbeScenario] = []
+    seen_profiles: set[Tuple[int, Optional[float], int, float, int]] = set()
+    for scenario in scenarios:
+        profile = (
+            scenario.threads,
+            scenario.request_timeout_seconds,
+            scenario.max_retries,
+            scenario.retry_delay,
+            scenario.request_interval_ms,
+        )
+        if profile in seen_profiles:
+            continue
+        seen_profiles.add(profile)
+        deduped_scenarios.append(scenario)
+    scenarios = deduped_scenarios
+
+    repeats = max(1, int(args.timeout_probe_repeats))
+    logging.info(
+        "Timeout probe plan: %d scenario(s) x %d repeat(s) on %d sampled row(s).",
+        len(scenarios),
+        repeats,
+        subset_rows,
+    )
+
+    all_results: List[TimeoutProbeRunResult] = []
+    for scenario in scenarios:
+        for repeat_index in range(1, repeats + 1):
+            run_stamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            output_path = os.path.join(
+                probe_output_dir,
+                (
+                    f"timeout_probe__{input_stem}__{provider_slug}__{model_slug}"
+                    f"__{scenario.name}__r{repeat_index}__{run_stamp}.csv"
+                ),
+            )
+            run_args = argparse.Namespace(**vars(args))
+            run_args.threads = scenario.threads
+            run_args.request_timeout_seconds = (
+                scenario.request_timeout_seconds if scenario.request_timeout_seconds is not None else 0.0
+            )
+            run_args.max_retries = scenario.max_retries
+            run_args.retry_delay = scenario.retry_delay
+            run_args.request_interval_ms = scenario.request_interval_ms
+            run_args.reprompt_unclassified = False
+            run_args.calibration = False
+
+            logging.info(
+                "Timeout probe run %s repeat %d/%d -> threads=%d timeout=%s retries=%d retry_delay=%.1fs request_interval_ms=%d",
+                scenario.name,
+                repeat_index,
+                repeats,
+                scenario.threads,
+                (
+                    f"{scenario.request_timeout_seconds:.1f}s"
+                    if scenario.request_timeout_seconds is not None
+                    else "disabled"
+                ),
+                scenario.max_retries,
+                scenario.retry_delay,
+                scenario.request_interval_ms,
+            )
+
+            connector = OpenAIConnector(
+                api_key=api_key,
+                base_url=api_base_url,
+                provider=provider,
+                request_interval_ms=scenario.request_interval_ms,
+                request_timeout_seconds=scenario.request_timeout_seconds,
+                access_token_provider=access_token_provider,
+            )
+
+            started_at = time.perf_counter()
+            _, _, _, halted_by_quota = process_dataset(
+                connector=connector,
+                input_path=subset_path,
+                output_path=output_path,
+                args=run_args,
+                include_explanation=include_explanation,
+                calibration_enabled=False,
+                label_map=label_map,
+                resolved_api_base_url=api_base_url,
+                validator_client=None,
+                before_example_hook=None,
+                run_command=(
+                    f"{invocation_command}  # timeout_probe scenario={scenario.name} repeat={repeat_index}"
+                ),
+                run_command_argv=invocation_tokens,
+            )
+            elapsed_seconds = time.perf_counter() - started_at
+            log_path = build_artifact_path(output_path, ".log", DEFAULT_LOGS_DIR)
+            run_stats = _collect_timeout_probe_run_stats(log_path, scenario.request_timeout_seconds)
+            run_result = TimeoutProbeRunResult(
+                scenario=scenario.name,
+                repeat_index=repeat_index,
+                output_path=output_path,
+                log_path=log_path,
+                elapsed_seconds=elapsed_seconds,
+                total_examples=int(run_stats["examples_total"]),
+                successful_examples=int(run_stats["successful_examples"]),
+                error_attempts=int(run_stats["error_attempts"]),
+                timeout_attempts=int(run_stats["timeout_attempts"]),
+                timeout_examples=int(run_stats["timeout_examples"]),
+                non_timeout_error_attempts=int(run_stats["non_timeout_error_attempts"]),
+                near_limit_timeout_attempts=int(run_stats["near_limit_timeout_attempts"]),
+                timeout_duration_median=(
+                    float(run_stats["timeout_duration_median"])
+                    if run_stats["timeout_duration_median"] is not None
+                    else None
+                ),
+                timeout_duration_p95=(
+                    float(run_stats["timeout_duration_p95"])
+                    if run_stats["timeout_duration_p95"] is not None
+                    else None
+                ),
+                timed_out_example_ids=list(run_stats["timed_out_example_ids"]),
+            )
+            all_results.append(run_result)
+            _cleanup_timeout_probe_metrics_artifacts(output_path)
+
+            near_limit_ratio = (
+                (run_result.near_limit_timeout_attempts / run_result.timeout_attempts)
+                if run_result.timeout_attempts > 0
+                else 0.0
+            )
+            logging.info(
+                "Timeout probe result %s r%d -> timeout_examples=%d/%d timeout_attempts=%d near_limit=%.1f%% non_timeout_errors=%d runtime=%.2fs",
+                run_result.scenario,
+                run_result.repeat_index,
+                run_result.timeout_examples,
+                run_result.total_examples,
+                run_result.timeout_attempts,
+                near_limit_ratio * 100.0,
+                run_result.non_timeout_error_attempts,
+                run_result.elapsed_seconds,
+            )
+
+            if halted_by_quota:
+                logging.error(
+                    "Timeout probe stopped early due to provider quota/rate-limit exhaustion."
+                )
+                return 2
+
+    grouped: Dict[str, List[TimeoutProbeRunResult]] = defaultdict(list)
+    for run in all_results:
+        grouped[run.scenario].append(run)
+
+    logging.info("Timeout probe diagnosis:")
+    scenario_summary: Dict[str, Dict[str, Any]] = {}
+    for scenario in scenarios:
+        items = grouped.get(scenario.name, [])
+        if not items:
+            continue
+        count = len(items)
+        avg_timeout_examples = sum(item.timeout_examples for item in items) / count
+        avg_timeout_attempts = sum(item.timeout_attempts for item in items) / count
+        avg_non_timeout_errors = sum(item.non_timeout_error_attempts for item in items) / count
+        total_timeout_attempts = sum(item.timeout_attempts for item in items)
+        total_near_limit = sum(item.near_limit_timeout_attempts for item in items)
+        near_limit_ratio = (total_near_limit / total_timeout_attempts) if total_timeout_attempts > 0 else 0.0
+        timeout_id_stability = _compute_timeout_id_stability(items)
+        scenario_summary[scenario.name] = {
+            "runs": count,
+            "avg_timeout_examples": avg_timeout_examples,
+            "avg_timeout_attempts": avg_timeout_attempts,
+            "avg_non_timeout_errors": avg_non_timeout_errors,
+            "near_limit_ratio": near_limit_ratio,
+            "timeout_id_stability": timeout_id_stability,
+            "sample_size": items[0].total_examples if items else 0,
+        }
+        logging.info(
+            "  %s -> runs=%d avg_timeout_examples=%.2f/%d avg_timeout_attempts=%.2f near_limit=%.1f%% timeout_id_stability=%.1f%% avg_non_timeout_errors=%.2f",
+            scenario.name,
+            count,
+            avg_timeout_examples,
+            items[0].total_examples if items else 0,
+            avg_timeout_attempts,
+            near_limit_ratio * 100.0,
+            timeout_id_stability * 100.0,
+            avg_non_timeout_errors,
+        )
+
+    diagnosis_lines: List[str] = []
+    low = scenario_summary.get("low_pressure")
+    current = scenario_summary.get("current")
+    relaxed = scenario_summary.get("relaxed_timeout")
+
+    if low and current:
+        if low["avg_timeout_examples"] <= 1.0 and current["avg_timeout_examples"] >= max(2.0, low["avg_timeout_examples"] * 2.0):
+            diagnosis_lines.append(
+                "Current profile times out much more than low-pressure profile. This points to local request pressure (threads/interval/short timeout) rather than data-specific failures."
+            )
+        elif low["avg_timeout_examples"] > 0 and low["timeout_id_stability"] >= 0.6:
+            diagnosis_lines.append(
+                "The same examples time out repeatedly even under low pressure. This points to data/prompt-specific slow cases."
+            )
+        elif low["avg_timeout_examples"] > 0 and low["timeout_id_stability"] < 0.3:
+            diagnosis_lines.append(
+                "Timeout IDs vary between low-pressure repeats. This points to transient provider/network slowness."
+            )
+
+    if current and relaxed and current["avg_timeout_examples"] >= 1.0:
+        if relaxed["avg_timeout_examples"] <= current["avg_timeout_examples"] * 0.5:
+            diagnosis_lines.append(
+                "Relaxing only the timeout threshold reduces timeouts substantially. Responses are likely arriving, but slower than the current timeout limit."
+            )
+
+    near_limit_candidates = [entry for entry in (low, current, relaxed) if entry]
+    if near_limit_candidates:
+        max_near_limit = max(entry["near_limit_ratio"] for entry in near_limit_candidates)
+        if max_near_limit >= 0.7:
+            diagnosis_lines.append(
+                "Most timeout attempts reached the client timeout limit, indicating slow completions rather than immediate hard provider failures."
+            )
+
+    if not diagnosis_lines:
+        diagnosis_lines.append(
+            "Timeout patterns are mixed. Re-run the probe later; if timeout IDs remain stable across repeats, treat as data/prompt-specific, otherwise treat as transient slowness."
+        )
+
+    for line in diagnosis_lines:
+        logging.info("  - %s", line)
+
+    summary_path = os.path.join(
+        probe_output_dir,
+        f"timeout_probe_summary__{input_stem}__{provider_slug}__{model_slug}__{probe_timestamp}.json",
+    )
+    summary_payload = {
+        "probe_subset_path": subset_path,
+        "probe_subset_rows": subset_rows,
+        "input_path": input_path,
+        "provider": provider,
+        "model": args.model,
+        "scenarios": [scenario.name for scenario in scenarios],
+        "repeats": repeats,
+        "scenario_summary": scenario_summary,
+        "diagnosis": diagnosis_lines,
+        "runs": [
+            {
+                "scenario": item.scenario,
+                "repeat_index": item.repeat_index,
+                "output_path": item.output_path,
+                "log_path": item.log_path,
+                "elapsed_seconds": item.elapsed_seconds,
+                "total_examples": item.total_examples,
+                "successful_examples": item.successful_examples,
+                "error_attempts": item.error_attempts,
+                "timeout_attempts": item.timeout_attempts,
+                "timeout_examples": item.timeout_examples,
+                "non_timeout_error_attempts": item.non_timeout_error_attempts,
+                "near_limit_timeout_attempts": item.near_limit_timeout_attempts,
+                "timeout_duration_median": item.timeout_duration_median,
+                "timeout_duration_p95": item.timeout_duration_p95,
+                "timed_out_example_ids": item.timed_out_example_ids,
+            }
+            for item in all_results
+        ],
+    }
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        json.dump(summary_payload, handle, indent=2, ensure_ascii=False)
+    logging.info("Timeout probe summary saved to %s", summary_path)
     return 0
 
 
@@ -6914,6 +7444,47 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Maximum number of per-example error rows shown by --summarize-log-errors.",
     )
     parser.add_argument(
+        "--timeout_probe",
+        action="store_true",
+        help=(
+            "Run an automated timeout diagnosis matrix on a fixed subset of the input file "
+            "and exit. This mode runs multiple short benchmark passes with different timeout/"
+            "concurrency profiles and prints a compact diagnosis."
+        ),
+    )
+    parser.add_argument(
+        "--timeout_probe_size",
+        type=int,
+        default=DEFAULT_TIMEOUT_PROBE_SAMPLE_SIZE,
+        help=(
+            "Number of input rows sampled for --timeout_probe (default: 60)."
+        ),
+    )
+    parser.add_argument(
+        "--timeout_probe_repeats",
+        type=int,
+        default=DEFAULT_TIMEOUT_PROBE_REPEATS,
+        help=(
+            "Repetitions per timeout-probe scenario (default: 2)."
+        ),
+    )
+    parser.add_argument(
+        "--timeout_probe_output_dir",
+        default=DEFAULT_TIMEOUT_PROBE_OUTPUT_DIR,
+        help=(
+            "Directory for timeout-probe subset/output/log artifacts."
+        ),
+    )
+    parser.add_argument(
+        "--timeout_probe_relaxed",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include a relaxed-timeout scenario in --timeout_probe runs "
+            "(default: enabled)."
+        ),
+    )
+    parser.add_argument(
         "--metrics_only",
         "--metrics-only",
         dest="metrics_only",
@@ -6955,6 +7526,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--metrics_only and --update-models cannot be used together.")
     if args.metrics_only and args.summarize_log_errors:
         parser.error("--metrics_only and --summarize-log-errors cannot be used together.")
+    if args.timeout_probe and args.update_models:
+        parser.error("--timeout_probe and --update-models cannot be used together.")
+    if args.timeout_probe and args.summarize_log_errors:
+        parser.error("--timeout_probe and --summarize-log-errors cannot be used together.")
+    if args.timeout_probe and args.metrics_only:
+        parser.error("--timeout_probe and --metrics_only cannot be used together.")
     if args.update_models:
         return update_model_catalog(args.models_providers, resolve_user_path(args.models_output))
     if args.summarize_log_errors:
@@ -6964,7 +7541,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     if not args.input:
-        parser.error("--input is required unless --update-models or --summarize-log-errors is specified.")
+        parser.error(
+            "--input is required unless --update-models or --summarize-log-errors is specified."
+        )
 
     if not args.metrics_only and not args.model:
         parser.error(
@@ -6973,6 +7552,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
+    if args.timeout_probe_size <= 0:
+        parser.error("--timeout_probe_size must be > 0.")
+    if args.timeout_probe_repeats <= 0:
+        parser.error("--timeout_probe_repeats must be > 0.")
+    if args.timeout_probe and len(args.input) != 1:
+        parser.error("--timeout_probe currently supports exactly one --input file.")
+    if args.timeout_probe and args.create_gemini_cache:
+        parser.error(
+            "--timeout_probe is currently incompatible with --create_gemini_cache. "
+            "Use --gemini_cached_content if you need an existing Gemini cache in probe mode."
+        )
     if args.gemini_cache_ttl <= 0:
         parser.error("--gemini_cache_ttl must be > 0.")
     if args.request_timeout_seconds is not None and not math.isfinite(args.request_timeout_seconds):
@@ -7177,6 +7767,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         label_map = read_label_file(labels_path)
     else:
         logging.info("Using truth column embedded in the input files.")
+
+    if args.timeout_probe:
+        if args.output:
+            logging.warning(
+                "--output is ignored in --timeout_probe mode. Artifacts are written to %s.",
+                resolve_user_path(args.timeout_probe_output_dir),
+            )
+        if args.reprompt_unclassified:
+            logging.warning("--unclassified is ignored in --timeout_probe mode.")
+        if args.calibration:
+            logging.warning("--calibration is ignored in --timeout_probe mode.")
+        if args.validator_cmd:
+            logging.warning("--validator_cmd is ignored in --timeout_probe mode.")
+        return _run_timeout_probe(
+            args=args,
+            input_path=input_paths[0],
+            provider=provider,
+            api_key=api_key,
+            api_base_url=api_base_url,
+            access_token_provider=access_token_provider,
+            include_explanation=include_explanation,
+            label_map=label_map,
+            invocation_command=invocation_command,
+            invocation_tokens=invocation_tokens,
+        )
 
     calibration_enabled = args.calibration
     if calibration_enabled and not ensure_calibration_dependencies():
