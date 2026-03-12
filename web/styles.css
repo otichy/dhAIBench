@@ -694,6 +694,16 @@ select[multiple] {
   align-items: center;
 }
 
+.bar-row-top {
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.bar-row-worst {
+  border: 1px solid color-mix(in srgb, var(--accent-2) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 9%, transparent);
+}
+
 .bar-row.chart-clickable {
   cursor: pointer;
   border-radius: 12px;
@@ -716,6 +726,42 @@ select[multiple] {
   font-size: 0.82rem;
 }
 
+.bar-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-label-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.bar-label-badge {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.57rem;
+  letter-spacing: 0.05em;
+  padding: 0.08rem 0.36rem;
+  line-height: 1.1;
+}
+
+.bar-label-badge-top {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: color-mix(in srgb, var(--accent) 80%, white 20%);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.bar-label-badge-worst {
+  border-color: color-mix(in srgb, var(--accent-2) 75%, transparent);
+  color: color-mix(in srgb, var(--accent-2) 82%, white 18%);
+  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+}
+
 .bar-track {
   background: var(--bar-track);
   border-radius: 999px;
@@ -730,9 +776,67 @@ select[multiple] {
 }
 
 .bar-fill {
+  position: relative;
+  z-index: 1;
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-3));
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.bar-reference-band {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 75%, transparent);
+  background: color-mix(in srgb, var(--line-strong) 28%, transparent);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bar-distribution {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.bar-distribution-whisker {
+  position: absolute;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: color-mix(in srgb, var(--ink) 58%, transparent);
+  opacity: 0.56;
+}
+
+.bar-distribution-box {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-3) 70%, transparent);
+  background: color-mix(in srgb, var(--accent-3) 24%, transparent);
+}
+
+.bar-distribution-median {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 1.5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 85%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--paper-strong) 65%, transparent);
+}
+
+.bar-distribution-tick {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 62%, transparent);
+  opacity: 0.65;
 }
 
 .bar-track-label {
@@ -779,7 +883,7 @@ html[data-theme="light"] .bar-track-label {
   background: color-mix(in srgb, var(--accent-2) 25%, transparent);
   border-radius: 999px;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4;
 }
 
 .bar-value {

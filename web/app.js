@@ -1087,6 +1087,40 @@ function formatCiRange(ci) {
   return ` | CI ${formatNum(ci.low, 2)}-${formatNum(ci.high, 2)}%`;
 }
 
+function quantileSorted(sortedValues, q) {
+  if (!Array.isArray(sortedValues) || !sortedValues.length) {
+    return null;
+  }
+  const clampedQ = Math.max(0, Math.min(1, q));
+  const index = (sortedValues.length - 1) * clampedQ;
+  const lowIndex = Math.floor(index);
+  const highIndex = Math.ceil(index);
+  const lowValue = sortedValues[lowIndex];
+  const highValue = sortedValues[highIndex];
+  if (lowIndex === highIndex) {
+    return lowValue;
+  }
+  const weight = index - lowIndex;
+  return lowValue + (highValue - lowValue) * weight;
+}
+
+function getDistributionStats(values) {
+  const numeric = (values || [])
+    .filter((value) => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (!numeric.length) {
+    return null;
+  }
+  return {
+    min: numeric[0],
+    q1: quantileSorted(numeric, 0.25),
+    median: quantileSorted(numeric, 0.5),
+    q3: quantileSorted(numeric, 0.75),
+    max: numeric[numeric.length - 1],
+    values: numeric,
+  };
+}
+
 function getFilteredRuns() {
   const selectedTasks = state.selectedTasks;
   const selectedModels = state.selectedModels;
@@ -1218,14 +1252,30 @@ function renderKpis(runs) {
   els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in view (${modelScope}).`;
 }
 
-function createBarRow(label, value, max, formatter, colorClass, onClick, ci = null, insideBarText = "") {
+function createBarRow(
+  label,
+  value,
+  max,
+  formatter,
+  colorClass,
+  onClick,
+  ci = null,
+  insideBarText = "",
+  options = {}
+) {
   const node = els.barRowTemplate.content.firstElementChild.cloneNode(true);
   const labelEl = node.querySelector(".bar-label");
   const trackEl = node.querySelector(".bar-track");
   const fillEl = node.querySelector(".bar-fill");
   const valueEl = node.querySelector(".bar-value");
-  labelEl.textContent = label;
+  const labelText = asTrimmedString(label);
+  labelEl.textContent = labelText;
   labelEl.title = label;
+
+  const rowClass = asTrimmedString(options.rowClass);
+  if (rowClass) {
+    node.classList.add(rowClass);
+  }
 
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
   fillEl.style.width = `${ratio * 100}%`;
@@ -1234,6 +1284,86 @@ function createBarRow(label, value, max, formatter, colorClass, onClick, ci = nu
     fillEl.style.background = "linear-gradient(90deg, #f59e0b, #ea580c)";
   } else if (colorClass === "blue") {
     fillEl.style.background = "linear-gradient(90deg, #2563eb, #1e3a8a)";
+  }
+
+  const badges = Array.isArray(options.badges) ? options.badges.filter((badge) => asTrimmedString(badge)) : [];
+  if (badges.length) {
+    labelEl.textContent = "";
+    const textNode = document.createElement("span");
+    textNode.className = "bar-label-text";
+    textNode.textContent = labelText;
+    labelEl.appendChild(textNode);
+    const badgesWrap = document.createElement("span");
+    badgesWrap.className = "bar-label-badges";
+    badges.forEach((badge) => {
+      const token = document.createElement("span");
+      token.className = `bar-label-badge bar-label-badge-${String(badge).toLowerCase()}`;
+      token.textContent = badge;
+      badgesWrap.appendChild(token);
+    });
+    labelEl.appendChild(badgesWrap);
+  }
+
+  const referenceBand = options.referenceBand;
+  if (
+    referenceBand &&
+    typeof referenceBand.low === "number" &&
+    Number.isFinite(referenceBand.low) &&
+    typeof referenceBand.high === "number" &&
+    Number.isFinite(referenceBand.high) &&
+    max > 0
+  ) {
+    const lowClamped = Math.max(0, Math.min(max, referenceBand.low));
+    const highClamped = Math.max(lowClamped, Math.min(max, referenceBand.high));
+    const bandEl = document.createElement("span");
+    bandEl.className = "bar-reference-band";
+    bandEl.style.left = `${(lowClamped / max) * 100}%`;
+    bandEl.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.8)}%`;
+    bandEl.title = `Grouped IQR ${formatNum(lowClamped, 2)}-${formatNum(highClamped, 2)}%`;
+    trackEl.appendChild(bandEl);
+  }
+
+  const distribution = options.distribution;
+  if (distribution && distribution.values && Array.isArray(distribution.values) && distribution.values.length && max > 0) {
+    const distributionWrap = document.createElement("span");
+    distributionWrap.className = "bar-distribution";
+    const stats = getDistributionStats(distribution.values);
+    if (stats) {
+      const lowClamped = Math.max(0, Math.min(max, stats.min));
+      const highClamped = Math.max(lowClamped, Math.min(max, stats.max));
+      const whiskerEl = document.createElement("span");
+      whiskerEl.className = "bar-distribution-whisker";
+      whiskerEl.style.left = `${(lowClamped / max) * 100}%`;
+      whiskerEl.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.5)}%`;
+      distributionWrap.appendChild(whiskerEl);
+
+      const q1Clamped = Math.max(0, Math.min(max, stats.q1));
+      const q3Clamped = Math.max(q1Clamped, Math.min(max, stats.q3));
+      const boxEl = document.createElement("span");
+      boxEl.className = "bar-distribution-box";
+      boxEl.style.left = `${(q1Clamped / max) * 100}%`;
+      boxEl.style.width = `${Math.max(((q3Clamped - q1Clamped) / max) * 100, 0.8)}%`;
+      distributionWrap.appendChild(boxEl);
+
+      const medianClamped = Math.max(0, Math.min(max, stats.median));
+      const medianEl = document.createElement("span");
+      medianEl.className = "bar-distribution-median";
+      medianEl.style.left = `${(medianClamped / max) * 100}%`;
+      distributionWrap.appendChild(medianEl);
+
+      stats.values.forEach((entryValue) => {
+        const clamped = Math.max(0, Math.min(max, entryValue));
+        const tick = document.createElement("span");
+        tick.className = "bar-distribution-tick";
+        tick.style.left = `${(clamped / max) * 100}%`;
+        distributionWrap.appendChild(tick);
+      });
+      distributionWrap.title = `Runs: min ${formatNum(stats.min, 2)}%, median ${formatNum(stats.median, 2)}%, max ${formatNum(
+        stats.max,
+        2
+      )}%`;
+      trackEl.appendChild(distributionWrap);
+    }
   }
 
   const insideLabel = asTrimmedString(insideBarText);
@@ -1371,6 +1501,21 @@ function renderLeaderboardChart(container, runs) {
     return a.label.localeCompare(b.label);
   });
 
+  const groupedEntries = entries.filter((entry) => entry.type === "group");
+  const groupedStats = getDistributionStats(groupedEntries.map((entry) => entry.score));
+  const topGroupKey = groupedEntries.length ? groupedEntries[0].key : null;
+  const worstGroupKey = groupedEntries.length > 1 ? groupedEntries[groupedEntries.length - 1].key : null;
+
+  if (groupedEntries.length) {
+    const groupedSummary = document.createElement("p");
+    groupedSummary.className = "leaderboard-ci-note muted";
+    groupedSummary.textContent =
+      groupedEntries.length > 1
+        ? "Grouped rows include TOP/WORST markers, run distribution overlays, and grouped IQR bands."
+        : "Grouped rows include run distribution overlays with CI.";
+    container.appendChild(groupedSummary);
+  }
+
   const maxScore = Math.max(...entries.map((entry) => entry.score), 1);
   entries.forEach((entry) => {
     if (entry.type === "run") {
@@ -1383,7 +1528,8 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(entry.run),
           entry.ci,
-          hasMultipleTasks ? entry.run.task : ""
+          hasMultipleTasks ? entry.run.task : "",
+          {}
         )
       );
       return;
@@ -1403,6 +1549,23 @@ function renderLeaderboardChart(container, runs) {
 
     const summary = document.createElement("summary");
     summary.className = "leaderboard-summary";
+    const isTopGroup = topGroupKey && entry.key === topGroupKey;
+    const isWorstGroup = worstGroupKey && entry.key === worstGroupKey;
+    const badges = [];
+    if (isTopGroup) {
+      badges.push("TOP");
+    } else if (isWorstGroup) {
+      badges.push("WORST");
+    }
+    const distributionValues = entry.runs
+      .map((run) => getMetricValueForRun(run, metricKey))
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    let rowClass = "";
+    if (isTopGroup) {
+      rowClass = "bar-row-top";
+    } else if (isWorstGroup) {
+      rowClass = "bar-row-worst";
+    }
     summary.appendChild(
       createBarRow(
         `${entry.label} (${entry.runs.length})`,
@@ -1412,7 +1575,16 @@ function renderLeaderboardChart(container, runs) {
         null,
         null,
         entry.ci,
-        hasMultipleTasks ? getConcatenatedTaskLabel(entry.runs) : ""
+        hasMultipleTasks ? getConcatenatedTaskLabel(entry.runs) : "",
+        {
+          badges,
+          rowClass,
+          distribution: distributionValues.length ? { values: distributionValues } : null,
+          referenceBand:
+            groupedStats && typeof groupedStats.q1 === "number" && typeof groupedStats.q3 === "number"
+              ? { low: groupedStats.q1, high: groupedStats.q3 }
+              : null,
+        }
       )
     );
     details.appendChild(summary);
@@ -1430,7 +1602,8 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(run),
           runCi,
-          hasMultipleTasks ? run.task : ""
+          hasMultipleTasks ? run.task : "",
+          {}
         )
       );
     });
@@ -1575,7 +1748,10 @@ function renderBestByTask(container, runs) {
         max,
         (value) => formatMetric(metricKey, value),
         "warm",
-        () => openRunModal(run)
+        () => openRunModal(run),
+        null,
+        "",
+        {}
       )
     );
   });
