@@ -794,6 +794,39 @@ def is_request_timeout_error(exc: BaseException) -> bool:
     return any(marker in text for marker in markers)
 
 
+def is_retryable_provider_cancellation_error(exc: BaseException) -> bool:
+    """Detect transient provider-side cancellations (for example HTTP 499/CANCELLED)."""
+    status_code: Optional[int] = None
+    for attr_name in ("status_code", "status", "http_status", "code"):
+        raw_value = getattr(exc, attr_name, None)
+        if raw_value is None:
+            continue
+        try:
+            status_code = int(str(raw_value).strip())
+            break
+        except (TypeError, ValueError):
+            continue
+
+    if status_code == 499:
+        return True
+
+    text = str(exc).strip().lower()
+    if not text:
+        return False
+    markers = (
+        "operation was cancelled",
+        "operation was canceled",
+        "request cancelled",
+        "request canceled",
+        "status': 'cancelled'",
+        '"status": "cancelled"',
+        " status cancelled",
+        " code: 499",
+        "http/1.1 499",
+    )
+    return any(marker in text for marker in markers)
+
+
 def is_retryable_provider_server_error(exc: BaseException) -> bool:
     """Best-effort detection for transient provider-side 5xx/server failures."""
     status_code: Optional[int] = None
@@ -5834,6 +5867,7 @@ def classify_example(
             resource_exhausted_error = is_retryable_resource_exhausted_error(exc)
             empty_response_error = is_empty_model_response_error(exc)
             timeout_error = is_request_timeout_error(exc)
+            provider_cancellation_error = is_retryable_provider_cancellation_error(exc)
             provider_server_error = is_retryable_provider_server_error(exc)
             malformed_response_error = is_malformed_model_response_error(exc)
             request_timeout_seconds = connector.request_timeout_seconds
@@ -5857,6 +5891,8 @@ def classify_example(
             log_entry["error_type"] = exc.__class__.__name__
             if resource_exhausted_error:
                 log_entry["error_category"] = "resource_exhausted"
+            elif provider_cancellation_error:
+                log_entry["error_category"] = "provider_cancellation"
             elif timeout_error:
                 log_entry["error_category"] = "request_timeout"
             elif provider_server_error:
@@ -5865,11 +5901,12 @@ def classify_example(
                 log_entry["error_category"] = "malformed_provider_response"
             log_entry["error"] = str(exc)
             interaction_logs.append(log_entry)
-            attempt_limit = (
+            attempt_limit_base = (
                 len(RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS) + 1
                 if resource_exhausted_error
                 else max_retries
             )
+            attempt_limit = max(attempt, attempt_limit_base)
             logging.warning(
                 "Attempt %d/%d failed for example %s after %.2fs: %s",
                 attempt,
@@ -5894,6 +5931,14 @@ def classify_example(
                     time.sleep(wait_seconds)
                     continue
                 break
+            if provider_cancellation_error and attempt < max_retries:
+                logging.warning(
+                    "Provider cancelled request for example %s; waiting %.0f seconds before retry.",
+                    example.example_id,
+                    retry_delay,
+                )
+                time.sleep(retry_delay)
+                continue
             if attempt < max_retries:
                 if empty_response_error:
                     logging.warning(
@@ -5965,6 +6010,32 @@ def classify_example(
             node_echo=None,
             span_source=None,
             validator_status="accepted_after_request_timeout",
+            validator_reason=detail,
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+        ), interaction_logs
+    if is_retryable_provider_cancellation_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        logging.error(
+            "Provider cancelled request for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence. Detail: %s",
+            example.example_id,
+            max_retries,
+            detail,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_provider_cancellation",
             validator_reason=detail,
             shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
             variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
