@@ -57,6 +57,10 @@ MANDATORY_SYSTEM_APPEND = (
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
 RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS: Tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+GEMINI_CACHE_HTTP_FALLBACK_TIMEOUT_SECONDS = 60.0
+GEMINI_CACHE_CREATE_MAX_ATTEMPTS = 3
+GEMINI_CACHE_CREATE_RETRY_BASE_DELAY_SECONDS = 2.0
+GEMINI_CACHE_CREATE_RETRY_MAX_DELAY_SECONDS = 15.0
 GEMINI_CACHE_TTL_AUTOUPDATE_LEAD_SECONDS = 3600
 GEMINI_CACHE_TTL_AUTOUPDATE_MIN_INTERVAL_SECONDS = 300
 MAX_CACHE_PADDING_TOKENS = 200_000
@@ -2382,12 +2386,29 @@ def _build_gemini_cache_resource_endpoint_and_headers(
     return endpoint, headers
 
 
+def _resolve_gemini_cache_http_timeout_seconds(
+    request_timeout_seconds: Optional[float],
+) -> float:
+    """Normalize timeout used for Gemini cache control REST calls."""
+    if request_timeout_seconds is None:
+        return GEMINI_CACHE_HTTP_FALLBACK_TIMEOUT_SECONDS
+    try:
+        parsed = float(request_timeout_seconds)
+    except (TypeError, ValueError):
+        return GEMINI_CACHE_HTTP_FALLBACK_TIMEOUT_SECONDS
+    if not math.isfinite(parsed) or parsed <= 0:
+        return GEMINI_CACHE_HTTP_FALLBACK_TIMEOUT_SECONDS
+    return parsed
+
+
 def create_gemini_cached_content(
     api_key: str,
     api_base_url: Optional[str],
     model: str,
     system_prompt: str,
     ttl_seconds: int,
+    request_timeout_seconds: Optional[float] = None,
+    max_attempts: int = GEMINI_CACHE_CREATE_MAX_ATTEMPTS,
 ) -> str:
     """Create a Gemini CachedContent resource from a system prompt.
 
@@ -2423,36 +2444,76 @@ def create_gemini_cached_content(
         headers=headers,
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
-        safe_endpoint = _safe_endpoint_for_error(endpoint)
-        hint = ""
-        if (
-            exc.code == 404
-            and not _is_vertex_gemini_caching_target(api_base_url)
-            and not _is_google_ai_studio_caching_target(api_base_url)
-        ):
-            hint = (
-                " The configured API base does not look like a direct Google/Vertex "
-                "Gemini endpoint that supports CachedContent creation."
+    request_timeout = _resolve_gemini_cache_http_timeout_seconds(request_timeout_seconds)
+    attempts_total = max(1, int(max_attempts))
+
+    for attempt_index in range(1, attempts_total + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            name = payload.get("name")
+            if not name:
+                raise RuntimeError(
+                    f"Gemini CachedContent creation response did not include a name: {payload}"
+                )
+            return str(name)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            safe_endpoint = _safe_endpoint_for_error(endpoint)
+            hint = ""
+            if (
+                exc.code == 404
+                and not _is_vertex_gemini_caching_target(api_base_url)
+                and not _is_google_ai_studio_caching_target(api_base_url)
+            ):
+                hint = (
+                    " The configured API base does not look like a direct Google/Vertex "
+                    "Gemini endpoint that supports CachedContent creation."
+                )
+            runtime_error = RuntimeError(
+                (
+                    "Gemini CachedContent creation failed at "
+                    f"{safe_endpoint}: HTTP {exc.code} {exc.reason or ''} {detail}{hint}"
+                ).strip()
             )
-        raise RuntimeError(
-            (
-                "Gemini CachedContent creation failed at "
-                f"{safe_endpoint}: HTTP {exc.code} {exc.reason or ''} {detail}{hint}"
-            ).strip()
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Gemini CachedContent creation failed: {exc}") from exc
-    name = payload.get("name")
-    if not name:
-        raise RuntimeError(
-            f"Gemini CachedContent creation response did not include a name: {payload}"
-        )
-    return str(name)
+            retryable_http = exc.code in {408, 429} or 500 <= int(exc.code) <= 599
+            if retryable_http and attempt_index < attempts_total:
+                sleep_seconds = min(
+                    GEMINI_CACHE_CREATE_RETRY_MAX_DELAY_SECONDS,
+                    GEMINI_CACHE_CREATE_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt_index - 1)),
+                )
+                logging.warning(
+                    "Gemini CachedContent creation attempt %d/%d hit HTTP %d; retrying in %.1fs.",
+                    attempt_index,
+                    attempts_total,
+                    exc.code,
+                    sleep_seconds,
+                )
+                time.sleep(sleep_seconds)
+                continue
+            raise runtime_error from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            runtime_error = RuntimeError(
+                "Gemini CachedContent creation failed "
+                f"(attempt {attempt_index}/{attempts_total}, timeout={request_timeout:.1f}s): {exc}"
+            )
+            retryable_transport = is_request_timeout_error(exc) or is_retryable_provider_server_error(exc)
+            if retryable_transport and attempt_index < attempts_total:
+                sleep_seconds = min(
+                    GEMINI_CACHE_CREATE_RETRY_MAX_DELAY_SECONDS,
+                    GEMINI_CACHE_CREATE_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt_index - 1)),
+                )
+                logging.warning(
+                    "Gemini CachedContent creation attempt %d/%d failed due to transport timeout/server issue; retrying in %.1fs.",
+                    attempt_index,
+                    attempts_total,
+                    sleep_seconds,
+                )
+                time.sleep(sleep_seconds)
+                continue
+            raise runtime_error from exc
+
+    raise RuntimeError("Gemini CachedContent creation failed after all retry attempts.")
 
 
 def update_gemini_cached_content_ttl(
@@ -2460,11 +2521,13 @@ def update_gemini_cached_content_ttl(
     api_base_url: Optional[str],
     cache_name: str,
     ttl_seconds: int,
+    request_timeout_seconds: Optional[float] = None,
 ) -> bool:
     """Update TTL for an existing Gemini CachedContent resource."""
     normalized_ttl = int(ttl_seconds)
     if normalized_ttl <= 0:
         raise RuntimeError(f"Gemini CachedContent TTL must be > 0, got {ttl_seconds}.")
+    request_timeout = _resolve_gemini_cache_http_timeout_seconds(request_timeout_seconds)
 
     endpoint, headers = _build_gemini_cache_resource_endpoint_and_headers(
         api_key, api_base_url, cache_name
@@ -2489,7 +2552,7 @@ def update_gemini_cached_content_ttl(
             method="PATCH",
         )
         try:
-            with urllib.request.urlopen(request, timeout=60):
+            with urllib.request.urlopen(request, timeout=request_timeout):
                 pass
             return True
         except urllib.error.HTTPError as exc:
@@ -2513,6 +2576,7 @@ def delete_gemini_cached_content(
     api_key: str,
     api_base_url: Optional[str],
     cache_name: str,
+    request_timeout_seconds: Optional[float] = None,
 ) -> bool:
     """Delete a Gemini CachedContent resource by name.
 
@@ -2524,8 +2588,9 @@ def delete_gemini_cached_content(
         api_key, api_base_url, cache_name
     )
     request = urllib.request.Request(endpoint, headers=headers, method="DELETE")
+    request_timeout = _resolve_gemini_cache_http_timeout_seconds(request_timeout_seconds)
     try:
-        with urllib.request.urlopen(request, timeout=60):
+        with urllib.request.urlopen(request, timeout=request_timeout):
             pass
         return True
     except urllib.error.HTTPError as exc:
@@ -8143,9 +8208,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Creating Gemini CachedContent from system prompt (TTL %ds)...",
             args.gemini_cache_ttl,
         )
+        cache_control_timeout = _resolve_gemini_cache_http_timeout_seconds(
+            args.request_timeout_seconds
+        )
+        logging.info(
+            "Gemini cache control timeout set to %.1f seconds.",
+            cache_control_timeout,
+        )
         try:
             created_cache_name = create_gemini_cached_content(
-                api_key, api_base_url, args.model, system_for_cache, args.gemini_cache_ttl
+                api_key,
+                api_base_url,
+                args.model,
+                system_for_cache,
+                args.gemini_cache_ttl,
+                request_timeout_seconds=args.request_timeout_seconds,
             )
         except RuntimeError as exc:
             logging.error("Failed to create Gemini CachedContent: %s", exc)
@@ -8207,6 +8284,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             api_base_url,
                             created_cache_name,
                             args.gemini_cache_ttl,
+                            request_timeout_seconds=args.request_timeout_seconds,
                         )
                     except RuntimeError as exc:
                         retry_seconds = min(300, max(30, refresh_interval_seconds // 6))
@@ -8348,7 +8426,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "falling back to previously configured token. Details: %s",
                             exc,
                         )
-                delete_gemini_cached_content(delete_api_key, api_base_url, created_cache_name)
+                delete_gemini_cached_content(
+                    delete_api_key,
+                    api_base_url,
+                    created_cache_name,
+                    request_timeout_seconds=args.request_timeout_seconds,
+                )
 
     if aggregate_prompt_tokens or aggregate_completion_tokens or aggregate_reported_tokens:
         total_token_usage = (
