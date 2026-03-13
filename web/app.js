@@ -1522,14 +1522,13 @@ function renderLeaderboardChart(container, runs) {
     return parseRunTimestampMs(b) - parseRunTimestampMs(a);
   });
   const topRunPath = rankedRuns.length ? rankedRuns[0].filePath : null;
-  const worstRunPath = rankedRuns.length > 1 ? rankedRuns[rankedRuns.length - 1].filePath : null;
 
   if (groupedEntries.length) {
     const groupedSummary = document.createElement("p");
     groupedSummary.className = "leaderboard-ci-note muted";
     groupedSummary.textContent =
       groupedEntries.length > 1
-        ? "TOP/WORST are based on best/worst individual runs; if hidden in a collapsed group, the marker appears on the group summary."
+        ? "TOP is based on the best individual run; if hidden in a collapsed group, the marker appears on the group summary."
         : "Grouped rows include run distribution overlays with CI.";
     container.appendChild(groupedSummary);
   }
@@ -1541,18 +1540,13 @@ function renderLeaderboardChart(container, runs) {
   entries.forEach((entry) => {
     if (entry.type === "run") {
       const isTopRun = topRunPath && entry.run.filePath === topRunPath;
-      const isWorstRun = worstRunPath && entry.run.filePath === worstRunPath;
       const badges = [];
       if (isTopRun) {
         badges.push("TOP");
-      } else if (isWorstRun) {
-        badges.push("WORST");
       }
       let rowClass = "";
       if (isTopRun) {
         rowClass = "bar-row-top";
-      } else if (isWorstRun) {
-        rowClass = "bar-row-worst";
       }
       container.appendChild(
         createBarRow(
@@ -1585,19 +1579,13 @@ function renderLeaderboardChart(container, runs) {
     const summary = document.createElement("summary");
     summary.className = "leaderboard-summary";
     const groupHasTopRun = Boolean(topRunPath && entry.runs.some((run) => run.filePath === topRunPath));
-    const groupHasWorstRun = Boolean(worstRunPath && entry.runs.some((run) => run.filePath === worstRunPath));
     const badges = [];
     if (groupHasTopRun) {
       badges.push("TOP");
     }
-    if (groupHasWorstRun) {
-      badges.push("WORST");
-    }
     let rowClass = "";
     if (groupHasTopRun) {
       rowClass = "bar-row-top";
-    } else if (groupHasWorstRun) {
-      rowClass = "bar-row-worst";
     }
     const distributionValues = entry.runs
       .map((run) => getMetricValueForRun(run, metricKey))
@@ -1626,19 +1614,13 @@ function renderLeaderboardChart(container, runs) {
     entry.runs.forEach((run) => {
       const runCi = getRunMetricConfidence(run, metricKey);
       const showTopOnRun = Boolean(topRunPath && run.filePath === topRunPath);
-      const showWorstOnRun = Boolean(worstRunPath && run.filePath === worstRunPath);
       const runBadges = [];
       if (showTopOnRun) {
         runBadges.push("TOP");
       }
-      if (showWorstOnRun) {
-        runBadges.push("WORST");
-      }
       let runRowClass = "";
       if (showTopOnRun) {
         runRowClass = "bar-row-top";
-      } else if (showWorstOnRun) {
-        runRowClass = "bar-row-worst";
       }
       runsWrap.appendChild(
         createBarRow(

@@ -637,8 +637,7 @@ select[multiple] {
   transform: rotate(90deg);
 }
 
-.leaderboard-group[open] .leaderboard-summary .bar-row-top,
-.leaderboard-group[open] .leaderboard-summary .bar-row-worst {
+.leaderboard-group[open] .leaderboard-summary .bar-row-top {
   border-color: transparent;
   background: transparent;
 }
@@ -709,11 +708,6 @@ select[multiple] {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
-.bar-row-worst {
-  border: 1px solid color-mix(in srgb, var(--accent-2) 60%, transparent);
-  background: color-mix(in srgb, var(--accent-2) 9%, transparent);
-}
-
 .bar-row.chart-clickable {
   cursor: pointer;
   border-radius: 12px;
@@ -764,12 +758,6 @@ select[multiple] {
   border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   color: color-mix(in srgb, var(--accent) 80%, white 20%);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.bar-label-badge-worst {
-  border-color: color-mix(in srgb, var(--accent-2) 75%, transparent);
-  color: color-mix(in srgb, var(--accent-2) 82%, white 18%);
-  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
 }
 
 .bar-track {
