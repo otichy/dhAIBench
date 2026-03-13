@@ -36,10 +36,10 @@ Input files must be semicolon-delimited CSVs with headers:
 
 | Column        | Description                                            |
 |---------------|--------------------------------------------------------|
-| `ID`          | Unique example identifier.                             |
-| `leftContext` | Text immediately preceding the node token.             |
-| `node`        | Target word to classify.                               |
-| `rightContext`| Text immediately following the node token.             |
+| `ID`          | Required. Unique example identifier.                   |
+| `leftContext` | Optional. Text immediately preceding the node token.   |
+| `node`        | Required. Target word to classify.                     |
+| `rightContext`| Optional. Text immediately following the node token.   |
 | `info`        | (Optional) supplemental instructions or metadata.      |
 | `truth`       | (Optional) gold label; omit when using `--labels`.     |
 

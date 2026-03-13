@@ -2645,7 +2645,7 @@ def read_examples(path: str) -> Tuple[List[Example], List[str]]:
     extra_field_order: List[str] = []
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=";")
-        required_fields = {"ID", "leftContext", "node", "rightContext"}
+        required_fields = {"ID", "node"}
         fieldnames = reader.fieldnames or []
         missing = required_fields - set(fieldnames)
         if missing:
