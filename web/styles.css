@@ -825,8 +825,11 @@ select[multiple] {
   top: 2px;
   bottom: 2px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent-3) 70%, transparent);
-  background: color-mix(in srgb, var(--accent-3) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 86%, var(--accent-2) 14%);
+  background: color-mix(in srgb, var(--paper-strong) 18%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--paper-strong) 70%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .bar-distribution-median {
