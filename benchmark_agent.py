@@ -924,6 +924,56 @@ def parse_optional_bool(value: Any) -> Optional[bool]:
     return None
 
 
+def normalize_column_name(name: Any) -> str:
+    """Normalize a CSV column name for case-insensitive comparisons."""
+    return "" if name is None else str(name).strip().casefold()
+
+
+def build_case_insensitive_column_lookup(fieldnames: Iterable[Any], path: str) -> Dict[str, str]:
+    """Return normalized->original CSV header mapping, keeping first duplicate match."""
+    lookup: Dict[str, str] = {}
+    for raw_name in fieldnames:
+        column_name = "" if raw_name is None else str(raw_name).strip()
+        if not column_name:
+            continue
+        normalized = normalize_column_name(column_name)
+        existing = lookup.get(normalized)
+        if existing is not None and existing != column_name:
+            logging.warning(
+                "Column %r in %s duplicates %r when matched case-insensitively; using %r.",
+                column_name,
+                path,
+                existing,
+                existing,
+            )
+            continue
+        if existing is None:
+            lookup[normalized] = column_name
+    return lookup
+
+
+def resolve_column_name(column_lookup: Dict[str, str], expected_name: str) -> Optional[str]:
+    """Resolve a desired logical column name to its actual CSV header."""
+    return column_lookup.get(normalize_column_name(expected_name))
+
+
+def row_text_value(row: Dict[str, Any], column_name: Optional[str], default: str = "") -> str:
+    """Read a trimmed text value from row[column_name], returning default when missing."""
+    if not column_name:
+        return default
+    value = row.get(column_name)
+    if value is None:
+        return default
+    return str(value).strip()
+
+
+def row_raw_value(row: Dict[str, Any], column_name: Optional[str]) -> Any:
+    """Read the raw row[column_name] value, returning None when column is unavailable."""
+    if not column_name:
+        return None
+    return row.get(column_name)
+
+
 class AccessTokenProvider(Protocol):
     """Protocol for providers capable of returning short-lived auth tokens."""
 
@@ -2645,32 +2695,48 @@ def read_examples(path: str) -> Tuple[List[Example], List[str]]:
     extra_field_order: List[str] = []
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=";")
+        fieldnames = [name for name in (reader.fieldnames or []) if name]
+        column_lookup = build_case_insensitive_column_lookup(fieldnames, path)
+
         required_fields = {"ID", "node"}
-        fieldnames = reader.fieldnames or []
-        missing = required_fields - set(fieldnames)
+        missing = sorted(
+            name for name in required_fields if resolve_column_name(column_lookup, name) is None
+        )
         if missing:
             raise ValueError(f"Missing required columns in {path}: {sorted(missing)}")
 
         allowed_fields = {"ID", "leftContext", "node", "rightContext", "truth", "info"}
-        extra_field_order = [name for name in fieldnames if name not in allowed_fields]
+        allowed_field_keys = {normalize_column_name(name) for name in allowed_fields}
+        extra_field_order = [
+            name for name in fieldnames if normalize_column_name(name) not in allowed_field_keys
+        ]
+
+        id_column = resolve_column_name(column_lookup, "ID")
+        left_context_column = resolve_column_name(column_lookup, "leftContext")
+        node_column = resolve_column_name(column_lookup, "node")
+        right_context_column = resolve_column_name(column_lookup, "rightContext")
+        truth_column = resolve_column_name(column_lookup, "truth")
+        info_column = resolve_column_name(column_lookup, "info")
 
         for row in reader:
             extras: Dict[str, str] = {}
             for key, value in row.items():
-                if key not in allowed_fields:
+                if normalize_column_name(key) not in allowed_field_keys:
+                    if key is None:
+                        continue
                     value_str = "" if value is None else str(value).strip()
                     extras[key] = value_str
 
-            info_value = row.get("info")
-            info_text = "" if info_value is None else str(info_value).strip()
+            info_text = row_text_value(row, info_column)
+            truth_text = row_text_value(row, truth_column)
 
             example = Example(
-                example_id=str(row.get("ID", "")).strip(),
-                left_context=row.get("leftContext", "").strip(),
-                node=row.get("node", "").strip(),
-                right_context=row.get("rightContext", "").strip(),
+                example_id=row_text_value(row, id_column),
+                left_context=row_text_value(row, left_context_column),
+                node=row_text_value(row, node_column),
+                right_context=row_text_value(row, right_context_column),
                 info=info_text,
-                truth=str(row.get("truth", "")).strip() or None,
+                truth=truth_text or None,
                 extras=extras,
             )
             if not example.example_id:
@@ -3508,26 +3574,43 @@ def load_existing_output_predictions(
         if not existing_fieldnames:
             return [], predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
+        column_lookup = build_case_insensitive_column_lookup(existing_fieldnames, output_path)
         required_fields = {"ID", "prediction"}
-        missing = required_fields - set(existing_fieldnames)
+        missing = sorted(
+            name for name in required_fields if resolve_column_name(column_lookup, name) is None
+        )
         if missing:
             raise ValueError(
                 f"Cannot resume from {output_path}: missing required output columns {sorted(missing)}."
             )
 
+        id_column = resolve_column_name(column_lookup, "ID")
+        prediction_column = resolve_column_name(column_lookup, "prediction")
+        confidence_column = resolve_column_name(column_lookup, "confidence")
+        prompt_tokens_column = resolve_column_name(column_lookup, "promptTokens")
+        completion_tokens_column = resolve_column_name(column_lookup, "completionTokens")
+        total_tokens_column = resolve_column_name(column_lookup, "totalTokens")
+        label_logprob_column = resolve_column_name(column_lookup, "labelLogProb")
+        label_probability_column = resolve_column_name(column_lookup, "labelProbability")
+        explanation_column = resolve_column_name(column_lookup, "explanation")
+        node_echo_column = resolve_column_name(column_lookup, "nodeEcho")
+        span_source_column = resolve_column_name(column_lookup, "spanSource")
+        validator_status_column = resolve_column_name(column_lookup, "validatorStatus")
+        validator_reason_column = resolve_column_name(column_lookup, "validatorReason")
+
         for row_index, row in enumerate(reader, start=2):
-            example_id = str(row.get("ID", "")).strip()
+            example_id = row_text_value(row, id_column)
             if not example_id:
                 logging.warning("Ignoring resume row %d in %s because ID is empty.", row_index, output_path)
                 continue
 
-            label = str(row.get("prediction", "")).strip()
-            confidence = parse_optional_float(row.get("confidence"))
-            prompt_tokens = parse_optional_int(row.get("promptTokens"))
-            completion_tokens = parse_optional_int(row.get("completionTokens"))
-            total_tokens = parse_optional_int(row.get("totalTokens"))
-            label_logprob = parse_optional_float(row.get("labelLogProb"))
-            label_probability = parse_optional_float(row.get("labelProbability"))
+            label = row_text_value(row, prediction_column)
+            confidence = parse_optional_float(row_raw_value(row, confidence_column))
+            prompt_tokens = parse_optional_int(row_raw_value(row, prompt_tokens_column))
+            completion_tokens = parse_optional_int(row_raw_value(row, completion_tokens_column))
+            total_tokens = parse_optional_int(row_raw_value(row, total_tokens_column))
+            label_logprob = parse_optional_float(row_raw_value(row, label_logprob_column))
+            label_probability = parse_optional_float(row_raw_value(row, label_probability_column))
 
             if prompt_tokens is not None:
                 total_prompt_tokens += prompt_tokens
@@ -3545,7 +3628,7 @@ def load_existing_output_predictions(
 
             predictions[example_id] = Prediction(
                 label=label,
-                explanation=str(row.get("explanation", "") or ""),
+                explanation=row_text_value(row, explanation_column),
                 confidence=confidence,
                 raw_response="",
                 prompt_tokens=prompt_tokens,
@@ -3553,10 +3636,10 @@ def load_existing_output_predictions(
                 total_tokens=total_tokens,
                 label_logprob=label_logprob,
                 label_probability=label_probability,
-                node_echo=str(row.get("nodeEcho", "") or "") or None,
-                span_source=str(row.get("spanSource", "") or "") or None,
-                validator_status=str(row.get("validatorStatus", "") or "") or None,
-                validator_reason=str(row.get("validatorReason", "") or "") or None,
+                node_echo=row_text_value(row, node_echo_column) or None,
+                span_source=row_text_value(row, span_source_column) or None,
+                validator_status=row_text_value(row, validator_status_column) or None,
+                validator_reason=row_text_value(row, validator_reason_column) or None,
             )
 
     return existing_fieldnames, predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
@@ -3580,12 +3663,15 @@ def remove_output_rows_by_id(output_path: str, ids_to_remove: set[str]) -> int:
             fieldnames = [name for name in (reader.fieldnames or []) if name]
             if not fieldnames:
                 return 0
+            id_column = resolve_column_name(build_case_insensitive_column_lookup(fieldnames, output_path), "ID")
+            if not id_column:
+                return 0
 
             with open(temp_path, "w", encoding="utf-8", newline="") as target_handle:
                 writer = csv.DictWriter(target_handle, fieldnames=fieldnames, delimiter=";")
                 writer.writeheader()
                 for row in reader:
-                    example_id = str(row.get("ID", "")).strip()
+                    example_id = row_text_value(row, id_column)
                     if example_id and example_id in ids_to_remove:
                         removed_rows += 1
                         continue
@@ -3609,17 +3695,21 @@ def read_truth_labels_from_output(path: str) -> Tuple[Dict[str, Optional[str]], 
         fieldnames = [name for name in (reader.fieldnames or []) if name]
         if not fieldnames:
             return labels, False
-        if "ID" not in fieldnames:
+        column_lookup = build_case_insensitive_column_lookup(fieldnames, path)
+
+        id_column = resolve_column_name(column_lookup, "ID")
+        if not id_column:
             raise ValueError(f"Missing required columns in {path}: ['ID']")
 
-        has_truth_column = "truth" in fieldnames
+        truth_column = resolve_column_name(column_lookup, "truth")
+        has_truth_column = truth_column is not None
         for row_index, row in enumerate(reader, start=2):
-            example_id = str(row.get("ID", "")).strip()
+            example_id = row_text_value(row, id_column)
             if not example_id:
                 logging.warning("Ignoring truth row %d in %s because ID is empty.", row_index, path)
                 continue
 
-            truth_text = str(row.get("truth", "")).strip() if has_truth_column else ""
+            truth_text = row_text_value(row, truth_column) if has_truth_column else ""
             if example_id in labels:
                 logging.warning(
                     "Duplicate ID %s in truth column of %s; keeping last occurrence.",
@@ -3636,13 +3726,19 @@ def read_label_file(path: str) -> Dict[str, str]:
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=";")
         required_fields = {"ID", "truth"}
-        missing = required_fields - set(reader.fieldnames or [])
+        fieldnames = [name for name in (reader.fieldnames or []) if name]
+        column_lookup = build_case_insensitive_column_lookup(fieldnames, path)
+        missing = sorted(
+            name for name in required_fields if resolve_column_name(column_lookup, name) is None
+        )
         if missing:
             raise ValueError(f"Missing required columns in {path}: {sorted(missing)}")
 
+        id_column = resolve_column_name(column_lookup, "ID")
+        truth_column = resolve_column_name(column_lookup, "truth")
         for row in reader:
-            example_id = str(row.get("ID", "")).strip()
-            truth = str(row.get("truth", "")).strip()
+            example_id = row_text_value(row, id_column)
+            truth = row_text_value(row, truth_column)
             if not example_id:
                 logging.warning("Skipping label row with empty ID.")
                 continue
