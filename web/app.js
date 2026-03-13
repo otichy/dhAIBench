@@ -1011,6 +1011,17 @@ function isPercentMetric(metricKey) {
   return PERCENT_METRIC_KEYS.has(metricKey);
 }
 
+function resolveLeaderboardBarMax(metricKey, values) {
+  if (isPercentMetric(metricKey)) {
+    return 100;
+  }
+  const finiteValues = (values || []).filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (!finiteValues.length) {
+    return 1;
+  }
+  return Math.max(...finiteValues, 1);
+}
+
 function formatMetric(metricKey, value, digits = 2, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "N/A";
@@ -1524,11 +1535,10 @@ function renderLeaderboardChart(container, runs) {
     container.appendChild(groupedSummary);
   }
 
-  const maxScore = Math.max(
+  const maxScore = resolveLeaderboardBarMax(metricKey, [
     ...entries.map((entry) => entry.score),
-    ...source.map((run) => getMetricValueForRun(run, metricKey) ?? 0),
-    1
-  );
+    ...source.map((run) => getMetricValueForRun(run, metricKey)),
+  ]);
   entries.forEach((entry) => {
     if (entry.type === "run") {
       const isTopRun = topRunPath && entry.run.filePath === topRunPath;
@@ -1781,7 +1791,10 @@ function renderBestByTask(container, runs) {
     return;
   }
 
-  const max = Math.max(...items.map((item) => item.metricValue), 1);
+  const max = resolveLeaderboardBarMax(
+    metricKey,
+    items.map((item) => item.metricValue)
+  );
   items.forEach(({ run, metricValue }) => {
     container.appendChild(
       createBarRow(
