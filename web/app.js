@@ -1513,7 +1513,6 @@ function renderLeaderboardChart(container, runs) {
   });
 
   const groupedEntries = entries.filter((entry) => entry.type === "group");
-  const groupedStats = getDistributionStats(groupedEntries.map((entry) => entry.score));
   const rankedRuns = [...source].sort((a, b) => {
     const scoreA = scoreForSort(a, metricKey);
     const scoreB = scoreForSort(b, metricKey);
@@ -1617,10 +1616,6 @@ function renderLeaderboardChart(container, runs) {
           badges,
           rowClass,
           distribution: distributionValues.length ? { values: distributionValues } : null,
-          referenceBand:
-            groupedStats && typeof groupedStats.q1 === "number" && typeof groupedStats.q3 === "number"
-              ? { low: groupedStats.q1, high: groupedStats.q3 }
-              : null,
         }
       )
     );
