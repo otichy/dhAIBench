@@ -637,6 +637,16 @@ select[multiple] {
   transform: rotate(90deg);
 }
 
+.leaderboard-group[open] .leaderboard-summary .bar-row-top,
+.leaderboard-group[open] .leaderboard-summary .bar-row-worst {
+  border-color: transparent;
+  background: transparent;
+}
+
+.leaderboard-group[open] .leaderboard-summary .bar-label-badges {
+  display: none;
+}
+
 .leaderboard-summary::-webkit-details-marker {
   display: none;
 }
