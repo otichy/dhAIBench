@@ -2,6 +2,11 @@ const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
 const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
 const METRICS_SERVER_DIR = "../data/metrics";
 const METRICS_SERVER_DIR_CANDIDATES = [METRICS_SERVER_DIR, "./metrics", "./data/metrics"];
+const MOBILE_LAYOUT_BREAKPOINT = 900;
+const mobileLayoutQuery =
+  typeof window.matchMedia === "function"
+    ? window.matchMedia(`(max-width: ${MOBILE_LAYOUT_BREAKPOINT}px)`)
+    : null;
 
 const state = {
   runs: [],
@@ -24,11 +29,19 @@ const state = {
   activeDirectoryHandle: null,
   activeFiles: [],
   expandedLeaderboardModels: new Set(),
+  mobileSidebarOpen: false,
 };
 
 const els = {
+  dashboardSidebar: document.querySelector("#dashboardSidebar"),
+  mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
+  mobileFilterSummary: document.querySelector("#mobileFilterSummary"),
+  sidebarCloseBtn: document.querySelector("#sidebarCloseBtn"),
+  sidebarBackdrop: document.querySelector("#sidebarBackdrop"),
   taskSelect: document.querySelector("#taskSelect"),
+  taskChipList: document.querySelector("#taskChipList"),
   modelSelect: document.querySelector("#modelSelect"),
+  modelChipList: document.querySelector("#modelChipList"),
   sortSelect: document.querySelector("#sortSelect"),
   hideNoAccuracy: document.querySelector("#hideNoAccuracy"),
   themeToggle: document.querySelector("#themeToggle"),
@@ -828,6 +841,36 @@ function applyTheme() {
   document.documentElement.setAttribute("data-theme", state.theme);
 }
 
+function isMobileLayout() {
+  return mobileLayoutQuery ? mobileLayoutQuery.matches : window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT;
+}
+
+function setMobileSidebarOpen(nextOpen) {
+  const shouldOpen = isMobileLayout() && Boolean(nextOpen);
+  state.mobileSidebarOpen = shouldOpen;
+  document.body.classList.toggle("mobile-sidebar-open", shouldOpen);
+  els.mobileSidebarToggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+  els.dashboardSidebar.setAttribute("aria-hidden", shouldOpen ? "false" : String(isMobileLayout()));
+
+  if (shouldOpen) {
+    requestAnimationFrame(() => {
+      els.sidebarCloseBtn.focus();
+    });
+  }
+}
+
+function updateMobileFilterSummary() {
+  const activeFilterCount =
+    (state.selectedTasks.length ? 1 : 0) +
+    (state.selectedModels.length ? 1 : 0) +
+    (state.selectedTags.length ? 1 : 0) +
+    (state.hideNoAccuracy ? 1 : 0);
+  const summaryText = activeFilterCount ? `${activeFilterCount} active` : "All";
+
+  els.mobileFilterSummary.textContent = summaryText;
+  els.mobileSidebarToggle.title = activeFilterCount ? `${summaryText} filters` : "All filters visible";
+}
+
 function sanitizeSelections(selectedValues, allowedValues) {
   const allowedSet = new Set(allowedValues || []);
   return uniqueNonEmptyStrings(selectedValues || []).filter((value) => allowedSet.has(value));
@@ -853,6 +896,30 @@ function setSelectedTags(values) {
   state.selectedTags = sanitizeSelections(values, state.tags);
   persistUiState();
   render();
+}
+
+function toggleTaskSelection(task) {
+  if (task === "ALL") {
+    setSelectedTasks([]);
+    return;
+  }
+  if (state.selectedTasks.includes(task)) {
+    setSelectedTasks(state.selectedTasks.filter((value) => value !== task));
+    return;
+  }
+  setSelectedTasks([...state.selectedTasks, task]);
+}
+
+function toggleModelSelection(model) {
+  if (model === "ALL") {
+    setSelectedModels([]);
+    return;
+  }
+  if (state.selectedModels.includes(model)) {
+    setSelectedModels(state.selectedModels.filter((value) => value !== model));
+    return;
+  }
+  setSelectedModels([...state.selectedModels, model]);
 }
 
 function toggleTagSelection(tag) {
@@ -927,6 +994,28 @@ function setModelSelectionFromSelect(values) {
   setSelectedModels(clearSelectionForAll(values));
 }
 
+function renderChoiceChipList(container, options, selectedValues, allLabel, onToggle) {
+  container.innerHTML = "";
+
+  const items = [{ value: "ALL", label: allLabel, active: isAllSelected(selectedValues) }].concat(
+    options.map((option) => ({
+      value: option,
+      label: option,
+      active: selectedValues.includes(option),
+    }))
+  );
+
+  items.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `choice-chip${item.active ? " active" : ""}`;
+    button.textContent = item.label;
+    button.setAttribute("aria-pressed", item.active ? "true" : "false");
+    button.addEventListener("click", () => onToggle(item.value));
+    container.appendChild(button);
+  });
+}
+
 function setupFilters() {
   els.taskSelect.addEventListener("change", () => {
     setTaskSelectionFromSelect(getSelectValues(els.taskSelect));
@@ -953,6 +1042,45 @@ function setupFilters() {
     applyTheme();
     persistUiState();
   });
+}
+
+function setupResponsiveShell() {
+  els.mobileSidebarToggle.addEventListener("click", () => {
+    setMobileSidebarOpen(!state.mobileSidebarOpen);
+  });
+  els.sidebarCloseBtn.addEventListener("click", () => {
+    setMobileSidebarOpen(false);
+  });
+  els.sidebarBackdrop.addEventListener("click", () => {
+    setMobileSidebarOpen(false);
+  });
+
+  const handleViewportChange = () => {
+    if (!isMobileLayout()) {
+      setMobileSidebarOpen(false);
+      return;
+    }
+    els.dashboardSidebar.setAttribute("aria-hidden", state.mobileSidebarOpen ? "false" : "true");
+  };
+
+  if (mobileLayoutQuery) {
+    if (typeof mobileLayoutQuery.addEventListener === "function") {
+      mobileLayoutQuery.addEventListener("change", handleViewportChange);
+    } else if (typeof mobileLayoutQuery.addListener === "function") {
+      mobileLayoutQuery.addListener(handleViewportChange);
+    }
+  } else {
+    window.addEventListener("resize", handleViewportChange);
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.mobileSidebarOpen) {
+      setMobileSidebarOpen(false);
+    }
+  });
+
+  handleViewportChange();
+  updateMobileFilterSummary();
 }
 
 function setupSourceControls() {
@@ -1197,6 +1325,8 @@ function renderTaskControls() {
   } else {
     syncTaskSelectValue();
   }
+
+  renderChoiceChipList(els.taskChipList, state.tasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
 }
 
 function renderModelControls() {
@@ -1215,6 +1345,8 @@ function renderModelControls() {
   } else {
     syncModelSelectValue();
   }
+
+  renderChoiceChipList(els.modelChipList, state.models, state.selectedModels, "All Models", toggleModelSelection);
 }
 
 function renderTagControls() {
@@ -2163,6 +2295,11 @@ function renderTokenSignals(runs) {
   els.tokenChart.appendChild(layout);
 }
 
+function renderTableCell(label, value, className = "") {
+  const classAttr = className ? ` class="${className}"` : "";
+  return `<td data-label="${label}"${classAttr}>${value}</td>`;
+}
+
 function renderTable(runs) {
   els.runsTableBody.innerHTML = "";
   els.tableMeta.textContent = `${formatNum(runs.length, 0)} rows`;
@@ -2173,16 +2310,22 @@ function renderTable(runs) {
     if (run.filePath === state.selectedRunPath) {
       tr.classList.add("selected-row");
     }
-    tr.innerHTML = `
-      <td>${run.task}</td>
-      <td>${run.model}</td>
-      <td>${formatTs(run.timestamp)}</td>
-      <td>${run.accuracy !== null ? `${formatNum(run.accuracy, 2)}%` : '<span class="muted">N/A</span>'}</td>
-      <td>${run.macroF1 !== null ? `${formatNum(run.macroF1, 2)}%` : '<span class="muted">N/A</span>'}</td>
-      <td class="mono">${formatNum(run.requestsTotal, 0)}</td>
-      <td class="mono">${formatNum(run.cachedTokens, 0)}</td>
-      <td class="mono">${run.fileName}</td>
-    `;
+    tr.innerHTML = [
+      renderTableCell("Task", run.task, "table-cell-primary"),
+      renderTableCell("Model", run.model, "table-cell-model table-cell-full"),
+      renderTableCell("Timestamp", formatTs(run.timestamp)),
+      renderTableCell(
+        "Accuracy",
+        run.accuracy !== null ? `${formatNum(run.accuracy, 2)}%` : '<span class="muted">N/A</span>'
+      ),
+      renderTableCell(
+        "Macro F1",
+        run.macroF1 !== null ? `${formatNum(run.macroF1, 2)}%` : '<span class="muted">N/A</span>'
+      ),
+      renderTableCell("Requests", formatNum(run.requestsTotal, 0), "mono"),
+      renderTableCell("Cached Input Tokens", formatNum(run.cachedTokens, 0), "mono"),
+      renderTableCell("File", run.fileName, "mono table-cell-full"),
+    ].join("");
     tr.addEventListener("click", () => {
       state.selectedRunPath = run.filePath;
       openRunModal(run);
@@ -2429,6 +2572,7 @@ function render() {
   renderTaskControls();
   renderModelControls();
   renderTagControls();
+  updateMobileFilterSummary();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
   renderTokenSignals(state.filtered);
@@ -2530,6 +2674,7 @@ async function init() {
   applyUiStateToControls();
   applyTheme();
   setupFilters();
+  setupResponsiveShell();
   setupSourceControls();
   setupModalControls();
 

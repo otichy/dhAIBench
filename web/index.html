@@ -11,7 +11,7 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar">
+    <aside id="dashboardSidebar" class="sidebar" aria-label="Dashboard filters">
       <div class="brand">
         <div class="brand-lockup">
           <div class="brand-mark">DH-AI</div>
@@ -20,10 +20,18 @@
             <p>Metrics from <code>DHAIBench</code></p>
           </div>
         </div>
-        <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
-          <input id="themeToggle" type="checkbox">
-          <span class="theme-icon" aria-hidden="true"></span>
-        </label>
+        <div class="brand-actions">
+          <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <input id="themeToggle" type="checkbox">
+            <span class="theme-icon" aria-hidden="true"></span>
+          </label>
+          <button id="sidebarCloseBtn" class="btn icon-btn sidebar-close-btn" type="button" aria-label="Close filters">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12"></path>
+              <path d="M18 6L6 18"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <section class="panel">
@@ -32,10 +40,12 @@
           <span>Task (multi-select)</span>
           <select id="taskSelect" multiple size="6"></select>
           <small class="field-hint">Use Ctrl/Cmd or Shift for quick range selection.</small>
+          <div id="taskChipList" class="mobile-choice-list" aria-label="Task filters"></div>
         </label>
         <label class="field">
           <span>Model (multi-select)</span>
           <select id="modelSelect" multiple size="8"></select>
+          <div id="modelChipList" class="mobile-choice-list" aria-label="Model filters"></div>
         </label>
         <label class="checkbox">
           <input id="hideNoAccuracy" type="checkbox">
@@ -51,6 +61,10 @@
 
     <main class="main">
       <section class="metric-dock">
+        <button id="mobileSidebarToggle" class="btn mobile-sidebar-toggle" type="button" aria-controls="dashboardSidebar" aria-expanded="false">
+          <span>Filters</span>
+          <span id="mobileFilterSummary" class="mobile-sidebar-toggle-count">All</span>
+        </button>
         <label class="field metric-dock-field">
           <span>Metrics</span>
           <select id="sortSelect">
@@ -150,6 +164,7 @@
 
     </main>
   </div>
+  <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Close filters"></button>
 
   <div id="runModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
     <div class="modal-card">
