@@ -458,6 +458,57 @@ select[multiple] {
   color: var(--warning);
 }
 
+.loading-notice {
+  position: sticky;
+  top: 4.4rem;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0 0 1rem;
+  padding: 0.82rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line-strong));
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--paper-strong)), var(--paper));
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px);
+}
+
+.loading-notice[hidden] {
+  display: none;
+}
+
+.loading-notice-spinner {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  animation: loading-spin 0.9s linear infinite;
+}
+
+.loading-notice-copy {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.loading-notice-copy p {
+  margin: 0;
+}
+
+.loading-notice-copy p:first-child {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.loading-notice-copy p:last-child {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .icon-btn {
   width: 34px;
   height: 34px;
@@ -1020,6 +1071,16 @@ html[data-theme="light"] .bar-track-label {
 
 .warn {
   color: var(--error);
+}
+
+@keyframes loading-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .table-head {

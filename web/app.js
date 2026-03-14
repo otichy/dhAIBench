@@ -30,9 +30,12 @@ const state = {
   activeFiles: [],
   expandedLeaderboardModels: new Set(),
   mobileSidebarOpen: false,
+  isLoading: false,
+  loadingMessage: "",
 };
 
 const els = {
+  main: document.querySelector(".main"),
   dashboardSidebar: document.querySelector("#dashboardSidebar"),
   mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
   mobileFilterSummary: document.querySelector("#mobileFilterSummary"),
@@ -48,6 +51,8 @@ const els = {
   tagChips: document.querySelector("#tagChips"),
   heroTitle: document.querySelector("#heroTitle"),
   heroSubtitle: document.querySelector("#heroSubtitle"),
+  loadingNotice: document.querySelector("#loadingNotice"),
+  loadingNoticeMessage: document.querySelector("#loadingNoticeMessage"),
   btnAutoServer: document.querySelector("#btnAutoServer"),
   btnOpenFolder: document.querySelector("#btnOpenFolder"),
   reloadBtn: document.querySelector("#reloadBtn"),
@@ -1309,6 +1314,71 @@ function formatTs(ts) {
   const dt = new Date(ts || "");
   if (Number.isNaN(dt.getTime())) return "N/A";
   return dt.toLocaleString();
+}
+
+function setSourceControlsDisabled(disabled) {
+  [els.btnAutoServer, els.btnOpenFolder, els.reloadBtn].forEach((button) => {
+    if (!button) {
+      return;
+    }
+
+    if (disabled) {
+      button.dataset.wasDisabledBeforeLoad = button.disabled ? "true" : "false";
+      button.disabled = true;
+      return;
+    }
+
+    if (button.dataset.wasDisabledBeforeLoad !== "true") {
+      button.disabled = false;
+    }
+    delete button.dataset.wasDisabledBeforeLoad;
+  });
+}
+
+function setLoadingState(isLoading, message = "") {
+  state.isLoading = Boolean(isLoading);
+  state.loadingMessage = state.isLoading ? String(message || "").trim() : "";
+
+  if (els.main) {
+    els.main.setAttribute("aria-busy", state.isLoading ? "true" : "false");
+  }
+
+  setSourceControlsDisabled(state.isLoading);
+
+  if (!els.loadingNotice || !els.loadingNoticeMessage) {
+    return;
+  }
+
+  if (state.isLoading) {
+    els.loadingNoticeMessage.textContent = state.loadingMessage || "Loading metrics data...";
+    els.loadingNotice.hidden = false;
+    return;
+  }
+
+  els.loadingNotice.hidden = true;
+  els.loadingNoticeMessage.textContent = "Loading metrics data...";
+}
+
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function runWithLoadingNotice(message, loader) {
+  const normalizedMessage = String(message || "").trim() || "Loading metrics data...";
+  setLoadingState(true, normalizedMessage);
+  els.heroSubtitle.textContent = normalizedMessage;
+  await waitForNextPaint();
+  try {
+    return await loader();
+  } finally {
+    setLoadingState(false);
+  }
 }
 
 function renderTaskControls() {
@@ -2683,9 +2753,11 @@ function applyLoadedResult(result) {
 }
 
 async function activateServerSource() {
-  els.heroSubtitle.textContent = "Loading metrics from server source...";
   try {
-    const result = await loadFromServer();
+    const result = await runWithLoadingNotice(
+      state.runs.length ? "Refreshing metrics from server source..." : "Loading metrics from server source...",
+      () => loadFromServer()
+    );
     state.activeDirectoryHandle = null;
     state.activeFiles = [];
     applyLoadedResult(result);
@@ -2702,9 +2774,11 @@ async function activateServerSource() {
 }
 
 async function activateFolderSource(dirHandle) {
-  els.heroSubtitle.textContent = "Loading metrics from selected folder...";
   try {
-    const result = await loadFromDirectoryHandle(dirHandle);
+    const result = await runWithLoadingNotice(
+      state.runs.length ? "Refreshing metrics from selected folder..." : "Loading metrics from selected folder...",
+      () => loadFromDirectoryHandle(dirHandle)
+    );
     applyLoadedResult(result);
     const warningInfo = result.warnings.length ? ` (${result.warnings.length} warning(s))` : "";
     els.heroSubtitle.textContent = `Loaded ${result.runs.length.toLocaleString()} runs from local folder${warningInfo}.`;
@@ -2715,9 +2789,11 @@ async function activateFolderSource(dirHandle) {
 }
 
 async function activateFilesSource(files) {
-  els.heroSubtitle.textContent = "Loading metrics from selected files...";
   try {
-    const result = await loadFromFiles(files);
+    const result = await runWithLoadingNotice(
+      state.runs.length ? "Refreshing metrics from selected files..." : "Loading metrics from selected files...",
+      () => loadFromFiles(files)
+    );
     applyLoadedResult(result);
     const warningInfo = result.warnings.length ? ` (${result.warnings.length} warning(s))` : "";
     els.heroSubtitle.textContent = `Loaded ${result.runs.length.toLocaleString()} runs from selected files${warningInfo}.`;
@@ -2745,6 +2821,7 @@ async function init() {
     state.sourceMode = "none";
     state.sourceFileCount = 0;
     state.warnings = [];
+    setLoadingState(false);
     updateSourceStatus();
     els.heroSubtitle.textContent = "Choose a local data source to load metrics.";
     return;
