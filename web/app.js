@@ -75,6 +75,7 @@ const PERCENT_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", 
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "table", "best_by_task"]);
 const LEADERBOARD_TABLE_METRICS = ["accuracy", "macro_f1", "macro_precision", "macro_recall"];
+let leaderboardMetricsScrollCleanup = null;
 
 const METRIC_LABELS = {
   accuracy: "Accuracy",
@@ -1773,6 +1774,56 @@ function renderLeaderboardChart(container, runs) {
   });
 }
 
+function cleanupLeaderboardMetricsScrollAffordance() {
+  if (typeof leaderboardMetricsScrollCleanup === "function") {
+    leaderboardMetricsScrollCleanup();
+    leaderboardMetricsScrollCleanup = null;
+  }
+}
+
+function setupLeaderboardMetricsScrollAffordance(wrap, hint) {
+  cleanupLeaderboardMetricsScrollAffordance();
+
+  const update = () => {
+    const maxScrollLeft = Math.max(wrap.scrollWidth - wrap.clientWidth, 0);
+    const hasOverflow = maxScrollLeft > 12;
+    const atStart = wrap.scrollLeft <= 8;
+    const atEnd = maxScrollLeft - wrap.scrollLeft <= 8;
+
+    wrap.classList.toggle("has-horizontal-overflow", hasOverflow);
+    wrap.classList.toggle("is-scroll-start", hasOverflow && atStart);
+    wrap.classList.toggle("is-scroll-mid", hasOverflow && !atStart && !atEnd);
+    wrap.classList.toggle("is-scroll-end", hasOverflow && atEnd);
+    hint.classList.toggle("is-visible", hasOverflow && atStart);
+  };
+
+  const onScroll = () => update();
+  const onResize = () => update();
+  let resizeObserver = null;
+
+  wrap.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onResize);
+
+  if (typeof ResizeObserver === "function") {
+    resizeObserver = new ResizeObserver(update);
+    resizeObserver.observe(wrap);
+    const table = wrap.querySelector("table");
+    if (table) {
+      resizeObserver.observe(table);
+    }
+  }
+
+  requestAnimationFrame(update);
+
+  leaderboardMetricsScrollCleanup = () => {
+    wrap.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", onResize);
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+    }
+  };
+}
+
 function renderLeaderboardMetricsTable(container, runs) {
   const metricKey = state.sortBy;
   const source = runs.filter((run) =>
@@ -1804,6 +1855,11 @@ function renderLeaderboardMetricsTable(container, runs) {
   summary.className = "leaderboard-metrics-summary muted";
   summary.textContent = "Highlighted cells mark best score per metric in the current selection.";
   container.appendChild(summary);
+
+  const scrollHint = document.createElement("p");
+  scrollHint.className = "leaderboard-scroll-note";
+  scrollHint.textContent = "Swipe sideways to reveal more metrics";
+  container.appendChild(scrollHint);
 
   const wrap = document.createElement("div");
   wrap.className = "leaderboard-metrics-wrap";
@@ -1856,9 +1912,11 @@ function renderLeaderboardMetricsTable(container, runs) {
   table.appendChild(tbody);
   wrap.appendChild(table);
   container.appendChild(wrap);
+  setupLeaderboardMetricsScrollAffordance(wrap, scrollHint);
 }
 
 function renderLeaderboard(runs) {
+  cleanupLeaderboardMetricsScrollAffordance();
   renderLeaderboardTabControls();
   els.leaderboardChart.innerHTML = "";
 
