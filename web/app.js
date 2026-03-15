@@ -19,6 +19,8 @@ const state = {
   selectedTags: [],
   selectedRunPath: null,
   sortBy: "accuracy",
+  leaderboardTableSortKey: null,
+  leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
   radarAxis: "task",
   hideNoAccuracy: false,
@@ -101,6 +103,8 @@ const LEADERBOARD_TABLE_METRICS = [
   "macro_recall",
   "calibration_ece",
 ];
+const LEADERBOARD_TABLE_SORTABLE_KEYS = new Set(["run", ...LEADERBOARD_TABLE_METRICS]);
+const SORT_DIRECTIONS = new Set(["asc", "desc"]);
 let leaderboardMetricsScrollCleanup = null;
 
 const METRIC_LABELS = {
@@ -337,6 +341,24 @@ function compareMetricNumbers(valueA, valueB, metricKey) {
   return isLowerBetterMetric(metricKey) ? valueA - valueB : valueB - valueA;
 }
 
+function compareNullableNumbers(valueA, valueB) {
+  const aValid = typeof valueA === "number" && Number.isFinite(valueA);
+  const bValid = typeof valueB === "number" && Number.isFinite(valueB);
+  if (!aValid && !bValid) {
+    return 0;
+  }
+  if (!aValid) {
+    return 1;
+  }
+  if (!bValid) {
+    return -1;
+  }
+  if (valueA === valueB) {
+    return 0;
+  }
+  return valueA < valueB ? -1 : 1;
+}
+
 function getPreferredMetricValue(values, metricKey) {
   const numeric = (values || []).filter((value) => typeof value === "number" && Number.isFinite(value));
   if (!numeric.length) {
@@ -367,6 +389,73 @@ function parseSemicolonTags(value) {
 function parseRunTimestampMs(run) {
   const ts = Date.parse(run.timestamp || "");
   return Number.isFinite(ts) ? ts : -Infinity;
+}
+
+function getDefaultSortDirectionForMetric(metricKey) {
+  return isLowerBetterMetric(metricKey) ? "asc" : "desc";
+}
+
+function getLeaderboardMetricsTableRunLabel(run) {
+  return `${run.task} / ${getRunModelDisplayName(run)}`;
+}
+
+function resolveLeaderboardMetricsTableSortSpec() {
+  const isExplicitSort =
+    LEADERBOARD_TABLE_SORTABLE_KEYS.has(state.leaderboardTableSortKey) &&
+    SORT_DIRECTIONS.has(state.leaderboardTableSortDirection);
+  if (isExplicitSort) {
+    return {
+      key: state.leaderboardTableSortKey,
+      direction: state.leaderboardTableSortDirection,
+    };
+  }
+  return {
+    key: state.sortBy,
+    direction: getDefaultSortDirectionForMetric(state.sortBy),
+  };
+}
+
+function compareLeaderboardMetricsTableRows(runA, runB, sortSpec) {
+  const key = sortSpec && sortSpec.key ? sortSpec.key : state.sortBy;
+  const direction = sortSpec && sortSpec.direction === "asc" ? "asc" : "desc";
+  let diff = 0;
+
+  if (key === "run") {
+    diff = getLeaderboardMetricsTableRunLabel(runA).localeCompare(
+      getLeaderboardMetricsTableRunLabel(runB)
+    );
+  } else {
+    diff = compareNullableNumbers(getMetricValueForRun(runA, key), getMetricValueForRun(runB, key));
+  }
+
+  if (direction === "desc") {
+    diff *= -1;
+  }
+  if (diff !== 0) {
+    return diff;
+  }
+  const tsCmp = parseRunTimestampMs(runB) - parseRunTimestampMs(runA);
+  if (tsCmp !== 0) {
+    return tsCmp;
+  }
+  return runA.fileName.localeCompare(runB.fileName);
+}
+
+function setLeaderboardMetricsTableSort(nextKey) {
+  if (!LEADERBOARD_TABLE_SORTABLE_KEYS.has(nextKey)) {
+    return;
+  }
+  const current = resolveLeaderboardMetricsTableSortSpec();
+  if (current.key === nextKey) {
+    state.leaderboardTableSortKey = nextKey;
+    state.leaderboardTableSortDirection = current.direction === "asc" ? "desc" : "asc";
+  } else {
+    state.leaderboardTableSortKey = nextKey;
+    state.leaderboardTableSortDirection =
+      nextKey === "run" ? "asc" : getDefaultSortDirectionForMetric(nextKey);
+  }
+  persistUiState();
+  render();
 }
 
 function getConfiguredControl(run, key) {
@@ -881,6 +970,8 @@ function persistUiState() {
     selectedModels: state.selectedModels,
     selectedTags: state.selectedTags,
     sortBy: state.sortBy,
+    leaderboardTableSortKey: state.leaderboardTableSortKey,
+    leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
     radarAxis: state.radarAxis,
     hideNoAccuracy: state.hideNoAccuracy,
@@ -916,6 +1007,18 @@ function restoreUiState() {
       }
       if (typeof payload.sortBy === "string" && METRIC_KEYS.has(payload.sortBy)) {
         state.sortBy = payload.sortBy;
+      }
+      if (
+        typeof payload.leaderboardTableSortKey === "string" &&
+        LEADERBOARD_TABLE_SORTABLE_KEYS.has(payload.leaderboardTableSortKey)
+      ) {
+        state.leaderboardTableSortKey = payload.leaderboardTableSortKey;
+      }
+      if (
+        typeof payload.leaderboardTableSortDirection === "string" &&
+        SORT_DIRECTIONS.has(payload.leaderboardTableSortDirection)
+      ) {
+        state.leaderboardTableSortDirection = payload.leaderboardTableSortDirection;
       }
       if (typeof payload.leaderboardTab === "string" && LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
         state.leaderboardTab = payload.leaderboardTab;
@@ -2048,7 +2151,7 @@ function setupLeaderboardMetricsScrollAffordance(wrap, hint) {
 }
 
 function renderLeaderboardMetricsTable(container, runs) {
-  const metricKey = state.sortBy;
+  const sortSpec = resolveLeaderboardMetricsTableSortSpec();
   const source = runs.filter((run) =>
     LEADERBOARD_TABLE_METRICS.some((key) => getMetricValueForRun(run, key) !== null)
   );
@@ -2066,17 +2169,12 @@ function renderLeaderboardMetricsTable(container, runs) {
     );
   });
 
-  const sorted = [...source].sort((a, b) => {
-    const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
-    if (diff !== 0) {
-      return diff;
-    }
-    return parseRunTimestampMs(b) - parseRunTimestampMs(a);
-  });
+  const sorted = [...source].sort((a, b) => compareLeaderboardMetricsTableRows(a, b, sortSpec));
 
   const summary = document.createElement("p");
   summary.className = "leaderboard-metrics-summary muted";
-  summary.textContent = "Highlighted cells mark the preferred value per metric in the current selection.";
+  summary.textContent =
+    "Highlighted cells mark the preferred value per metric in the current selection. Click a column header to sort.";
   container.appendChild(summary);
 
   const scrollHint = document.createElement("p");
@@ -2091,9 +2189,24 @@ function renderLeaderboardMetricsTable(container, runs) {
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  ["Run", ...LEADERBOARD_TABLE_METRICS.map((key) => METRIC_LABELS[key] || key)].forEach((label) => {
+  const tableColumns = [{ key: "run", label: "Run" }].concat(
+    LEADERBOARD_TABLE_METRICS.map((key) => ({
+      key,
+      label: METRIC_LABELS[key] || key,
+    }))
+  );
+  tableColumns.forEach((column) => {
+    const isActiveSort = sortSpec.key === column.key;
+    const sortLabel = isActiveSort ? (sortSpec.direction === "asc" ? " ^" : " v") : "";
     const th = document.createElement("th");
-    th.textContent = label;
+    th.setAttribute("aria-sort", isActiveSort ? (sortSpec.direction === "asc" ? "ascending" : "descending") : "none");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `sort-head${isActiveSort ? " active" : ""}`;
+    button.textContent = `${column.label}${sortLabel}`;
+    button.setAttribute("aria-label", `Sort by ${column.label}`);
+    button.addEventListener("click", () => setLeaderboardMetricsTableSort(column.key));
+    th.appendChild(button);
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
@@ -2115,7 +2228,7 @@ function renderLeaderboardMetricsTable(container, runs) {
     const runCell = document.createElement("td");
     runCell.className = "leaderboard-run-cell";
     runCell.title = `${run.task} / ${getRunModelDisplayName(run)} / ${run.fileName}`;
-    runCell.textContent = `${run.task} / ${getRunModelDisplayName(run)}`;
+    runCell.textContent = getLeaderboardMetricsTableRunLabel(run);
     tr.appendChild(runCell);
 
     LEADERBOARD_TABLE_METRICS.forEach((key) => {

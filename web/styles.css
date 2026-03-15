@@ -1332,6 +1332,16 @@ html[data-theme="light"] .bar-track-label {
   color: var(--ink);
 }
 
+.sort-head.active {
+  color: var(--ink);
+}
+
+.sort-head:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .panel,
 .kpi,
 .card,
