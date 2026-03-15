@@ -82,11 +82,25 @@ const els = {
   barRowTemplate: document.querySelector("#barRowTemplate"),
 };
 
-const METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
-const PERCENT_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
+const METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall", "calibration_ece"]);
+const PERCENT_METRIC_KEYS = new Set([
+  "accuracy",
+  "macro_f1",
+  "macro_precision",
+  "macro_recall",
+  "calibration_ece",
+]);
+const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
+const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "table", "best_by_task"]);
-const LEADERBOARD_TABLE_METRICS = ["accuracy", "macro_f1", "macro_precision", "macro_recall"];
+const LEADERBOARD_TABLE_METRICS = [
+  "accuracy",
+  "macro_f1",
+  "macro_precision",
+  "macro_recall",
+  "calibration_ece",
+];
 let leaderboardMetricsScrollCleanup = null;
 
 const METRIC_LABELS = {
@@ -94,6 +108,7 @@ const METRIC_LABELS = {
   macro_f1: "Macro F1",
   macro_precision: "Macro Precision",
   macro_recall: "Macro Recall",
+  calibration_ece: "Calibration ECE",
 };
 
 const RADAR_AXIS_LABELS = {
@@ -296,6 +311,40 @@ function safeNum(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function isLowerBetterMetric(metricKey) {
+  return LOWER_IS_BETTER_METRIC_KEYS.has(metricKey);
+}
+
+function supportsApproximateCi(metricKey) {
+  return APPROX_CI_METRIC_KEYS.has(metricKey);
+}
+
+function compareMetricNumbers(valueA, valueB, metricKey) {
+  const aValid = typeof valueA === "number" && Number.isFinite(valueA);
+  const bValid = typeof valueB === "number" && Number.isFinite(valueB);
+  if (!aValid && !bValid) {
+    return 0;
+  }
+  if (!aValid) {
+    return 1;
+  }
+  if (!bValid) {
+    return -1;
+  }
+  if (valueA === valueB) {
+    return 0;
+  }
+  return isLowerBetterMetric(metricKey) ? valueA - valueB : valueB - valueA;
+}
+
+function getPreferredMetricValue(values, metricKey) {
+  const numeric = (values || []).filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (!numeric.length) {
+    return null;
+  }
+  return isLowerBetterMetric(metricKey) ? Math.min(...numeric) : Math.max(...numeric);
+}
+
 function asTrimmedString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -371,6 +420,10 @@ function normalizeRun(filePath, payload) {
   const usage = payload.usage_metadata_summary || {};
   const tokenTotals = payload.token_usage_totals || {};
   const controls = payload.request_control_summary || {};
+  const calibrationMetrics =
+    payload.calibration_metrics && typeof payload.calibration_metrics === "object"
+      ? payload.calibration_metrics
+      : {};
   const ts = payload.first_prompt_timestamp || nameParts.timestamp;
   const taskNameFromMetrics = asTrimmedString(payload.task_name);
   const providerFromMetrics =
@@ -387,6 +440,9 @@ function normalizeRun(filePath, payload) {
   const macroPrecision = toPct(safeNum(payload.macro_precision));
   const macroRecall = toPct(safeNum(payload.macro_recall));
   const macroF1 = toPct(safeNum(payload.macro_f1));
+  const calibrationEce = toPct(safeNum(calibrationMetrics.ece));
+  const calibrationMce = toPct(safeNum(calibrationMetrics.mce));
+  const calibrationBrierScore = safeNum(calibrationMetrics.brier_score);
 
   return {
     filePath: normalizedFilePath,
@@ -403,6 +459,11 @@ function normalizeRun(filePath, payload) {
     macroPrecision,
     macroRecall,
     macroF1,
+    calibrationEce,
+    calibrationMce,
+    calibrationBrierScore,
+    calibrationSampleCount: safeNum(calibrationMetrics.sample_count),
+    calibrationAvailable: calibrationMetrics.available === true && calibrationEce !== null,
     totalExamples:
       safeNum(payload.total_examples) ??
       safeNum(payload.evaluated_example_count) ??
@@ -1171,11 +1232,8 @@ function getMetricValueForRun(run, key) {
   if (key === "macro_f1") return run.macroF1;
   if (key === "macro_precision") return run.macroPrecision;
   if (key === "macro_recall") return run.macroRecall;
+  if (key === "calibration_ece") return run.calibrationEce;
   return null;
-}
-
-function scoreForSort(run, key) {
-  return getMetricValueForRun(run, key) ?? -Infinity;
 }
 
 function isPercentMetric(metricKey) {
@@ -1229,7 +1287,7 @@ function computeApproximateCi95(metricValue, sampleSize) {
 }
 
 function getRunMetricConfidence(run, metricKey) {
-  if (!isPercentMetric(metricKey)) {
+  if (!supportsApproximateCi(metricKey)) {
     return null;
   }
   const metricValue = getMetricValueForRun(run, metricKey);
@@ -1238,7 +1296,7 @@ function getRunMetricConfidence(run, metricKey) {
 }
 
 function getMeanMetricConfidence(runs, metricKey, meanValue) {
-  if (!isPercentMetric(metricKey)) {
+  if (!supportsApproximateCi(metricKey)) {
     return null;
   }
   const ciRows = runs
@@ -1327,12 +1385,10 @@ function getFilteredRuns() {
   });
 
   runs.sort((a, b) => {
-    const valueA = scoreForSort(a, state.sortBy);
-    const valueB = scoreForSort(b, state.sortBy);
-    if (valueB !== valueA) return valueB - valueA;
-    const f1A = scoreForSort(a, "macro_f1");
-    const f1B = scoreForSort(b, "macro_f1");
-    if (f1B !== f1A) return f1B - f1A;
+    const primary = compareMetricNumbers(getMetricValueForRun(a, state.sortBy), getMetricValueForRun(b, state.sortBy), state.sortBy);
+    if (primary !== 0) return primary;
+    const secondary = compareMetricNumbers(getMetricValueForRun(a, "macro_f1"), getMetricValueForRun(b, "macro_f1"), "macro_f1");
+    if (secondary !== 0) return secondary;
     return parseRunTimestampMs(b) - parseRunTimestampMs(a);
   });
 
@@ -1738,16 +1794,26 @@ function renderLeaderboardChart(container, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const source = runs.filter((run) => getMetricValueForRun(run, metricKey) !== null);
+  const metricIsLowerBetter = isLowerBetterMetric(metricKey);
+  const showApproximateCi = supportsApproximateCi(metricKey);
 
   if (!source.length) {
     container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
     return;
   }
 
-  const ciNote = document.createElement("p");
-  ciNote.className = "leaderboard-ci-note muted";
-  ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
-  container.appendChild(ciNote);
+  if (showApproximateCi) {
+    const ciNote = document.createElement("p");
+    ciNote.className = "leaderboard-ci-note muted";
+    ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
+    container.appendChild(ciNote);
+  }
+  if (metricIsLowerBetter) {
+    const directionNote = document.createElement("p");
+    directionNote.className = "leaderboard-ci-note muted";
+    directionNote.textContent = `${metricLabel} is lower-is-better.`;
+    container.appendChild(directionNote);
+  }
   const hasMultipleTasks = new Set(runs.map((run) => asTrimmedString(run.task)).filter(Boolean)).size > 1;
 
   const groups = new Map();
@@ -1761,22 +1827,21 @@ function renderLeaderboardChart(container, runs) {
 
   const entries = Array.from(groups.entries()).map(([model, modelRuns]) => {
     const runsSorted = [...modelRuns].sort((a, b) => {
-      const scoreA = scoreForSort(a, metricKey);
-      const scoreB = scoreForSort(b, metricKey);
-      if (scoreB !== scoreA) {
-        return scoreB - scoreA;
+      const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
+      if (diff !== 0) {
+        return diff;
       }
       return parseRunTimestampMs(b) - parseRunTimestampMs(a);
     });
     if (runsSorted.length === 1) {
       const run = runsSorted[0];
-      const score = scoreForSort(run, metricKey);
+      const metricValue = getMetricValueForRun(run, metricKey);
       return {
         type: "run",
         key: run.filePath,
         label: getRunModelDisplayName(run),
-        score: Number.isFinite(score) ? score : 0,
-        ci: getRunMetricConfidence(run, metricKey),
+        metricValue: typeof metricValue === "number" && Number.isFinite(metricValue) ? metricValue : 0,
+        ci: showApproximateCi ? getRunMetricConfidence(run, metricKey) : null,
         run,
       };
     }
@@ -1789,26 +1854,26 @@ function renderLeaderboardChart(container, runs) {
       type: "group",
       key: model,
       label: groupLabel,
-      score: avgMetric,
+      metricValue: avgMetric,
       avgMetric,
-      ci: getMeanMetricConfidence(runsSorted, metricKey, avgMetric),
+      ci: showApproximateCi ? getMeanMetricConfidence(runsSorted, metricKey, avgMetric) : null,
       runs: runsSorted,
     };
   });
 
   entries.sort((a, b) => {
-    if (b.score !== a.score) {
-      return b.score - a.score;
+    const diff = compareMetricNumbers(a.metricValue, b.metricValue, metricKey);
+    if (diff !== 0) {
+      return diff;
     }
     return a.label.localeCompare(b.label);
   });
 
   const groupedEntries = entries.filter((entry) => entry.type === "group");
   const rankedRuns = [...source].sort((a, b) => {
-    const scoreA = scoreForSort(a, metricKey);
-    const scoreB = scoreForSort(b, metricKey);
-    if (scoreB !== scoreA) {
-      return scoreB - scoreA;
+    const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
+    if (diff !== 0) {
+      return diff;
     }
     return parseRunTimestampMs(b) - parseRunTimestampMs(a);
   });
@@ -1820,12 +1885,12 @@ function renderLeaderboardChart(container, runs) {
     groupedSummary.textContent =
       groupedEntries.length > 1
         ? "TOP is based on the best individual run; if hidden in a collapsed group, the marker appears on the group summary."
-        : "Grouped rows include run distribution overlays with CI.";
+        : `Grouped rows include run distribution overlays${showApproximateCi ? " with CI" : ""}.`;
     container.appendChild(groupedSummary);
   }
 
   const maxScore = resolveLeaderboardBarMax(metricKey, [
-    ...entries.map((entry) => entry.score),
+    ...entries.map((entry) => entry.metricValue),
     ...source.map((run) => getMetricValueForRun(run, metricKey)),
   ]);
   entries.forEach((entry) => {
@@ -1842,7 +1907,7 @@ function renderLeaderboardChart(container, runs) {
       container.appendChild(
         createBarRow(
           entry.label,
-          entry.score,
+          entry.metricValue,
           maxScore,
           (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
@@ -1995,14 +2060,14 @@ function renderLeaderboardMetricsTable(container, runs) {
 
   const bestByMetric = {};
   LEADERBOARD_TABLE_METRICS.forEach((key) => {
-    const values = source
-      .map((run) => getMetricValueForRun(run, key))
-      .filter((value) => typeof value === "number" && Number.isFinite(value));
-    bestByMetric[key] = values.length ? Math.max(...values) : null;
+    bestByMetric[key] = getPreferredMetricValue(
+      source.map((run) => getMetricValueForRun(run, key)),
+      key
+    );
   });
 
   const sorted = [...source].sort((a, b) => {
-    const diff = scoreForSort(b, metricKey) - scoreForSort(a, metricKey);
+    const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
     if (diff !== 0) {
       return diff;
     }
@@ -2011,7 +2076,7 @@ function renderLeaderboardMetricsTable(container, runs) {
 
   const summary = document.createElement("p");
   summary.className = "leaderboard-metrics-summary muted";
-  summary.textContent = "Highlighted cells mark best score per metric in the current selection.";
+  summary.textContent = "Highlighted cells mark the preferred value per metric in the current selection.";
   container.appendChild(summary);
 
   const scrollHint = document.createElement("p");
@@ -2026,7 +2091,7 @@ function renderLeaderboardMetricsTable(container, runs) {
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  ["Run", "Accuracy", "Macro F1", "Macro Precision", "Macro Recall"].forEach((label) => {
+  ["Run", ...LEADERBOARD_TABLE_METRICS.map((key) => METRIC_LABELS[key] || key)].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
     headRow.appendChild(th);
@@ -2057,10 +2122,10 @@ function renderLeaderboardMetricsTable(container, runs) {
       const value = getMetricValueForRun(run, key);
       const td = document.createElement("td");
       td.className = "mono";
-      td.textContent = value == null ? "N/A" : `${formatNum(value, 2)}%`;
+      td.textContent = value == null ? "N/A" : formatMetric(key, value);
       if (value != null && bestByMetric[key] != null && Math.abs(value - bestByMetric[key]) < 1e-9) {
         td.classList.add("metric-best");
-        td.title = `Best ${METRIC_LABELS[key]} in current selection`;
+        td.title = `Preferred ${METRIC_LABELS[key]} in current selection`;
       }
       tr.appendChild(td);
     });
@@ -2097,23 +2162,31 @@ function renderBestByTask(container, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const bestByTask = {};
+  const metricIsLowerBetter = isLowerBetterMetric(metricKey);
 
   runs.forEach((run) => {
     const metricValue = getMetricValueForRun(run, metricKey);
     if (metricValue === null || Number.isNaN(metricValue)) return;
     const current = bestByTask[run.task];
-    if (!current || metricValue > current.metricValue) {
+    if (!current || compareMetricNumbers(metricValue, current.metricValue, metricKey) < 0) {
       bestByTask[run.task] = { run, metricValue };
     }
   });
 
   const items = Object.values(bestByTask)
-    .sort((a, b) => b.metricValue - a.metricValue)
+    .sort((a, b) => compareMetricNumbers(a.metricValue, b.metricValue, metricKey))
     .slice(0, 16);
 
   if (!items.length) {
     container.innerHTML = `<p class="muted">No task-level ${metricLabel.toLowerCase()} data found.</p>`;
     return;
+  }
+
+  if (metricIsLowerBetter) {
+    const note = document.createElement("p");
+    note.className = "leaderboard-ci-note muted";
+    note.textContent = `${metricLabel} is lower-is-better.`;
+    container.appendChild(note);
   }
 
   const max = resolveLeaderboardBarMax(
@@ -2252,31 +2325,35 @@ function buildRadarAxisDataset(runs, metricKey, axisMode) {
         .map((run) => getMetricValueForRun(run, metricKey))
         .filter((value) => typeof value === "number" && Number.isFinite(value));
       if (!numeric.length) {
-        return 0;
+        return null;
       }
       return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
     });
-    const nonZero = values.filter((value) => value > 0);
-    const mean = nonZero.length
-      ? nonZero.reduce((sum, value) => sum + value, 0) / nonZero.length
-      : 0;
+    const validValues = values.filter((value) => typeof value === "number" && Number.isFinite(value));
+    const mean = validValues.length
+      ? validValues.reduce((sum, value) => sum + value, 0) / validValues.length
+      : null;
     return { model, values, mean };
   });
+  const populatedSeries = series.filter((row) =>
+    row.values.some((value) => typeof value === "number" && Number.isFinite(value))
+  );
 
-  const useAutoTopModels = state.selectedModels.length === 0 && series.length > 8;
+  const useAutoTopModels = state.selectedModels.length === 0 && populatedSeries.length > 8;
   const visibleSeries = useAutoTopModels
-    ? [...series]
+    ? [...populatedSeries]
         .sort((a, b) => {
-          if (b.mean !== a.mean) return b.mean - a.mean;
+          const diff = compareMetricNumbers(a.mean, b.mean, metricKey);
+          if (diff !== 0) return diff;
           return a.model.localeCompare(b.model);
         })
         .slice(0, 8)
-    : series;
+    : populatedSeries;
 
   return {
     axes: axesCandidates,
     series: visibleSeries,
-    hiddenModelCount: Math.max(0, series.length - visibleSeries.length),
+    hiddenModelCount: Math.max(0, populatedSeries.length - visibleSeries.length),
   };
 }
 
@@ -2300,7 +2377,7 @@ function buildRadarSvg(tasks, seriesRows, metricKey) {
   svg.setAttribute("class", "radar-svg");
   svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "Radar chart comparing model proficiency across selected dimensions");
+  svg.setAttribute("aria-label", "Radar chart comparing model metric profiles across selected dimensions");
 
   const angleFor = (index) => -Math.PI / 2 + (2 * Math.PI * index) / tasks.length;
   const pointAt = (angle, dist) => [center + Math.cos(angle) * dist, center + Math.sin(angle) * dist];
@@ -2341,9 +2418,12 @@ function buildRadarSvg(tasks, seriesRows, metricKey) {
     const color = RADAR_COLORS[idx % RADAR_COLORS.length];
     const points = tasks
       .map((_, axisIndex) => {
-        const raw = toNonNegativeNumber(row.values[axisIndex]);
+        const rawValue = row.values[axisIndex];
         const axisMax = axisMaxima[axisIndex] || 1;
-        const normalized = Math.max(0, Math.min(1, raw / axisMax));
+        const normalized =
+          typeof rawValue === "number" && Number.isFinite(rawValue)
+            ? Math.max(0, Math.min(1, rawValue / axisMax))
+            : (isLowerBetterMetric(metricKey) ? 1 : 0);
         return pointAt(angleFor(axisIndex), radius * normalized);
       })
       .map((xy) => xy.join(","))
@@ -2366,8 +2446,15 @@ function renderRadarPanel(panel, runs) {
   const axisLabel = RADAR_AXIS_LABELS[axisMode] || "Axis";
   const header = document.createElement("h4");
   header.className = "token-radar-header";
-  header.textContent = `Proficiency by ${axisLabel.toLowerCase()} (${metricLabel})`;
+  header.textContent = `Profile by ${axisLabel.toLowerCase()} (${metricLabel})`;
   panel.appendChild(header);
+
+  if (isLowerBetterMetric(metricKey)) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = `${metricLabel} is lower-is-better. Smaller shapes indicate better calibration.`;
+    panel.appendChild(note);
+  }
 
   const toggleWrap = document.createElement("div");
   toggleWrap.className = "radar-mode-toggle";
@@ -2404,7 +2491,6 @@ function renderRadarPanel(panel, runs) {
 
   const legend = document.createElement("div");
   legend.className = "radar-legend";
-  const suffix = isPercentMetric(metricKey) ? "%" : "";
   dataset.series.forEach((row, idx) => {
     const entry = document.createElement("div");
     entry.className = "radar-legend-row";
@@ -2413,7 +2499,7 @@ function renderRadarPanel(panel, runs) {
     line.style.background = RADAR_COLORS[idx % RADAR_COLORS.length];
     const text = document.createElement("span");
     text.className = "mono";
-    text.textContent = `${row.model} | avg ${formatNum(row.mean, 2)}${suffix}`;
+    text.textContent = `${row.model} | avg ${row.mean == null ? "N/A" : formatMetric(metricKey, row.mean)}`;
     entry.appendChild(line);
     entry.appendChild(text);
     legend.appendChild(entry);
@@ -2423,7 +2509,7 @@ function renderRadarPanel(panel, runs) {
   if (dataset.hiddenModelCount > 0) {
     const note = document.createElement("p");
     note.className = "muted";
-    note.textContent = `Radar shows top ${dataset.series.length} models by average ${metricLabel.toLowerCase()}.`;
+    note.textContent = `Radar shows best ${dataset.series.length} models by average ${metricLabel.toLowerCase()}.`;
     wrap.appendChild(note);
   }
 
@@ -2537,6 +2623,10 @@ function renderTable(runs) {
       renderTableCell(
         "Macro F1",
         run.macroF1 !== null ? `${formatNum(run.macroF1, 2)}%` : '<span class="muted">N/A</span>'
+      ),
+      renderTableCell(
+        "Calibration ECE",
+        run.calibrationEce !== null ? `${formatNum(run.calibrationEce, 2)}%` : '<span class="muted">N/A</span>'
       ),
       renderTableCell("Requests", formatNum(run.requestsTotal, 0), "mono"),
       renderTableCell("Cached Input Tokens", formatNum(run.cachedTokens, 0), "mono"),
@@ -2687,6 +2777,10 @@ function fillRunDetailsContent(run) {
     ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
     ["Macro Precision", run.macroPrecision == null ? "N/A" : `${formatNum(run.macroPrecision, 2)}%`],
     ["Macro Recall", run.macroRecall == null ? "N/A" : `${formatNum(run.macroRecall, 2)}%`],
+    ["Calibration ECE", run.calibrationEce == null ? "N/A" : `${formatNum(run.calibrationEce, 2)}%`],
+    ["Calibration MCE", run.calibrationMce == null ? "N/A" : `${formatNum(run.calibrationMce, 2)}%`],
+    ["Brier Score", run.calibrationBrierScore == null ? "N/A" : formatNum(run.calibrationBrierScore, 3)],
+    ["Calibration Samples", formatNum(run.calibrationSampleCount, 0)],
     ["Predictions", formatNum(run.predictionCount, 0)],
     ["Evaluated Examples", formatNum(run.totalExamples, 0)],
     ["Truth Label Count", formatNum(run.truthLabelCount, 0)],
