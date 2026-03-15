@@ -112,6 +112,24 @@
         <div class="loading-notice-copy">
           <p id="loadingNoticeMessage">Loading metrics data...</p>
           <p>The dashboard will update as soon as the metrics finish loading.</p>
+          <div id="loadingProgress" class="loading-progress" hidden>
+            <div class="loading-progress-meta">
+              <span id="loadingProgressLabel">0 / 0 files</span>
+              <span id="loadingProgressPercent">0%</span>
+            </div>
+            <div
+              id="loadingProgressTrack"
+              class="loading-progress-track"
+              role="progressbar"
+              aria-label="Metrics loading progress"
+              aria-valuemin="0"
+              aria-valuemax="0"
+              aria-valuenow="0"
+              aria-valuetext="0 of 0 metric files processed"
+            >
+              <span id="loadingProgressFill" class="loading-progress-fill"></span>
+            </div>
+          </div>
         </div>
       </section>
 

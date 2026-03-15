@@ -32,6 +32,8 @@ const state = {
   mobileSidebarOpen: false,
   isLoading: false,
   loadingMessage: "",
+  loadingProgressCurrent: 0,
+  loadingProgressTotal: 0,
 };
 
 const els = {
@@ -53,6 +55,11 @@ const els = {
   heroSubtitle: document.querySelector("#heroSubtitle"),
   loadingNotice: document.querySelector("#loadingNotice"),
   loadingNoticeMessage: document.querySelector("#loadingNoticeMessage"),
+  loadingProgress: document.querySelector("#loadingProgress"),
+  loadingProgressLabel: document.querySelector("#loadingProgressLabel"),
+  loadingProgressPercent: document.querySelector("#loadingProgressPercent"),
+  loadingProgressTrack: document.querySelector("#loadingProgressTrack"),
+  loadingProgressFill: document.querySelector("#loadingProgressFill"),
   btnAutoServer: document.querySelector("#btnAutoServer"),
   btnOpenFolder: document.querySelector("#btnOpenFolder"),
   reloadBtn: document.querySelector("#reloadBtn"),
@@ -584,12 +591,22 @@ async function discoverMetricFilesFromServer() {
   return discoverMetricFilesFromDirectoryListings();
 }
 
-async function loadRunsFromServerFileList(files, manifestBaseDirs, warnings) {
+async function loadRunsFromServerFileList(files, manifestBaseDirs, warnings, onProgress = null) {
   const runs = [];
+  const total = Array.isArray(files) ? files.length : 0;
+  if (typeof onProgress === "function" && total > 0) {
+    onProgress(0, total);
+  }
+
+  let processed = 0;
   for (const path of files) {
     const run = await loadRunFromServerCandidates(path, manifestBaseDirs, warnings);
     if (run) {
       runs.push(run);
+    }
+    processed += 1;
+    if (typeof onProgress === "function" && total > 0) {
+      onProgress(processed, total);
     }
   }
   return runs;
@@ -639,18 +656,18 @@ async function loadRunFromServerCandidates(rawPath, manifestBaseDirs, warnings) 
   return null;
 }
 
-async function loadFromServer() {
+async function loadFromServer(onProgress = null) {
   const discovery = await discoverMetricFilesFromServer();
   const files = discovery.files;
   const manifestBaseDirs = discovery.manifestBaseDirs || [];
   const warnings = [];
-  let runs = await loadRunsFromServerFileList(files, manifestBaseDirs, warnings);
+  let runs = await loadRunsFromServerFileList(files, manifestBaseDirs, warnings, onProgress);
   let fileCount = files.length;
 
   if (!runs.length && discovery.source === "manifest") {
     try {
       const listingDiscovery = await discoverMetricFilesFromDirectoryListings(manifestBaseDirs);
-      const listingRuns = await loadRunsFromServerFileList(listingDiscovery.files, [], warnings);
+      const listingRuns = await loadRunsFromServerFileList(listingDiscovery.files, [], warnings, onProgress);
       if (listingRuns.length) {
         runs = listingRuns;
         fileCount = listingDiscovery.files.length;
@@ -690,7 +707,7 @@ async function collectMetricFilesFromDirectoryHandle(dirHandle, prefix = "") {
   return files;
 }
 
-async function loadFromDirectoryHandle(dirHandle) {
+async function loadFromDirectoryHandle(dirHandle, onProgress = null) {
   const metricFiles = await collectMetricFilesFromDirectoryHandle(dirHandle);
   if (!metricFiles.length) {
     throw new Error("No *_metrics.json files found in selected folder.");
@@ -698,6 +715,11 @@ async function loadFromDirectoryHandle(dirHandle) {
 
   const warnings = [];
   const runs = [];
+  const total = metricFiles.length;
+  if (typeof onProgress === "function") {
+    onProgress(0, total);
+  }
+  let processed = 0;
 
   for (const item of metricFiles) {
     try {
@@ -712,6 +734,11 @@ async function loadFromDirectoryHandle(dirHandle) {
         file: item.path,
         message: `Cannot read file (${error.message}).`,
       });
+    } finally {
+      processed += 1;
+      if (typeof onProgress === "function") {
+        onProgress(processed, total);
+      }
     }
   }
 
@@ -723,7 +750,7 @@ async function loadFromDirectoryHandle(dirHandle) {
   };
 }
 
-async function loadFromFiles(fileList) {
+async function loadFromFiles(fileList, onProgress = null) {
   const files = Array.from(fileList || []).filter((file) =>
     String(file.name || "").toLowerCase().endsWith("_metrics.json")
   );
@@ -734,6 +761,11 @@ async function loadFromFiles(fileList) {
 
   const warnings = [];
   const runs = [];
+  const total = files.length;
+  if (typeof onProgress === "function") {
+    onProgress(0, total);
+  }
+  let processed = 0;
 
   for (const file of files) {
     try {
@@ -748,6 +780,11 @@ async function loadFromFiles(fileList) {
         file: file.name,
         message: `Cannot read file (${error.message}).`,
       });
+    } finally {
+      processed += 1;
+      if (typeof onProgress === "function") {
+        onProgress(processed, total);
+      }
     }
   }
 
@@ -1338,6 +1375,10 @@ function setSourceControlsDisabled(disabled) {
 function setLoadingState(isLoading, message = "") {
   state.isLoading = Boolean(isLoading);
   state.loadingMessage = state.isLoading ? String(message || "").trim() : "";
+  if (!state.isLoading) {
+    state.loadingProgressCurrent = 0;
+    state.loadingProgressTotal = 0;
+  }
 
   if (els.main) {
     els.main.setAttribute("aria-busy", state.isLoading ? "true" : "false");
@@ -1352,11 +1393,58 @@ function setLoadingState(isLoading, message = "") {
   if (state.isLoading) {
     els.loadingNoticeMessage.textContent = state.loadingMessage || "Loading metrics data...";
     els.loadingNotice.hidden = false;
+  } else {
+    els.loadingNotice.hidden = true;
+    els.loadingNoticeMessage.textContent = "Loading metrics data...";
+  }
+
+  renderLoadingProgress();
+}
+
+function renderLoadingProgress() {
+  if (
+    !els.loadingProgress ||
+    !els.loadingProgressLabel ||
+    !els.loadingProgressPercent ||
+    !els.loadingProgressTrack ||
+    !els.loadingProgressFill
+  ) {
     return;
   }
 
-  els.loadingNotice.hidden = true;
-  els.loadingNoticeMessage.textContent = "Loading metrics data...";
+  const total = Number.isFinite(state.loadingProgressTotal) ? Math.max(0, state.loadingProgressTotal) : 0;
+  const current = Number.isFinite(state.loadingProgressCurrent)
+    ? Math.max(0, Math.min(state.loadingProgressCurrent, total))
+    : 0;
+
+  if (!state.isLoading || total <= 0) {
+    els.loadingProgress.hidden = true;
+    els.loadingProgressLabel.textContent = "0 / 0 files";
+    els.loadingProgressPercent.textContent = "0%";
+    els.loadingProgressTrack.setAttribute("aria-valuemax", "0");
+    els.loadingProgressTrack.setAttribute("aria-valuenow", "0");
+    els.loadingProgressTrack.setAttribute("aria-valuetext", "0 of 0 metric files processed");
+    els.loadingProgressFill.style.width = "0%";
+    return;
+  }
+
+  const percent = Math.round((current / total) * 100);
+  els.loadingProgress.hidden = false;
+  els.loadingProgressLabel.textContent = `${formatNum(current, 0)} / ${formatNum(total, 0)} files`;
+  els.loadingProgressPercent.textContent = `${percent}%`;
+  els.loadingProgressTrack.setAttribute("aria-valuemax", String(total));
+  els.loadingProgressTrack.setAttribute("aria-valuenow", String(current));
+  els.loadingProgressTrack.setAttribute(
+    "aria-valuetext",
+    `${formatNum(current, 0)} of ${formatNum(total, 0)} metric files processed`
+  );
+  els.loadingProgressFill.style.width = `${percent}%`;
+}
+
+function setLoadingProgress(current, total) {
+  state.loadingProgressCurrent = Number.isFinite(current) ? current : 0;
+  state.loadingProgressTotal = Number.isFinite(total) ? total : 0;
+  renderLoadingProgress();
 }
 
 function waitForNextPaint() {
@@ -1375,7 +1463,7 @@ async function runWithLoadingNotice(message, loader) {
   els.heroSubtitle.textContent = normalizedMessage;
   await waitForNextPaint();
   try {
-    return await loader();
+    return await loader((current, total) => setLoadingProgress(current, total));
   } finally {
     setLoadingState(false);
   }
@@ -2756,7 +2844,7 @@ async function activateServerSource() {
   try {
     const result = await runWithLoadingNotice(
       state.runs.length ? "Refreshing metrics from server source..." : "Loading metrics from server source...",
-      () => loadFromServer()
+      (onProgress) => loadFromServer(onProgress)
     );
     state.activeDirectoryHandle = null;
     state.activeFiles = [];
@@ -2777,7 +2865,7 @@ async function activateFolderSource(dirHandle) {
   try {
     const result = await runWithLoadingNotice(
       state.runs.length ? "Refreshing metrics from selected folder..." : "Loading metrics from selected folder...",
-      () => loadFromDirectoryHandle(dirHandle)
+      (onProgress) => loadFromDirectoryHandle(dirHandle, onProgress)
     );
     applyLoadedResult(result);
     const warningInfo = result.warnings.length ? ` (${result.warnings.length} warning(s))` : "";
@@ -2792,7 +2880,7 @@ async function activateFilesSource(files) {
   try {
     const result = await runWithLoadingNotice(
       state.runs.length ? "Refreshing metrics from selected files..." : "Loading metrics from selected files...",
-      () => loadFromFiles(files)
+      (onProgress) => loadFromFiles(files, onProgress)
     );
     applyLoadedResult(result);
     const warningInfo = result.warnings.length ? ` (${result.warnings.length} warning(s))` : "";
