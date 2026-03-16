@@ -2,7 +2,10 @@ const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
 const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
 const METRICS_SERVER_DIR = "../data/metrics";
 const METRICS_SERVER_DIR_CANDIDATES = [METRICS_SERVER_DIR, "./metrics", "./data/metrics"];
+const DESKTOP_LAYOUT_BREAKPOINT = 1100;
 const MOBILE_LAYOUT_BREAKPOINT = 900;
+const DESKTOP_SIDEBAR_EXPANDED_WIDTH = 420;
+const DESKTOP_SIDEBAR_COLLAPSED_WIDTH = 78;
 const mobileLayoutQuery =
   typeof window.matchMedia === "function"
     ? window.matchMedia(`(max-width: ${MOBILE_LAYOUT_BREAKPOINT}px)`)
@@ -17,11 +20,14 @@ const state = {
   selectedTasks: [],
   selectedModels: [],
   selectedTags: [],
+  timeRanges: [{ from: "", to: "" }],
   selectedRunPath: null,
   sortBy: "accuracy",
   leaderboardTableSortKey: null,
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
+  timeSeriesShowLabels: false,
+  timeSeriesViewport: null,
   radarAxis: "task",
   hideNoAccuracy: false,
   theme: "dark",
@@ -32,6 +38,8 @@ const state = {
   activeFiles: [],
   expandedLeaderboardModels: new Set(),
   mobileSidebarOpen: false,
+  desktopSidebarCollapsed: false,
+  activeTimeRangeEditor: null,
   isLoading: false,
   loadingMessage: "",
   loadingProgressCurrent: 0,
@@ -41,6 +49,8 @@ const state = {
 const els = {
   main: document.querySelector(".main"),
   dashboardSidebar: document.querySelector("#dashboardSidebar"),
+  sidebarCollapseBtn: document.querySelector("#sidebarCollapseBtn"),
+  resetFiltersBtn: document.querySelector("#resetFiltersBtn"),
   mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
   mobileFilterSummary: document.querySelector("#mobileFilterSummary"),
   sidebarCloseBtn: document.querySelector("#sidebarCloseBtn"),
@@ -49,6 +59,9 @@ const els = {
   taskChipList: document.querySelector("#taskChipList"),
   modelSelect: document.querySelector("#modelSelect"),
   modelChipList: document.querySelector("#modelChipList"),
+  timeRangeList: document.querySelector("#timeRangeList"),
+  addTimeRangeBtn: document.querySelector("#addTimeRangeBtn"),
+  timeRangeSummary: document.querySelector("#timeRangeSummary"),
   sortSelect: document.querySelector("#sortSelect"),
   hideNoAccuracy: document.querySelector("#hideNoAccuracy"),
   themeToggle: document.querySelector("#themeToggle"),
@@ -95,7 +108,7 @@ const PERCENT_METRIC_KEYS = new Set([
 const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
-const LEADERBOARD_TAB_KEYS = new Set(["chart", "table", "best_by_task"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "time_series", "table", "best_by_task", "radar"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
   "macro_f1",
@@ -152,6 +165,183 @@ function uniqueNonEmptyStrings(values) {
     out.push(normalized);
   });
   return out;
+}
+
+function createEmptyTimeRange() {
+  return { from: "", to: "" };
+}
+
+function normalizeTimeRanges(ranges) {
+  const source = Array.isArray(ranges) ? ranges : [];
+  const normalized = [];
+  let keptEmptyRange = false;
+
+  source.forEach((range) => {
+    const nextRange = {
+      from: asTrimmedString(range && range.from),
+      to: asTrimmedString(range && range.to),
+    };
+    if (nextRange.from || nextRange.to) {
+      normalized.push(nextRange);
+      return;
+    }
+    if (!keptEmptyRange) {
+      normalized.push(createEmptyTimeRange());
+      keptEmptyRange = true;
+    }
+  });
+
+  return normalized.length ? normalized : [createEmptyTimeRange()];
+}
+
+function isTimeRangeActive(range) {
+  return Boolean(asTrimmedString(range && range.from) || asTrimmedString(range && range.to));
+}
+
+function padDatePart(value) {
+  return String(value).padStart(2, "0");
+}
+
+function getPreferredLocales() {
+  if (typeof navigator !== "undefined") {
+    if (Array.isArray(navigator.languages) && navigator.languages.length) {
+      return navigator.languages;
+    }
+    const single = asTrimmedString(navigator.language);
+    if (single) {
+      return [single];
+    }
+  }
+  return undefined;
+}
+
+function getPrimaryLocale() {
+  const locales = getPreferredLocales();
+  return Array.isArray(locales) && locales.length ? locales[0] : "";
+}
+
+function parseTimestampToMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const raw = asTrimmedString(value);
+  if (!raw) {
+    return null;
+  }
+
+  const localDateTimeMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (localDateTimeMatch) {
+    const [, year, month, day, hour, minute] = localDateTimeMatch;
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      0,
+      0
+    ).getTime();
+  }
+
+  const direct = Date.parse(raw);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+
+  const compactMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})$/);
+  if (compactMatch) {
+    const [, year, month, day, hour, minute] = compactMatch;
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      0,
+      0
+    ).getTime();
+  }
+
+  const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0).getTime();
+  }
+
+  return null;
+}
+
+function parseLocalDateTimeInputMs(value) {
+  const raw = asTrimmedString(value);
+  if (!raw) {
+    return null;
+  }
+
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) {
+    return parseTimestampToMs(raw);
+  }
+
+  const [, year, month, day, hour, minute] = match;
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    0,
+    0
+  ).getTime();
+}
+
+function formatDateTimeLocalInput(value) {
+  const ms = parseTimestampToMs(value);
+  if (!Number.isFinite(ms)) {
+    return "";
+  }
+  const dt = new Date(ms);
+  return `${dt.getFullYear()}-${padDatePart(dt.getMonth() + 1)}-${padDatePart(dt.getDate())}T${padDatePart(
+    dt.getHours()
+  )}:${padDatePart(dt.getMinutes())}`;
+}
+
+function formatTimeRangeDisplayDate(value) {
+  const ms = parseTimestampToMs(value);
+  if (!Number.isFinite(ms)) {
+    return "Set date";
+  }
+  return new Date(ms).toLocaleDateString(getPreferredLocales(), {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function getActiveTimeRanges(ranges = state.timeRanges) {
+  return normalizeTimeRanges(ranges)
+    .map((range) => {
+      const fromMs = parseLocalDateTimeInputMs(range.from);
+      const toMs = parseLocalDateTimeInputMs(range.to);
+      if (!Number.isFinite(fromMs) && !Number.isFinite(toMs)) {
+        return null;
+      }
+      if (Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs > toMs) {
+        return {
+          fromMs: toMs,
+          toMs: fromMs,
+          from: range.to,
+          to: range.from,
+        };
+      }
+      return {
+        fromMs: Number.isFinite(fromMs) ? fromMs : null,
+        toMs: Number.isFinite(toMs) ? toMs : null,
+        from: range.from,
+        to: range.to,
+      };
+    })
+    .filter(Boolean);
 }
 
 function joinPath(baseDir, name) {
@@ -387,7 +577,7 @@ function parseSemicolonTags(value) {
 }
 
 function parseRunTimestampMs(run) {
-  const ts = Date.parse(run.timestamp || "");
+  const ts = parseTimestampToMs(run && run.timestamp);
   return Number.isFinite(ts) ? ts : -Infinity;
 }
 
@@ -969,10 +1159,14 @@ function persistUiState() {
     selectedTasks: state.selectedTasks,
     selectedModels: state.selectedModels,
     selectedTags: state.selectedTags,
+    timeRanges: normalizeTimeRanges(state.timeRanges),
+    desktopSidebarCollapsed: state.desktopSidebarCollapsed,
     sortBy: state.sortBy,
     leaderboardTableSortKey: state.leaderboardTableSortKey,
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
+    timeSeriesShowLabels: state.timeSeriesShowLabels,
+    timeSeriesViewport: state.timeSeriesViewport,
     radarAxis: state.radarAxis,
     hideNoAccuracy: state.hideNoAccuracy,
     theme: state.theme,
@@ -1005,6 +1199,12 @@ function restoreUiState() {
       if (Array.isArray(payload.selectedTags)) {
         state.selectedTags = uniqueNonEmptyStrings(payload.selectedTags);
       }
+      if (Array.isArray(payload.timeRanges)) {
+        state.timeRanges = normalizeTimeRanges(payload.timeRanges);
+      }
+      if (typeof payload.desktopSidebarCollapsed === "boolean") {
+        state.desktopSidebarCollapsed = payload.desktopSidebarCollapsed;
+      }
       if (typeof payload.sortBy === "string" && METRIC_KEYS.has(payload.sortBy)) {
         state.sortBy = payload.sortBy;
       }
@@ -1022,6 +1222,12 @@ function restoreUiState() {
       }
       if (typeof payload.leaderboardTab === "string" && LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
         state.leaderboardTab = payload.leaderboardTab;
+      }
+      if (typeof payload.timeSeriesShowLabels === "boolean") {
+        state.timeSeriesShowLabels = payload.timeSeriesShowLabels;
+      }
+      if (payload.timeSeriesViewport && typeof payload.timeSeriesViewport === "object") {
+        state.timeSeriesViewport = payload.timeSeriesViewport;
       }
       if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
         state.radarAxis = payload.radarAxis;
@@ -1052,6 +1258,35 @@ function isMobileLayout() {
   return mobileLayoutQuery ? mobileLayoutQuery.matches : window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT;
 }
 
+function supportsDesktopSidebarCollapse() {
+  return window.innerWidth > DESKTOP_LAYOUT_BREAKPOINT;
+}
+
+function applySidebarLayoutState() {
+  const collapsed = supportsDesktopSidebarCollapse() && state.desktopSidebarCollapsed;
+  document.body.classList.toggle("desktop-sidebar-collapsed", collapsed);
+  document.documentElement.style.setProperty(
+    "--sidebar-width",
+    `${collapsed ? DESKTOP_SIDEBAR_COLLAPSED_WIDTH : DESKTOP_SIDEBAR_EXPANDED_WIDTH}px`
+  );
+
+  if (els.sidebarCollapseBtn) {
+    els.sidebarCollapseBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    els.sidebarCollapseBtn.setAttribute("aria-label", collapsed ? "Expand filters" : "Collapse filters");
+    els.sidebarCollapseBtn.title = collapsed ? "Expand filters" : "Collapse filters";
+  }
+
+  if (!isMobileLayout()) {
+    els.dashboardSidebar.setAttribute("aria-hidden", "false");
+  }
+}
+
+function setDesktopSidebarCollapsed(nextCollapsed) {
+  state.desktopSidebarCollapsed = supportsDesktopSidebarCollapse() && Boolean(nextCollapsed);
+  applySidebarLayoutState();
+  persistUiState();
+}
+
 function setMobileSidebarOpen(nextOpen) {
   const shouldOpen = isMobileLayout() && Boolean(nextOpen);
   state.mobileSidebarOpen = shouldOpen;
@@ -1067,15 +1302,28 @@ function setMobileSidebarOpen(nextOpen) {
 }
 
 function updateMobileFilterSummary() {
-  const activeFilterCount =
-    (state.selectedTasks.length ? 1 : 0) +
-    (state.selectedModels.length ? 1 : 0) +
-    (state.selectedTags.length ? 1 : 0) +
-    (state.hideNoAccuracy ? 1 : 0);
+  const activeFilterCount = getActiveFilterCount();
   const summaryText = activeFilterCount ? `${activeFilterCount} active` : "All";
 
   els.mobileFilterSummary.textContent = summaryText;
   els.mobileSidebarToggle.title = activeFilterCount ? `${summaryText} filters` : "All filters visible";
+}
+
+function getActiveFilterCount() {
+  return (
+    (state.selectedTasks.length ? 1 : 0) +
+    (state.selectedModels.length ? 1 : 0) +
+    (state.selectedTags.length ? 1 : 0) +
+    (getActiveTimeRanges().length ? 1 : 0) +
+    (state.hideNoAccuracy ? 1 : 0)
+  );
+}
+
+function updateResetFiltersButton() {
+  if (!els.resetFiltersBtn) {
+    return;
+  }
+  els.resetFiltersBtn.disabled = getActiveFilterCount() === 0;
 }
 
 function sanitizeSelections(selectedValues, allowedValues) {
@@ -1101,6 +1349,60 @@ function setSelectedModels(values) {
 
 function setSelectedTags(values) {
   state.selectedTags = sanitizeSelections(values, state.tags);
+  persistUiState();
+  render();
+}
+
+function setTimeRanges(ranges) {
+  state.timeRanges = normalizeTimeRanges(ranges);
+  persistUiState();
+  render();
+}
+
+function setActiveTimeRangeEditor(index, key) {
+  if (typeof index !== "number" || !["from", "to"].includes(key)) {
+    state.activeTimeRangeEditor = null;
+    renderTimeRangeControls();
+    return;
+  }
+  state.activeTimeRangeEditor = { index, key };
+  renderTimeRangeControls();
+}
+
+function updateTimeRangeValue(index, key, value) {
+  if (!["from", "to"].includes(key)) {
+    return;
+  }
+  const nextRanges = normalizeTimeRanges(state.timeRanges).map((range, rangeIndex) =>
+    rangeIndex === index
+      ? {
+          ...range,
+          [key]: asTrimmedString(value),
+        }
+      : { ...range }
+  );
+  state.activeTimeRangeEditor = null;
+  setTimeRanges(nextRanges);
+}
+
+function addTimeRange() {
+  setTimeRanges([...normalizeTimeRanges(state.timeRanges), createEmptyTimeRange()]);
+}
+
+function removeTimeRange(index) {
+  const source = normalizeTimeRanges(state.timeRanges);
+  const nextRanges = source.filter((_, rangeIndex) => rangeIndex !== index);
+  state.activeTimeRangeEditor = null;
+  setTimeRanges(nextRanges);
+}
+
+function resetAllFilters() {
+  state.selectedTasks = [];
+  state.selectedModels = [];
+  state.selectedTags = [];
+  state.timeRanges = [createEmptyTimeRange()];
+  state.activeTimeRangeEditor = null;
+  state.hideNoAccuracy = false;
   persistUiState();
   render();
 }
@@ -1147,7 +1449,7 @@ function setRadarAxis(axis) {
   }
   state.radarAxis = axis;
   persistUiState();
-  renderTokenSignals(state.filtered);
+  renderLeaderboard(state.filtered);
 }
 
 function setLeaderboardTab(tab) {
@@ -1155,6 +1457,44 @@ function setLeaderboardTab(tab) {
     return;
   }
   state.leaderboardTab = tab;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setTimeSeriesShowLabels(nextValue) {
+  state.timeSeriesShowLabels = Boolean(nextValue);
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function normalizeTimeSeriesViewport(viewport) {
+  if (!viewport || typeof viewport !== "object") {
+    return null;
+  }
+  const xMin = Number(viewport.xMin);
+  const xMax = Number(viewport.xMax);
+  const yMin = Number(viewport.yMin);
+  const yMax = Number(viewport.yMax);
+  if (![xMin, xMax, yMin, yMax].every((value) => Number.isFinite(value))) {
+    return null;
+  }
+  if (xMin >= xMax || yMin >= yMax) {
+    return null;
+  }
+  return { xMin, xMax, yMin, yMax };
+}
+
+function setTimeSeriesViewport(nextViewport) {
+  state.timeSeriesViewport = normalizeTimeSeriesViewport(nextViewport);
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function resetTimeSeriesZoom() {
+  if (!state.timeSeriesViewport) {
+    return;
+  }
+  state.timeSeriesViewport = null;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -1223,6 +1563,142 @@ function renderChoiceChipList(container, options, selectedValues, allLabel, onTo
   });
 }
 
+function renderTimeRangeControls() {
+  if (!els.timeRangeList) {
+    return;
+  }
+
+  const ranges = normalizeTimeRanges(state.timeRanges);
+  const activeRanges = getActiveTimeRanges(ranges);
+  els.timeRangeList.innerHTML = "";
+
+  ranges.forEach((range, index) => {
+    const row = document.createElement("div");
+    row.className = "time-range-row";
+
+    const fromField = document.createElement("div");
+    fromField.className = "field time-range-field";
+    const fromLabel = document.createElement("span");
+    fromLabel.textContent = "From";
+    fromField.appendChild(fromLabel);
+    const isEditingFrom =
+      state.activeTimeRangeEditor &&
+      state.activeTimeRangeEditor.index === index &&
+      state.activeTimeRangeEditor.key === "from";
+    if (isEditingFrom) {
+      const fromInput = document.createElement("input");
+      fromInput.type = "datetime-local";
+      fromInput.className = "time-range-input";
+      const primaryLocale = getPrimaryLocale();
+      if (primaryLocale) {
+        fromInput.setAttribute("lang", primaryLocale);
+      }
+      fromInput.value = formatDateTimeLocalInput(range.from);
+      fromInput.addEventListener("change", (event) => {
+        updateTimeRangeValue(index, "from", event.target.value);
+      });
+      fromInput.addEventListener("blur", () => {
+        if (
+          state.activeTimeRangeEditor &&
+          state.activeTimeRangeEditor.index === index &&
+          state.activeTimeRangeEditor.key === "from"
+        ) {
+          setActiveTimeRangeEditor(null, null);
+        }
+      });
+      fromField.appendChild(fromInput);
+      requestAnimationFrame(() => {
+        fromInput.focus();
+        if (typeof fromInput.showPicker === "function") {
+          try {
+            fromInput.showPicker();
+          } catch (_) {
+            // Ignore browsers that block programmatic picker opening.
+          }
+        }
+      });
+    } else {
+      const fromButton = document.createElement("button");
+      fromButton.type = "button";
+      fromButton.className = "btn time-range-display";
+      fromButton.textContent = formatTimeRangeDisplayDate(range.from);
+      fromButton.title = range.from ? formatTs(range.from) : "Set start date";
+      fromButton.addEventListener("click", () => setActiveTimeRangeEditor(index, "from"));
+      fromField.appendChild(fromButton);
+    }
+
+    const toField = document.createElement("div");
+    toField.className = "field time-range-field";
+    const toLabel = document.createElement("span");
+    toLabel.textContent = "To";
+    toField.appendChild(toLabel);
+    const isEditingTo =
+      state.activeTimeRangeEditor &&
+      state.activeTimeRangeEditor.index === index &&
+      state.activeTimeRangeEditor.key === "to";
+    if (isEditingTo) {
+      const toInput = document.createElement("input");
+      toInput.type = "datetime-local";
+      toInput.className = "time-range-input";
+      const primaryLocale = getPrimaryLocale();
+      if (primaryLocale) {
+        toInput.setAttribute("lang", primaryLocale);
+      }
+      toInput.value = formatDateTimeLocalInput(range.to);
+      toInput.addEventListener("change", (event) => {
+        updateTimeRangeValue(index, "to", event.target.value);
+      });
+      toInput.addEventListener("blur", () => {
+        if (
+          state.activeTimeRangeEditor &&
+          state.activeTimeRangeEditor.index === index &&
+          state.activeTimeRangeEditor.key === "to"
+        ) {
+          setActiveTimeRangeEditor(null, null);
+        }
+      });
+      toField.appendChild(toInput);
+      requestAnimationFrame(() => {
+        toInput.focus();
+        if (typeof toInput.showPicker === "function") {
+          try {
+            toInput.showPicker();
+          } catch (_) {
+            // Ignore browsers that block programmatic picker opening.
+          }
+        }
+      });
+    } else {
+      const toButton = document.createElement("button");
+      toButton.type = "button";
+      toButton.className = "btn time-range-display";
+      toButton.textContent = formatTimeRangeDisplayDate(range.to);
+      toButton.title = range.to ? formatTs(range.to) : "Set end date";
+      toButton.addEventListener("click", () => setActiveTimeRangeEditor(index, "to"));
+      toField.appendChild(toButton);
+    }
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn time-range-btn time-range-remove";
+    removeBtn.textContent = "Remove";
+    removeBtn.disabled = ranges.length === 1 && !isTimeRangeActive(range);
+    removeBtn.addEventListener("click", () => removeTimeRange(index));
+
+    row.appendChild(fromField);
+    row.appendChild(toField);
+    row.appendChild(removeBtn);
+    els.timeRangeList.appendChild(row);
+  });
+
+  if (els.addTimeRangeBtn) {
+    els.addTimeRangeBtn.disabled = activeRanges.length === 0;
+  }
+  if (els.timeRangeSummary) {
+    els.timeRangeSummary.textContent = "";
+  }
+}
+
 function setupFilters() {
   els.taskSelect.addEventListener("change", () => {
     setTaskSelectionFromSelect(getSelectValues(els.taskSelect));
@@ -1249,9 +1725,25 @@ function setupFilters() {
     applyTheme();
     persistUiState();
   });
+
+  if (els.addTimeRangeBtn) {
+    els.addTimeRangeBtn.addEventListener("click", () => {
+      addTimeRange();
+    });
+  }
+  if (els.resetFiltersBtn) {
+    els.resetFiltersBtn.addEventListener("click", () => {
+      resetAllFilters();
+    });
+  }
 }
 
 function setupResponsiveShell() {
+  if (els.sidebarCollapseBtn) {
+    els.sidebarCollapseBtn.addEventListener("click", () => {
+      setDesktopSidebarCollapsed(!state.desktopSidebarCollapsed);
+    });
+  }
   els.mobileSidebarToggle.addEventListener("click", () => {
     setMobileSidebarOpen(!state.mobileSidebarOpen);
   });
@@ -1265,8 +1757,10 @@ function setupResponsiveShell() {
   const handleViewportChange = () => {
     if (!isMobileLayout()) {
       setMobileSidebarOpen(false);
+      applySidebarLayoutState();
       return;
     }
+    applySidebarLayoutState();
     els.dashboardSidebar.setAttribute("aria-hidden", state.mobileSidebarOpen ? "false" : "true");
   };
 
@@ -1468,6 +1962,7 @@ function getFilteredRuns() {
   const selectedTasks = state.selectedTasks;
   const selectedModels = state.selectedModels;
   const selectedTags = state.selectedTags;
+  const activeTimeRanges = getActiveTimeRanges();
   let runs = state.runs.filter((run) => {
     if (!isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
       return false;
@@ -1483,6 +1978,24 @@ function getFilteredRuns() {
     }
     if (state.hideNoAccuracy && run.accuracy === null) {
       return false;
+    }
+    if (activeTimeRanges.length) {
+      const runTs = parseRunTimestampMs(run);
+      if (!Number.isFinite(runTs)) {
+        return false;
+      }
+      const matchesRange = activeTimeRanges.some((range) => {
+        if (range.fromMs !== null && runTs < range.fromMs) {
+          return false;
+        }
+        if (range.toMs !== null && runTs > range.toMs) {
+          return false;
+        }
+        return true;
+      });
+      if (!matchesRange) {
+        return false;
+      }
     }
     return true;
   });
@@ -1507,9 +2020,9 @@ function formatNum(value, digits = 2) {
 }
 
 function formatTs(ts) {
-  const dt = new Date(ts || "");
-  if (Number.isNaN(dt.getTime())) return "N/A";
-  return dt.toLocaleString();
+  const ms = parseTimestampToMs(ts);
+  if (!Number.isFinite(ms)) return "N/A";
+  return new Date(ms).toLocaleString();
 }
 
 function setSourceControlsDisabled(disabled) {
@@ -1879,8 +2392,10 @@ function renderLeaderboardTabControls() {
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
+    { key: "time_series", label: "Time Series" },
     { key: "table", label: "Metrics Table" },
     { key: "best_by_task", label: "Best Run Per Task" },
+    { key: "radar", label: "Radar" },
   ];
   tabs.forEach((tab) => {
     const button = document.createElement("button");
@@ -2100,6 +2615,605 @@ function renderLeaderboardChart(container, runs) {
   });
 }
 
+function createSvgNode(name, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attributes).forEach(([key, value]) => {
+    node.setAttribute(key, String(value));
+  });
+  return node;
+}
+
+function polygonPointString(cx, cy, radius, sides, rotationDegrees = 0) {
+  const points = [];
+  const rotation = (rotationDegrees * Math.PI) / 180;
+  for (let index = 0; index < sides; index += 1) {
+    const angle = rotation + (Math.PI * 2 * index) / sides;
+    points.push(`${cx + Math.cos(angle) * radius},${cy + Math.sin(angle) * radius}`);
+  }
+  return points.join(" ");
+}
+
+function buildTimeSeriesShape(shape, cx, cy, size, fill, stroke = "currentColor", strokeWidth = 1.5) {
+  const radius = size / 2;
+  if (shape === "square") {
+    return createSvgNode("rect", {
+      x: cx - radius,
+      y: cy - radius,
+      width: size,
+      height: size,
+      rx: 1.5,
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "diamond") {
+    return createSvgNode("polygon", {
+      points: `${cx},${cy - radius} ${cx + radius},${cy} ${cx},${cy + radius} ${cx - radius},${cy}`,
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "triangle") {
+    return createSvgNode("polygon", {
+      points: polygonPointString(cx, cy, radius, 3, -90),
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "triangle_down") {
+    return createSvgNode("polygon", {
+      points: polygonPointString(cx, cy, radius, 3, 90),
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "hexagon") {
+    return createSvgNode("polygon", {
+      points: polygonPointString(cx, cy, radius, 6, -90),
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "pentagon") {
+    return createSvgNode("polygon", {
+      points: polygonPointString(cx, cy, radius, 5, -90),
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  if (shape === "octagon") {
+    return createSvgNode("polygon", {
+      points: polygonPointString(cx, cy, radius, 8, -90),
+      fill,
+      stroke,
+      "stroke-width": strokeWidth,
+    });
+  }
+  return createSvgNode("circle", {
+    cx,
+    cy,
+    r: radius,
+    fill,
+    stroke,
+    "stroke-width": strokeWidth,
+  });
+}
+
+function buildNumericTicks(minValue, maxValue, count) {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return [];
+  }
+  if (count <= 1 || minValue === maxValue) {
+    return [minValue];
+  }
+  return Array.from({ length: count }, (_, index) => minValue + ((maxValue - minValue) * index) / (count - 1));
+}
+
+function formatTimeSeriesTick(ms, spanMs) {
+  const dt = new Date(ms);
+  if (spanMs >= 1000 * 60 * 60 * 24 * 2) {
+    return dt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function createTimeSeriesLegend(title, rows) {
+  const wrap = document.createElement("section");
+  wrap.className = "time-series-legend";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  wrap.appendChild(heading);
+
+  const grid = document.createElement("div");
+  grid.className = "time-series-legend-grid";
+  rows.forEach((row) => {
+    const entry = document.createElement("div");
+    entry.className = "time-series-legend-row";
+    if (row.type === "task") {
+      const swatch = document.createElement("span");
+      swatch.className = "time-series-task-swatch";
+      swatch.style.background = row.color;
+      entry.appendChild(swatch);
+    } else {
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("viewBox", "0 0 16 16");
+      icon.setAttribute("class", "time-series-shape-icon");
+      icon.appendChild(buildTimeSeriesShape(row.shape, 8, 8, 9, "currentColor", "currentColor", 1.2));
+      entry.appendChild(icon);
+    }
+
+    const label = document.createElement("span");
+    label.textContent = row.label;
+    entry.appendChild(label);
+    grid.appendChild(entry);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function truncateTimeSeriesLabel(label, maxLength = 18) {
+  const text = asTrimmedString(label);
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 1)}...`;
+}
+
+function clampTimeSeriesViewport(viewport, fullDomain) {
+  const normalized = normalizeTimeSeriesViewport(viewport);
+  if (!normalized || !fullDomain) {
+    return null;
+  }
+
+  const xMin = Math.max(fullDomain.xMin, Math.min(normalized.xMin, fullDomain.xMax));
+  const xMax = Math.max(fullDomain.xMin, Math.min(normalized.xMax, fullDomain.xMax));
+  const yMin = Math.max(fullDomain.yMin, Math.min(normalized.yMin, fullDomain.yMax));
+  const yMax = Math.max(fullDomain.yMin, Math.min(normalized.yMax, fullDomain.yMax));
+
+  if (xMax - xMin <= 1 || yMax - yMin <= 1e-9) {
+    return null;
+  }
+
+  return { xMin, xMax, yMin, yMax };
+}
+
+function renderLeaderboardTimeSeries(container, runs) {
+  const metricKey = state.sortBy;
+  const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const showApproximateCi = supportsApproximateCi(metricKey);
+  const source = runs
+    .map((run) => {
+      const timestampMs = parseRunTimestampMs(run);
+      const metricValue = getMetricValueForRun(run, metricKey);
+      if (!Number.isFinite(timestampMs) || typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
+        return null;
+      }
+      return {
+        run,
+        timestampMs,
+        metricValue,
+        ci: showApproximateCi ? getRunMetricConfidence(run, metricKey) : null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.timestampMs !== b.timestampMs) {
+        return a.timestampMs - b.timestampMs;
+      }
+      return compareMetricNumbers(a.metricValue, b.metricValue, metricKey);
+    });
+
+  if (!source.length) {
+    container.innerHTML = `<p class="muted">No runs with both timestamp and ${metricLabel.toLowerCase()} in current filter.</p>`;
+    return;
+  }
+
+  const tasks = [...new Set(source.map((entry) => asTrimmedString(entry.run.task)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const models = [...new Set(source.map((entry) => asTrimmedString(entry.run.model)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const taskColorByName = new Map(tasks.map((task, index) => [task, TIME_SERIES_TASK_COLORS[index % TIME_SERIES_TASK_COLORS.length]]));
+  const modelShapeByName = new Map(
+    models.map((model, index) => [model, TIME_SERIES_MODEL_SHAPES[index % TIME_SERIES_MODEL_SHAPES.length]])
+  );
+
+  const header = document.createElement("div");
+  header.className = "time-series-head";
+  const summary = document.createElement("p");
+  summary.className = "muted";
+  summary.textContent = `${formatNum(source.length, 0)} runs | ${formatNum(tasks.length, 0)} task(s) | ${formatNum(models.length, 0)} model(s)`;
+  header.appendChild(summary);
+
+  const controls = document.createElement("div");
+  controls.className = "time-series-controls";
+
+  const labelsButton = document.createElement("button");
+  labelsButton.type = "button";
+  labelsButton.className = `time-series-control-btn${state.timeSeriesShowLabels ? " active" : ""}`;
+  labelsButton.textContent = state.timeSeriesShowLabels ? "Labels: On" : "Labels: Off";
+  labelsButton.setAttribute("aria-pressed", state.timeSeriesShowLabels ? "true" : "false");
+  labelsButton.addEventListener("click", () => setTimeSeriesShowLabels(!state.timeSeriesShowLabels));
+  controls.appendChild(labelsButton);
+
+  const zoomResetButton = document.createElement("button");
+  zoomResetButton.type = "button";
+  zoomResetButton.className = "time-series-control-btn";
+  zoomResetButton.textContent = "Reset Zoom";
+  zoomResetButton.disabled = !state.timeSeriesViewport;
+  zoomResetButton.addEventListener("click", () => resetTimeSeriesZoom());
+  controls.appendChild(zoomResetButton);
+
+  header.appendChild(controls);
+  container.appendChild(header);
+
+  const noteWrap = document.createElement("div");
+  noteWrap.className = "time-series-notes";
+  if (showApproximateCi) {
+    const ciNote = document.createElement("p");
+    ciNote.className = "muted";
+    ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
+    noteWrap.appendChild(ciNote);
+  }
+  if (isLowerBetterMetric(metricKey)) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = `${metricLabel} is lower-is-better.`;
+    noteWrap.appendChild(note);
+  }
+  const zoomNote = document.createElement("p");
+  zoomNote.className = "muted";
+  zoomNote.textContent = state.timeSeriesViewport
+    ? "Drag on the chart to zoom again. Double-click to reset zoom."
+    : "Drag on the chart to zoom into a selected region. Double-click to reset zoom.";
+  noteWrap.appendChild(zoomNote);
+  if (noteWrap.childElementCount) {
+    container.appendChild(noteWrap);
+  }
+
+  const chartWrap = document.createElement("div");
+  chartWrap.className = "time-series-wrap";
+  container.appendChild(chartWrap);
+
+  const width = 960;
+  const height = 460;
+  const margin = { top: 18, right: 26, bottom: 58, left: 68 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const svg = createSvgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "time-series-svg",
+    "aria-label": `Time series scatterplot for ${metricLabel}`,
+  });
+  chartWrap.appendChild(svg);
+
+  let fullXMin = Math.min(...source.map((entry) => entry.timestampMs));
+  let fullXMax = Math.max(...source.map((entry) => entry.timestampMs));
+  if (fullXMin === fullXMax) {
+    fullXMin -= 1000 * 60 * 30;
+    fullXMax += 1000 * 60 * 30;
+  }
+  const fullXSpan = Math.max(fullXMax - fullXMin, 1);
+
+  const metricValues = source.map((entry) => entry.metricValue);
+  let fullYMin = isPercentMetric(metricKey) ? 0 : Math.min(...metricValues);
+  let fullYMax = isPercentMetric(metricKey) ? 100 : Math.max(...metricValues);
+  if (fullYMin === fullYMax) {
+    const pad = fullYMin === 0 ? 1 : Math.abs(fullYMin) * 0.05;
+    fullYMin -= pad;
+    fullYMax += pad;
+  }
+  if (!isPercentMetric(metricKey)) {
+    const padding = (fullYMax - fullYMin) * 0.08;
+    fullYMin -= padding;
+    fullYMax += padding;
+  }
+
+  const clampedViewport = clampTimeSeriesViewport(state.timeSeriesViewport, {
+    xMin: fullXMin,
+    xMax: fullXMax,
+    yMin: fullYMin,
+    yMax: fullYMax,
+  });
+  const xMin = clampedViewport ? clampedViewport.xMin : fullXMin;
+  const xMax = clampedViewport ? clampedViewport.xMax : fullXMax;
+  const yMin = clampedViewport ? clampedViewport.yMin : fullYMin;
+  const yMax = clampedViewport ? clampedViewport.yMax : fullYMax;
+  const xSpan = Math.max(xMax - xMin, 1);
+  const ySpan = Math.max(yMax - yMin, 1e-9);
+
+  const xToPx = (value) => margin.left + ((value - xMin) / xSpan) * innerWidth;
+  const yToPx = (value) => margin.top + innerHeight - ((value - yMin) / ySpan) * innerHeight;
+  const pxToX = (px) => xMin + ((px - margin.left) / innerWidth) * xSpan;
+  const pxToY = (px) => yMin + ((margin.top + innerHeight - px) / innerHeight) * ySpan;
+  const yTicks = isPercentMetric(metricKey) ? [0, 25, 50, 75, 100] : buildNumericTicks(yMin, yMax, 5);
+  const xTicks = buildNumericTicks(xMin, xMax, Math.min(6, Math.max(2, source.length)));
+
+  yTicks.forEach((tickValue) => {
+    const y = yToPx(tickValue);
+    svg.appendChild(createSvgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, class: "time-series-grid-line" }));
+    const label = createSvgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "time-series-tick" });
+    label.textContent = isPercentMetric(metricKey) ? `${formatNum(tickValue, 0)}%` : formatNum(tickValue, 2);
+    svg.appendChild(label);
+  });
+
+  xTicks.forEach((tickValue) => {
+    const x = xToPx(tickValue);
+    svg.appendChild(createSvgNode("line", { x1: x, x2: x, y1: margin.top, y2: height - margin.bottom, class: "time-series-grid-line" }));
+    const label = createSvgNode("text", {
+      x,
+      y: height - margin.bottom + 20,
+      "text-anchor": "middle",
+      class: "time-series-tick",
+    });
+    label.textContent = formatTimeSeriesTick(tickValue, xSpan);
+    svg.appendChild(label);
+  });
+
+  svg.appendChild(
+    createSvgNode("line", {
+      x1: margin.left,
+      x2: width - margin.right,
+      y1: height - margin.bottom,
+      y2: height - margin.bottom,
+      class: "time-series-axis",
+    })
+  );
+  svg.appendChild(
+    createSvgNode("line", {
+      x1: margin.left,
+      x2: margin.left,
+      y1: margin.top,
+      y2: height - margin.bottom,
+      class: "time-series-axis",
+    })
+  );
+
+  const xAxisLabel = createSvgNode("text", {
+    x: margin.left + innerWidth / 2,
+    y: height - 14,
+    "text-anchor": "middle",
+    class: "time-series-axis-label",
+  });
+  xAxisLabel.textContent = "Time";
+  svg.appendChild(xAxisLabel);
+
+  const yAxisLabel = createSvgNode("text", {
+    x: 18,
+    y: margin.top + innerHeight / 2,
+    transform: `rotate(-90 18 ${margin.top + innerHeight / 2})`,
+    "text-anchor": "middle",
+    class: "time-series-axis-label",
+  });
+  yAxisLabel.textContent = metricLabel;
+  svg.appendChild(yAxisLabel);
+
+  const selectionOverlay = createSvgNode("rect", {
+    x: margin.left,
+    y: margin.top,
+    width: innerWidth,
+    height: innerHeight,
+    class: "time-series-selection-overlay",
+  });
+  svg.appendChild(selectionOverlay);
+
+  source.forEach((entry) => {
+    if (entry.ci && typeof entry.ci.low === "number" && typeof entry.ci.high === "number") {
+      const ciX = xToPx(entry.timestampMs);
+      const lowY = yToPx(entry.ci.low);
+      const highY = yToPx(entry.ci.high);
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: ciX,
+          x2: ciX,
+          y1: lowY,
+          y2: highY,
+          class: "time-series-ci-line",
+        })
+      );
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: ciX - 5,
+          x2: ciX + 5,
+          y1: lowY,
+          y2: lowY,
+          class: "time-series-ci-cap",
+        })
+      );
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: ciX - 5,
+          x2: ciX + 5,
+          y1: highY,
+          y2: highY,
+          class: "time-series-ci-cap",
+        })
+      );
+    }
+
+    const pointGroup = createSvgNode("g", {
+      class: `time-series-point${entry.run.filePath === state.selectedRunPath ? " is-selected" : ""}`,
+      tabindex: "0",
+      role: "button",
+      "aria-label": `${entry.run.task}, ${getRunModelDisplayName(entry.run)}, ${formatTs(entry.run.timestamp)}, ${formatMetric(metricKey, entry.metricValue)}`,
+    });
+    pointGroup.style.color = entry.run.filePath === state.selectedRunPath ? "var(--accent)" : "var(--ink)";
+    const pointX = xToPx(entry.timestampMs);
+    const pointY = yToPx(entry.metricValue);
+    const point = buildTimeSeriesShape(
+      modelShapeByName.get(entry.run.model) || TIME_SERIES_MODEL_SHAPES[0],
+      pointX,
+      pointY,
+      10,
+      taskColorByName.get(entry.run.task) || TIME_SERIES_TASK_COLORS[0],
+      "currentColor",
+      entry.run.filePath === state.selectedRunPath ? 2.2 : 1.4
+    );
+    const title = createSvgNode("title");
+    title.textContent = `${entry.run.task} | ${getRunModelDisplayName(entry.run)} | ${formatTs(entry.run.timestamp)} | ${formatMetric(
+      metricKey,
+      entry.metricValue
+    )}`;
+    pointGroup.appendChild(title);
+    pointGroup.appendChild(point);
+    pointGroup.addEventListener("click", () => openRunModal(entry.run));
+    pointGroup.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openRunModal(entry.run);
+      }
+    });
+    svg.appendChild(pointGroup);
+
+    if (state.timeSeriesShowLabels) {
+      const label = createSvgNode("text", {
+        x: pointX + 7,
+        y: pointY - 8,
+        class: "time-series-point-label",
+      });
+      label.textContent = truncateTimeSeriesLabel(`${entry.run.task} | ${getRunModelDisplayName(entry.run)}`, 26);
+      svg.appendChild(label);
+    }
+  });
+
+  const selectionRect = createSvgNode("rect", {
+    class: "time-series-selection-box",
+    visibility: "hidden",
+  });
+  svg.appendChild(selectionRect);
+
+  const pointerState = {
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+  };
+
+  const svgPointForEvent = (event) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / Math.max(rect.width, 1);
+    const scaleY = height / Math.max(rect.height, 1);
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+    };
+  };
+
+  const clampPlotPoint = (point) => ({
+    x: Math.max(margin.left, Math.min(width - margin.right, point.x)),
+    y: Math.max(margin.top, Math.min(height - margin.bottom, point.y)),
+  });
+
+  const updateSelectionBox = () => {
+    const left = Math.min(pointerState.startX, pointerState.currentX);
+    const top = Math.min(pointerState.startY, pointerState.currentY);
+    const boxWidth = Math.abs(pointerState.currentX - pointerState.startX);
+    const boxHeight = Math.abs(pointerState.currentY - pointerState.startY);
+    selectionRect.setAttribute("x", String(left));
+    selectionRect.setAttribute("y", String(top));
+    selectionRect.setAttribute("width", String(boxWidth));
+    selectionRect.setAttribute("height", String(boxHeight));
+    selectionRect.setAttribute("visibility", boxWidth > 0 && boxHeight > 0 ? "visible" : "hidden");
+  };
+
+  const stopDragging = () => {
+    pointerState.dragging = false;
+    selectionRect.setAttribute("visibility", "hidden");
+    svg.classList.remove("is-brushing");
+  };
+
+  const handleWindowMouseUp = (event) => {
+    if (!pointerState.dragging) {
+      window.removeEventListener("mouseup", handleWindowMouseUp);
+      return;
+    }
+    const point = clampPlotPoint(svgPointForEvent(event));
+    pointerState.currentX = point.x;
+    pointerState.currentY = point.y;
+    const dx = Math.abs(pointerState.currentX - pointerState.startX);
+    const dy = Math.abs(pointerState.currentY - pointerState.startY);
+    stopDragging();
+    window.removeEventListener("mouseup", handleWindowMouseUp);
+
+    if (dx < 12 || dy < 12) {
+      return;
+    }
+
+    const left = Math.min(pointerState.startX, pointerState.currentX);
+    const right = Math.max(pointerState.startX, pointerState.currentX);
+    const top = Math.min(pointerState.startY, pointerState.currentY);
+    const bottom = Math.max(pointerState.startY, pointerState.currentY);
+    setTimeSeriesViewport({
+      xMin: pxToX(left),
+      xMax: pxToX(right),
+      yMin: pxToY(bottom),
+      yMax: pxToY(top),
+    });
+  };
+
+  selectionOverlay.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const point = clampPlotPoint(svgPointForEvent(event));
+    pointerState.dragging = true;
+    pointerState.startX = point.x;
+    pointerState.startY = point.y;
+    pointerState.currentX = point.x;
+    pointerState.currentY = point.y;
+    svg.classList.add("is-brushing");
+    updateSelectionBox();
+    window.addEventListener("mouseup", handleWindowMouseUp);
+    event.preventDefault();
+  });
+
+  svg.addEventListener("mousemove", (event) => {
+    if (!pointerState.dragging) {
+      return;
+    }
+    const point = clampPlotPoint(svgPointForEvent(event));
+    pointerState.currentX = point.x;
+    pointerState.currentY = point.y;
+    updateSelectionBox();
+  });
+
+  svg.addEventListener("dblclick", () => {
+    resetTimeSeriesZoom();
+  });
+
+  const legends = document.createElement("div");
+  legends.className = "time-series-legends";
+  legends.appendChild(
+    createTimeSeriesLegend(
+      "Tasks (color)",
+      tasks.map((task) => ({
+        type: "task",
+        color: taskColorByName.get(task),
+        label: task,
+      }))
+    )
+  );
+  legends.appendChild(
+    createTimeSeriesLegend(
+      "Models (shape)",
+      models.map((model) => ({
+        type: "model",
+        shape: modelShapeByName.get(model),
+        label: model,
+      }))
+    )
+  );
+  container.appendChild(legends);
+}
+
 function cleanupLeaderboardMetricsScrollAffordance() {
   if (typeof leaderboardMetricsScrollCleanup === "function") {
     leaderboardMetricsScrollCleanup();
@@ -2257,15 +3371,29 @@ function renderLeaderboard(runs) {
   els.leaderboardChart.innerHTML = "";
 
   const panel = document.createElement("div");
-  panel.className = "leaderboard-panel";
+  panel.className = `leaderboard-panel${
+    state.leaderboardTab === "radar"
+      ? " leaderboard-panel-radar"
+      : state.leaderboardTab === "time_series"
+        ? " leaderboard-panel-time-series"
+        : ""
+  }`;
   els.leaderboardChart.appendChild(panel);
 
+  if (state.leaderboardTab === "time_series") {
+    renderLeaderboardTimeSeries(panel, runs);
+    return;
+  }
   if (state.leaderboardTab === "table") {
     renderLeaderboardMetricsTable(panel, runs);
     return;
   }
   if (state.leaderboardTab === "best_by_task") {
     renderBestByTask(panel, runs);
+    return;
+  }
+  if (state.leaderboardTab === "radar") {
+    renderRadarPanel(panel, runs);
     return;
   }
   renderLeaderboardChart(panel, runs);
@@ -2335,6 +3463,21 @@ const TOKEN_SEGMENTS = [
 ];
 
 const RADAR_COLORS = ["#6ea8ff", "#50e3c2", "#ffb36b", "#f472b6", "#facc15", "#22d3ee", "#fb7185", "#4ade80"];
+const TIME_SERIES_TASK_COLORS = [
+  "#6ea8ff",
+  "#50e3c2",
+  "#ffb36b",
+  "#f472b6",
+  "#facc15",
+  "#22d3ee",
+  "#fb7185",
+  "#4ade80",
+  "#f97316",
+  "#38bdf8",
+  "#e879f9",
+  "#34d399",
+];
+const TIME_SERIES_MODEL_SHAPES = ["circle", "square", "diamond", "triangle", "triangle_down", "hexagon", "pentagon", "octagon"];
 
 function toNonNegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -2637,9 +3780,6 @@ function renderTokenSignals(runs) {
     return;
   }
 
-  const layout = document.createElement("div");
-  layout.className = "token-visual-grid";
-
   const stackPanel = document.createElement("section");
   stackPanel.className = "token-stack-panel";
   const stackHeader = document.createElement("h4");
@@ -2700,14 +3840,7 @@ function renderTokenSignals(runs) {
     note.textContent = `Showing ${rowLimit} of ${runRows.length} runs. Narrow filters to focus.`;
     stackPanel.appendChild(note);
   }
-
-  const radarPanel = document.createElement("section");
-  radarPanel.className = "token-radar-panel";
-  renderRadarPanel(radarPanel, runs);
-
-  layout.appendChild(stackPanel);
-  layout.appendChild(radarPanel);
-  els.tokenChart.appendChild(layout);
+  els.tokenChart.appendChild(stackPanel);
 }
 
 function renderTableCell(label, value, className = "") {
@@ -2992,10 +4125,13 @@ function setupModalControls() {
 
 function render() {
   state.filtered = getFilteredRuns();
+  els.hideNoAccuracy.checked = state.hideNoAccuracy;
   renderTaskControls();
   renderModelControls();
   renderTagControls();
+  renderTimeRangeControls();
   updateMobileFilterSummary();
+  updateResetFiltersButton();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
   renderTokenSignals(state.filtered);
@@ -3102,10 +4238,12 @@ async function init() {
   restoreUiState();
   applyUiStateToControls();
   applyTheme();
+  applySidebarLayoutState();
   setupFilters();
   setupResponsiveShell();
   setupSourceControls();
   setupModalControls();
+  renderTimeRangeControls();
 
   if (!supportsDirectoryPicker()) {
     els.btnOpenFolder.disabled = true;

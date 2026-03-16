@@ -21,6 +21,11 @@
           </div>
         </div>
         <div class="brand-actions">
+          <button id="sidebarCollapseBtn" class="btn icon-btn sidebar-collapse-btn" type="button" aria-label="Collapse filters" aria-expanded="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 6l-6 6 6 6"></path>
+            </svg>
+          </button>
           <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
             <input id="themeToggle" type="checkbox">
             <span class="theme-icon" aria-hidden="true"></span>
@@ -32,6 +37,10 @@
             </svg>
           </button>
         </div>
+      </div>
+
+      <div class="sidebar-tools">
+        <button id="resetFiltersBtn" class="btn sidebar-reset-btn" type="button">Reset All Filters</button>
       </div>
 
       <section class="panel">
@@ -47,6 +56,14 @@
           <select id="modelSelect" multiple size="8"></select>
           <div id="modelChipList" class="mobile-choice-list" aria-label="Model filters"></div>
         </label>
+        <div class="field">
+          <span>Time Ranges (OR)</span>
+          <div id="timeRangeList" class="time-range-list" aria-label="Time range filters"></div>
+          <div class="time-range-actions">
+            <button id="addTimeRangeBtn" class="btn time-range-btn" type="button">Add Range</button>
+          </div>
+          <small id="timeRangeSummary" class="field-hint"></small>
+        </div>
         <label class="checkbox">
           <input id="hideNoAccuracy" type="checkbox">
           <span>Hide runs without accuracy</span>
@@ -155,12 +172,12 @@
 
       <section class="grid">
         <article class="card card-wide">
-          <h3>Leaderboard (Selected Task, Grouped by Model)</h3>
+          <h3>Leaderboard (Controlled by Filters)</h3>
           <div id="leaderboardTabs" class="leaderboard-tabs"></div>
           <div id="leaderboardChart" class="chart"></div>
         </article>
         <article class="card card-wide">
-          <h3>Prompt Token Profile (Stacked) + Radar (Selected Tasks/Models)</h3>
+          <h3>Prompt Token Profile (Stacked by Run)</h3>
           <div id="tokenChart" class="chart"></div>
         </article>
       </section>
