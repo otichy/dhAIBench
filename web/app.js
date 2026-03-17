@@ -116,7 +116,7 @@ const LEADERBOARD_TABLE_METRICS = [
   "macro_recall",
   "calibration_ece",
 ];
-const LEADERBOARD_TABLE_SORTABLE_KEYS = new Set(["run", ...LEADERBOARD_TABLE_METRICS]);
+const LEADERBOARD_TABLE_SORTABLE_KEYS = new Set(["run", "timestamp", ...LEADERBOARD_TABLE_METRICS]);
 const SORT_DIRECTIONS = new Set(["asc", "desc"]);
 let leaderboardMetricsScrollCleanup = null;
 
@@ -582,6 +582,9 @@ function parseRunTimestampMs(run) {
 }
 
 function getDefaultSortDirectionForMetric(metricKey) {
+  if (metricKey === "timestamp") {
+    return "desc";
+  }
   return isLowerBetterMetric(metricKey) ? "asc" : "desc";
 }
 
@@ -614,6 +617,10 @@ function compareLeaderboardMetricsTableRows(runA, runB, sortSpec) {
     diff = getLeaderboardMetricsTableRunLabel(runA).localeCompare(
       getLeaderboardMetricsTableRunLabel(runB)
     );
+  } else if (key === "timestamp") {
+    const tsA = parseTimestampToMs(runA && runA.timestamp);
+    const tsB = parseTimestampToMs(runB && runB.timestamp);
+    diff = compareNullableNumbers(Number.isFinite(tsA) ? tsA : null, Number.isFinite(tsB) ? tsB : null);
   } else {
     diff = compareNullableNumbers(getMetricValueForRun(runA, key), getMetricValueForRun(runB, key));
   }
@@ -3303,7 +3310,7 @@ function renderLeaderboardMetricsTable(container, runs) {
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  const tableColumns = [{ key: "run", label: "Run" }].concat(
+  const tableColumns = [{ key: "run", label: "Run" }, { key: "timestamp", label: "Date" }].concat(
     LEADERBOARD_TABLE_METRICS.map((key) => ({
       key,
       label: METRIC_LABELS[key] || key,
@@ -3344,6 +3351,11 @@ function renderLeaderboardMetricsTable(container, runs) {
     runCell.title = `${run.task} / ${getRunModelDisplayName(run)} / ${run.fileName}`;
     runCell.textContent = getLeaderboardMetricsTableRunLabel(run);
     tr.appendChild(runCell);
+
+    const timestampCell = document.createElement("td");
+    timestampCell.className = "mono";
+    timestampCell.textContent = formatTs(run.timestamp);
+    tr.appendChild(timestampCell);
 
     LEADERBOARD_TABLE_METRICS.forEach((key) => {
       const value = getMetricValueForRun(run, key);
