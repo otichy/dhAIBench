@@ -5361,7 +5361,7 @@ def generate_calibration_plot(
     output_path: str,
     bin_count: int = 10,
 ) -> None:
-    """Generate a reliability diagram showing calibration performance."""
+    """Generate a rolling-window calibration chart with decile anchors."""
     if not configure_matplotlib_backend("calibration plots"):
         return
     import matplotlib.pyplot as plt
@@ -5370,34 +5370,138 @@ def generate_calibration_plot(
         logging.warning("No confidence data available; skipping calibration plot.")
         return
 
-    # Clamp values between 0 and 1 to avoid plotting issues.
-    capped = [min(1.0, max(0.0, c)) for c in confidences]
+    sample_pairs = sorted(
+        (min(1.0, max(0.0, conf)), 1.0 if corr else 0.0)
+        for conf, corr in zip(confidences, correctness)
+    )
+    if not sample_pairs:
+        logging.warning("No confidence data available after filtering; skipping calibration plot.")
+        return
+
+    sorted_confidences = [pair[0] for pair in sample_pairs]
+    sorted_correctness = [pair[1] for pair in sample_pairs]
+    sample_count = len(sample_pairs)
+    rolling_window = min(75, sample_count)
+    rolling_step = 10 if sample_count > 75 else 1
+    wilson_z = 1.959963984540054
+
+    def wilson_interval(successes: float, total: int) -> Tuple[float, float]:
+        if total <= 0:
+            return (0.0, 0.0)
+        p_hat = successes / total
+        denominator = 1.0 + (wilson_z * wilson_z) / total
+        center = (p_hat + (wilson_z * wilson_z) / (2.0 * total)) / denominator
+        margin = (wilson_z / denominator) * math.sqrt(
+            (p_hat * (1.0 - p_hat) / total) + ((wilson_z * wilson_z) / (4.0 * total * total))
+        )
+        return (max(0.0, center - margin), min(1.0, center + margin))
+
+    rolling_x: List[float] = []
+    rolling_y: List[float] = []
+    rolling_lower: List[float] = []
+    rolling_upper: List[float] = []
+    for start in range(0, sample_count - rolling_window + 1, rolling_step):
+        end = start + rolling_window
+        window_confidences = sorted_confidences[start:end]
+        window_correctness = sorted_correctness[start:end]
+        successes = sum(window_correctness)
+        lower, upper = wilson_interval(successes, rolling_window)
+        rolling_x.append(sum(window_confidences) / rolling_window)
+        rolling_y.append(successes / rolling_window)
+        rolling_lower.append(lower)
+        rolling_upper.append(upper)
+
+    final_window_start = sample_count - rolling_window
+    if rolling_window > 0 and (not rolling_x or final_window_start % rolling_step != 0):
+        window_confidences = sorted_confidences[final_window_start:sample_count]
+        window_correctness = sorted_correctness[final_window_start:sample_count]
+        successes = sum(window_correctness)
+        lower, upper = wilson_interval(successes, rolling_window)
+        final_x = sum(window_confidences) / rolling_window
+        if not rolling_x or abs(rolling_x[-1] - final_x) > 1e-12:
+            rolling_x.append(final_x)
+            rolling_y.append(successes / rolling_window)
+            rolling_lower.append(lower)
+            rolling_upper.append(upper)
+
     bins = [i / bin_count for i in range(bin_count + 1)]
-    bin_totals = [0] * bin_count
-    bin_correct = [0] * bin_count
+    decile_x: List[float] = []
+    decile_y: List[float] = []
+    decile_sizes: List[float] = []
+    for index in range(bin_count):
+        left = bins[index]
+        right = bins[index + 1]
+        bucket = [
+            pair
+            for pair in sample_pairs
+            if (left <= pair[0] < right) or (index == bin_count - 1 and left <= pair[0] <= right)
+        ]
+        if not bucket:
+            continue
+        bucket_confidences = [pair[0] for pair in bucket]
+        bucket_correctness = [pair[1] for pair in bucket]
+        decile_x.append(sum(bucket_confidences) / len(bucket))
+        decile_y.append(sum(bucket_correctness) / len(bucket))
+        decile_sizes.append(24.0 + 3.0 * math.sqrt(len(bucket)))
 
-    for conf, corr in zip(capped, correctness):
-        # Last bin includes 1.0
-        index = min(bin_count - 1, int(conf * bin_count))
-        bin_totals[index] += 1
-        bin_correct[index] += 1 if corr else 0
+    histogram_bins = max(20, bin_count * 2)
+    fig = plt.figure(figsize=(7.4, 7.8), constrained_layout=True)
+    grid = fig.add_gridspec(2, 1, height_ratios=[5.7, 1.15], hspace=0.06)
+    ax = fig.add_subplot(grid[0])
+    ax_hist = fig.add_subplot(grid[1], sharex=ax)
 
-    accuracies = [bin_correct[i] / bin_totals[i] if bin_totals[i] else 0 for i in range(bin_count)]
-    confidences = [
-        (bins[i] + bins[i + 1]) / 2 for i in range(bin_count)
-    ]  # Midpoints for plotting
+    ax.plot([0, 1], [0, 1], linestyle="--", color="#777777", linewidth=1.4, label="Perfect calibration")
+    ax.fill_between(
+        rolling_x,
+        rolling_lower,
+        rolling_upper,
+        color="#7db7ff",
+        alpha=0.28,
+        label="95% Wilson band",
+    )
+    ax.plot(
+        rolling_x,
+        rolling_y,
+        color="#1f5fbf",
+        linewidth=2.3,
+        label=f"Rolling accuracy (window={rolling_window})",
+    )
+    if decile_x:
+        ax.scatter(
+            decile_x,
+            decile_y,
+            s=decile_sizes,
+            color="#d97706",
+            edgecolors="white",
+            linewidths=0.8,
+            alpha=0.98,
+            zorder=3,
+            label="Decile summaries",
+        )
 
-    plt.figure(figsize=(6, 6))
-    plt.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect calibration")
-    plt.bar(confidences, accuracies, width=1 / bin_count, alpha=0.6, align="center", label="Model")
-    plt.xlabel("Predicted confidence")
-    plt.ylabel("Empirical accuracy")
-    plt.title("Calibration Plot")
-    plt.legend()
-    plt.tight_layout()
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Observed accuracy")
+    ax.set_title("Calibration Plot")
+    ax.grid(True, alpha=0.18)
+    ax.legend(loc="lower right")
+    plt.setp(ax.get_xticklabels(), visible=False)
 
-    plt.savefig(output_path)
-    plt.close()
+    ax_hist.hist(
+        sorted_confidences,
+        bins=histogram_bins,
+        range=(0, 1),
+        color="#9db5d5",
+        edgecolor="white",
+        linewidth=0.5,
+    )
+    ax_hist.set_xlim(0, 1)
+    ax_hist.set_xlabel("Predicted confidence")
+    ax_hist.set_ylabel("Count")
+    ax_hist.grid(True, axis="y", alpha=0.14)
+
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
     logging.info("Saved calibration plot to %s", output_path)
 
 

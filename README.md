@@ -6,7 +6,7 @@ Python tooling for benchmarking large language models on linguistic classificati
 - **Metrics-only recompute**: recompute metrics from existing output CSVs without calling any model API.
 - **Prompt controls**: tune temperature, top-p, top-k, optional logprobs collection, chain-of-thought prompting, prompt payload layout, provider-specific reasoning/thinking effort and verbosity levels, few-shot demonstrations, and custom system prompts.
 - **Provider-aware defaults**: look up API credentials from `.env` or the environment (OpenAI by default, other OpenAI-compatible endpoints supported via `--provider`).
-- **Calibration utilities**: optionally fit reliability diagrams when `matplotlib` is available.
+- **Calibration utilities**: optionally generate rolling-window calibration charts with uncertainty bands, decile anchors, and confidence histograms when `matplotlib` is available.
 - **Metadata preservation**: the optional `info` column feeds the model extra guidance, and any additional columns are carried through to the output file.
 - **GUI command builder**: `config_gui.html` generates CLI strings for the Python agent entirely client-side.
 
@@ -306,7 +306,7 @@ Running the agent creates:
   It also includes `usage_metadata_summary`, aggregating cache-related token signals reported by provider usage metadata.
   It includes `task_name` plus editable placeholders `task_description` and `tags` (semicolon-delimited) for dashboard annotations.
 - A dual-panel confusion heatmap in `data/metrics/<output_basename>__heatmap.png` showing absolute counts alongside row-normalized percentages.
-- Optionally, a calibration plot in `data/metrics/<output_basename>__calibration.png` summarizing confidence reliability.
+- Optionally, a calibration plot in `data/metrics/<output_basename>__calibration.png` summarizing confidence reliability with a rolling-window curve, uncertainty band, decile anchors, and confidence histogram.
 - A prompt log in `data/logs/<output_basename>.log` in **NDJSON** format (one JSON object per line), capturing every attempt for auditability.
   The prompt log stores `run_metadata`, `run_command`, and per-example `example_result` records.
   On resume, legacy JSON-array logs are auto-migrated to NDJSON once, with backup written as `<output_basename>.log.legacy.json`.
