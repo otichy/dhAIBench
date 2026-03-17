@@ -810,6 +810,7 @@ select[multiple] {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   text-align: right;
+  color: color-mix(in srgb, var(--accent) 58%, var(--ink));
 }
 
 .leaderboard-metric-field select {
@@ -817,6 +818,34 @@ select[multiple] {
   min-width: 180px;
   padding: 0.45rem 0.6rem;
   font-size: 0.84rem;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 14%, var(--surface-input)),
+      color-mix(in srgb, var(--accent-3) 8%, var(--surface-input))
+    );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 10px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.leaderboard-metric-field select:hover {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--line-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 18%, var(--surface-hover)),
+      color-mix(in srgb, var(--accent-3) 11%, var(--surface-input))
+    );
+}
+
+.leaderboard-metric-field select:focus {
+  border-color: color-mix(in srgb, var(--accent) 78%, white 22%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 12px 28px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .leaderboard-tab-btn {
