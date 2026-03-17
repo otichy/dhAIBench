@@ -795,28 +795,21 @@ select[multiple] {
 }
 
 .footer-github-link {
-  width: 42px;
-  height: 42px;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-soft) 86%, transparent);
-  box-shadow: var(--shadow-soft);
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+  line-height: 1;
+  transition: transform 140ms ease, color 140ms ease;
 }
 
 .footer-github-link:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--line-strong));
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-soft));
 }
 
 .footer-github-link svg {
-  width: 20px;
-  height: 20px;
+  width: 1em;
+  height: 1em;
   fill: currentColor;
 }
 
