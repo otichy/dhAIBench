@@ -474,38 +474,7 @@ select[multiple] {
 }
 
 .metric-dock {
-  position: sticky;
-  top: 0;
-  z-index: 35;
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 0.7rem;
-  margin-bottom: 0.85rem;
-  pointer-events: none;
-}
-
-.metric-dock-field {
-  margin: 0;
-  width: min(360px, 94%);
-  padding: 0.58rem 0.64rem;
-  border-radius: 14px;
-  border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--paper-strong) 92%, transparent);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow-soft);
-  pointer-events: auto;
-}
-
-.metric-dock-field span {
-  text-align: center;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.metric-dock-field select {
-  text-align: center;
+  display: none;
 }
 
 .hero {
@@ -732,17 +701,17 @@ select[multiple] {
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
-  gap: 0.85rem;
-  margin-bottom: 1rem;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
 }
 
 .kpi {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--paper-strong) 92%, white 8%), var(--paper));
   border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 0.85rem 0.95rem;
-  box-shadow: var(--shadow-soft);
+  border-radius: 14px;
+  padding: 0.58rem 0.72rem;
+  box-shadow: none;
   position: relative;
   overflow: hidden;
 }
@@ -751,24 +720,26 @@ select[multiple] {
   content: "";
   position: absolute;
   inset: auto -20% -45% auto;
-  width: 120px;
-  height: 120px;
+  width: 86px;
+  height: 86px;
   border-radius: 999px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 20%, transparent), transparent 68%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 14%, transparent), transparent 68%);
   pointer-events: none;
 }
 
 .kpi h3 {
   margin: 0;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .kpi p {
-  margin: 0.42rem 0 0;
+  margin: 0.24rem 0 0;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 1.42rem;
+  font-size: 1.05rem;
 }
 
 .grid {
@@ -811,6 +782,30 @@ select[multiple] {
   display: inline-flex;
   gap: 0.36rem;
   margin-bottom: 0.52rem;
+}
+
+.leaderboard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.8rem;
+  margin-bottom: 0.65rem;
+}
+
+.leaderboard-head h3 {
+  margin-bottom: 0;
+}
+
+.leaderboard-metric-field {
+  margin: 0;
+  min-width: 220px;
+  width: min(280px, 100%);
+}
+
+.leaderboard-metric-field span {
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .leaderboard-tab-btn {
@@ -1866,10 +1861,6 @@ tbody tr.selected-row {
     display: none;
   }
 
-  .metric-dock-field {
-    width: min(420px, 100%);
-  }
-
   .kpis {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
@@ -1950,25 +1941,21 @@ tbody tr.selected-row {
   }
 
   .metric-dock {
+    position: sticky;
     top: 0.35rem;
+    z-index: 35;
+    display: flex;
     justify-content: stretch;
+    align-items: flex-end;
+    gap: 0.7rem;
+    margin-bottom: 0.85rem;
+    pointer-events: none;
   }
 
   .mobile-sidebar-toggle {
     display: inline-flex;
     pointer-events: auto;
     flex: 0 0 auto;
-  }
-
-  .metric-dock-field {
-    margin: 0;
-    width: auto;
-    flex: 1 1 220px;
-  }
-
-  .metric-dock-field span,
-  .metric-dock-field select {
-    text-align: left;
   }
 
   select[multiple] {
@@ -2018,6 +2005,16 @@ tbody tr.selected-row {
   .leaderboard-tabs,
   .radar-mode-toggle {
     flex-wrap: wrap;
+  }
+
+  .leaderboard-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .leaderboard-metric-field {
+    width: 100%;
+    min-width: 0;
   }
 
   .time-range-row {
