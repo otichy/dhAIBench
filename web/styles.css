@@ -767,6 +767,59 @@ select[multiple] {
   grid-column: 1 / -1;
 }
 
+.dashboard-footer {
+  margin-top: 1.15rem;
+  padding: 0.95rem 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, var(--paper-strong), var(--paper));
+  box-shadow: var(--shadow-soft);
+}
+
+.dashboard-footer p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.dashboard-footer a {
+  color: var(--ink);
+}
+
+.dashboard-footer a:hover {
+  color: var(--accent);
+}
+
+.footer-github-link {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-soft) 86%, transparent);
+  box-shadow: var(--shadow-soft);
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.footer-github-link:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-soft));
+}
+
+.footer-github-link svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
 .chart {
   min-height: 230px;
   display: grid;
@@ -2077,6 +2130,11 @@ tbody tr.selected-row {
   .source-status,
   .source-warnings {
     overflow-wrap: anywhere;
+  }
+
+  .dashboard-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .kpis,
