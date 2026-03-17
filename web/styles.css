@@ -787,7 +787,7 @@ select[multiple] {
 .leaderboard-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0.8rem;
   margin-bottom: 0.65rem;
 }
@@ -797,15 +797,26 @@ select[multiple] {
 }
 
 .leaderboard-metric-field {
-  margin: 0;
-  min-width: 220px;
-  width: min(280px, 100%);
+  display: inline-grid;
+  justify-items: end;
+  gap: 0.18rem;
+  margin: 0 0 0 auto;
+  min-width: 0;
+  width: auto;
 }
 
 .leaderboard-metric-field span {
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  text-align: right;
+}
+
+.leaderboard-metric-field select {
+  width: 180px;
+  min-width: 180px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.84rem;
 }
 
 .leaderboard-tab-btn {
@@ -2009,11 +2020,20 @@ tbody tr.selected-row {
 
   .leaderboard-head {
     flex-direction: column;
-    align-items: stretch;
+    align-items: flex-start;
   }
 
   .leaderboard-metric-field {
-    width: 100%;
+    justify-items: start;
+    margin-left: 0;
+  }
+
+  .leaderboard-metric-field span {
+    text-align: left;
+  }
+
+  .leaderboard-metric-field select {
+    width: min(220px, 100%);
     min-width: 0;
   }
 
