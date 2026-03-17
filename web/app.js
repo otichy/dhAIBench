@@ -1526,6 +1526,31 @@ function getSelectValues(selectElement) {
     .filter(Boolean);
 }
 
+function syncSelectOptions(selectElement, values, labelForValue) {
+  const desiredValues = Array.isArray(values) ? values : [];
+  const existingOptions = Array.from(selectElement.options);
+  const hasSameOptions =
+    existingOptions.length === desiredValues.length &&
+    existingOptions.every((option, index) => {
+      const desiredValue = desiredValues[index];
+      return option.value === desiredValue && option.textContent === labelForValue(desiredValue);
+    });
+
+  if (hasSameOptions) {
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  desiredValues.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = labelForValue(value);
+    fragment.appendChild(option);
+  });
+
+  selectElement.replaceChildren(fragment);
+}
+
 function clearSelectionForAll(values) {
   const normalized = uniqueNonEmptyStrings(values || []);
   if (!normalized.length) {
@@ -2150,9 +2175,7 @@ async function runWithLoadingNotice(message, loader) {
 
 function renderTaskControls() {
   const tasks = ["ALL", ...state.tasks];
-  els.taskSelect.innerHTML = tasks
-    .map((task) => `<option value="${task}">${task === "ALL" ? "All Tasks" : task}</option>`)
-    .join("");
+  syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task));
 
   state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
   if (isAllSelected(state.selectedTasks)) {
@@ -2169,10 +2192,7 @@ function renderTaskControls() {
 
 function renderModelControls() {
   const models = ["ALL", ...state.models];
-
-  els.modelSelect.innerHTML = models
-    .map((model) => `<option value="${model}">${model === "ALL" ? "All Models" : model}</option>`)
-    .join("");
+  syncSelectOptions(els.modelSelect, models, (model) => (model === "ALL" ? "All Models" : model));
 
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
   if (isAllSelected(state.selectedModels)) {
