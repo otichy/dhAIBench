@@ -12,68 +12,97 @@
 <body>
   <div class="app-shell">
     <aside id="dashboardSidebar" class="sidebar" aria-label="Dashboard filters">
-      <div class="brand">
-        <div class="brand-lockup">
-          <div class="brand-mark">DH-AI</div>
-          <div>
-            <h1>Benchmarking</h1>
-            <p>Metrics from <a href="https://github.com/otichy/dhAIBench"><code>DHAIBench</code></a></p>
+      <div id="sidebarScrollUpOverlay" class="sidebar-scroll-overlay sidebar-scroll-overlay-top" hidden>
+        <button
+          id="sidebarScrollUpBtn"
+          class="btn icon-btn sidebar-scroll-btn"
+          type="button"
+          aria-label="Scroll filters up"
+          title="Scroll filters up"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 15l-6-6-6 6"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="sidebarScrollDownOverlay" class="sidebar-scroll-overlay sidebar-scroll-overlay-bottom" hidden>
+        <button
+          id="sidebarScrollDownBtn"
+          class="btn icon-btn sidebar-scroll-btn"
+          type="button"
+          aria-label="Scroll filters down"
+          title="Scroll filters down"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 9l6 6 6-6"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div id="dashboardSidebarScroll" class="sidebar-scroll">
+        <div class="brand">
+          <div class="brand-lockup">
+            <div class="brand-mark">DH-AI</div>
+            <div>
+              <h1>Benchmarking</h1>
+              <p>Metrics from <a href="https://github.com/otichy/dhAIBench"><code>DHAIBench</code></a></p>
+            </div>
+          </div>
+          <div class="brand-actions">
+            <button id="sidebarCollapseBtn" class="btn icon-btn sidebar-collapse-btn" type="button" aria-label="Collapse filters" aria-expanded="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15 6l-6 6 6 6"></path>
+              </svg>
+            </button>
+            <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
+              <input id="themeToggle" type="checkbox">
+              <span class="theme-icon" aria-hidden="true"></span>
+            </label>
+            <button id="sidebarCloseBtn" class="btn icon-btn sidebar-close-btn" type="button" aria-label="Close filters">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6l12 12"></path>
+                <path d="M18 6L6 18"></path>
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="brand-actions">
-          <button id="sidebarCollapseBtn" class="btn icon-btn sidebar-collapse-btn" type="button" aria-label="Collapse filters" aria-expanded="true">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M15 6l-6 6 6 6"></path>
-            </svg>
-          </button>
-          <label class="theme-icon-toggle" title="Toggle theme" aria-label="Toggle theme">
-            <input id="themeToggle" type="checkbox">
-            <span class="theme-icon" aria-hidden="true"></span>
+
+        <div class="sidebar-tools">
+          <button id="resetFiltersBtn" class="btn sidebar-reset-btn" type="button">Reset All Filters</button>
+        </div>
+
+        <section class="panel">
+          <h2>Filters</h2>
+          <label class="field">
+            <span>Task (multi-select)</span>
+            <select id="taskSelect" multiple size="6"></select>
+            <small class="field-hint">Use Ctrl/Cmd or Shift for quick range selection.</small>
+            <div id="taskChipList" class="mobile-choice-list" aria-label="Task filters"></div>
           </label>
-          <button id="sidebarCloseBtn" class="btn icon-btn sidebar-close-btn" type="button" aria-label="Close filters">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12"></path>
-              <path d="M18 6L6 18"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div class="sidebar-tools">
-        <button id="resetFiltersBtn" class="btn sidebar-reset-btn" type="button">Reset All Filters</button>
-      </div>
-
-      <section class="panel">
-        <h2>Filters</h2>
-        <label class="field">
-          <span>Task (multi-select)</span>
-          <select id="taskSelect" multiple size="6"></select>
-          <small class="field-hint">Use Ctrl/Cmd or Shift for quick range selection.</small>
-          <div id="taskChipList" class="mobile-choice-list" aria-label="Task filters"></div>
-        </label>
-        <label class="field">
-          <span>Model (multi-select)</span>
-          <select id="modelSelect" multiple size="8"></select>
-          <div id="modelChipList" class="mobile-choice-list" aria-label="Model filters"></div>
-        </label>
-        <div class="field">
-          <span>Time Ranges (OR)</span>
-          <div id="timeRangeList" class="time-range-list" aria-label="Time range filters"></div>
-          <div class="time-range-actions">
-            <button id="addTimeRangeBtn" class="btn time-range-btn" type="button">Add Range</button>
+          <label class="field">
+            <span>Model (multi-select)</span>
+            <select id="modelSelect" multiple size="8"></select>
+            <div id="modelChipList" class="mobile-choice-list" aria-label="Model filters"></div>
+          </label>
+          <div class="field">
+            <span>Time Ranges (OR)</span>
+            <div id="timeRangeList" class="time-range-list" aria-label="Time range filters"></div>
+            <div class="time-range-actions">
+              <button id="addTimeRangeBtn" class="btn time-range-btn" type="button">Add Range</button>
+            </div>
+            <small id="timeRangeSummary" class="field-hint"></small>
           </div>
-          <small id="timeRangeSummary" class="field-hint"></small>
-        </div>
-        <label class="checkbox">
-          <input id="hideNoAccuracy" type="checkbox">
-          <span>Hide runs without accuracy</span>
-        </label>
-      </section>
+          <label class="checkbox">
+            <input id="hideNoAccuracy" type="checkbox">
+            <span>Hide runs without accuracy</span>
+          </label>
+        </section>
 
-      <section class="panel">
-        <h2>Tags</h2>
-        <div id="tagChips" class="chips"></div>
-      </section>
+        <section class="panel">
+          <h2>Tags</h2>
+          <div id="tagChips" class="chips"></div>
+        </section>
+      </div>
     </aside>
 
     <main class="main">

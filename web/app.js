@@ -49,7 +49,12 @@ const state = {
 const els = {
   main: document.querySelector(".main"),
   dashboardSidebar: document.querySelector("#dashboardSidebar"),
+  dashboardSidebarScroll: document.querySelector("#dashboardSidebarScroll"),
   sidebarCollapseBtn: document.querySelector("#sidebarCollapseBtn"),
+  sidebarScrollUpOverlay: document.querySelector("#sidebarScrollUpOverlay"),
+  sidebarScrollDownOverlay: document.querySelector("#sidebarScrollDownOverlay"),
+  sidebarScrollUpBtn: document.querySelector("#sidebarScrollUpBtn"),
+  sidebarScrollDownBtn: document.querySelector("#sidebarScrollDownBtn"),
   resetFiltersBtn: document.querySelector("#resetFiltersBtn"),
   mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
   mobileFilterSummary: document.querySelector("#mobileFilterSummary"),
@@ -1269,6 +1274,44 @@ function supportsDesktopSidebarCollapse() {
   return window.innerWidth > DESKTOP_LAYOUT_BREAKPOINT;
 }
 
+function shouldUseDesktopSidebarScrollAffordances() {
+  return supportsDesktopSidebarCollapse() && !isMobileLayout() && !state.desktopSidebarCollapsed;
+}
+
+function updateSidebarScrollAffordances() {
+  const upOverlay = els.sidebarScrollUpOverlay;
+  const downOverlay = els.sidebarScrollDownOverlay;
+  const scrollEl = els.dashboardSidebarScroll;
+  if (!upOverlay || !downOverlay || !scrollEl) {
+    return;
+  }
+
+  if (!shouldUseDesktopSidebarScrollAffordances()) {
+    upOverlay.hidden = true;
+    downOverlay.hidden = true;
+    return;
+  }
+
+  const maxScrollTop = Math.max(scrollEl.scrollHeight - scrollEl.clientHeight, 0);
+  const hasOverflow = maxScrollTop > 16;
+  const showUp = hasOverflow && scrollEl.scrollTop > 8;
+  const showDown = hasOverflow && maxScrollTop - scrollEl.scrollTop > 8;
+  upOverlay.hidden = !showUp;
+  downOverlay.hidden = !showDown;
+}
+
+function scrollSidebarByPage(direction) {
+  const scrollEl = els.dashboardSidebarScroll;
+  if (!scrollEl) {
+    return;
+  }
+  const delta = Math.max(scrollEl.clientHeight * 0.8, 80) * direction;
+  scrollEl.scrollBy({
+    top: delta,
+    behavior: "smooth",
+  });
+}
+
 function applySidebarLayoutState() {
   const collapsed = supportsDesktopSidebarCollapse() && state.desktopSidebarCollapsed;
   document.body.classList.toggle("desktop-sidebar-collapsed", collapsed);
@@ -1286,6 +1329,10 @@ function applySidebarLayoutState() {
   if (!isMobileLayout()) {
     els.dashboardSidebar.setAttribute("aria-hidden", "false");
   }
+
+  requestAnimationFrame(() => {
+    updateSidebarScrollAffordances();
+  });
 }
 
 function setDesktopSidebarCollapsed(nextCollapsed) {
@@ -1305,6 +1352,7 @@ function setMobileSidebarOpen(nextOpen) {
     requestAnimationFrame(() => {
       els.sidebarCloseBtn.focus();
     });
+    return;
   }
 }
 
@@ -1785,6 +1833,25 @@ function setupResponsiveShell() {
   els.sidebarBackdrop.addEventListener("click", () => {
     setMobileSidebarOpen(false);
   });
+  if (els.sidebarScrollUpBtn) {
+    els.sidebarScrollUpBtn.addEventListener("click", () => {
+      scrollSidebarByPage(-1);
+    });
+  }
+  if (els.sidebarScrollDownBtn) {
+    els.sidebarScrollDownBtn.addEventListener("click", () => {
+      scrollSidebarByPage(1);
+    });
+  }
+  if (els.dashboardSidebarScroll) {
+    els.dashboardSidebarScroll.addEventListener(
+      "scroll",
+      () => {
+        updateSidebarScrollAffordances();
+      },
+      { passive: true }
+    );
+  }
 
   const handleViewportChange = () => {
     if (!isMobileLayout()) {
@@ -1794,6 +1861,7 @@ function setupResponsiveShell() {
     }
     applySidebarLayoutState();
     els.dashboardSidebar.setAttribute("aria-hidden", state.mobileSidebarOpen ? "false" : "true");
+    updateSidebarScrollAffordances();
   };
 
   if (mobileLayoutQuery) {
@@ -1805,6 +1873,9 @@ function setupResponsiveShell() {
   } else {
     window.addEventListener("resize", handleViewportChange);
   }
+  window.addEventListener("resize", () => {
+    updateSidebarScrollAffordances();
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.mobileSidebarOpen) {
@@ -1814,6 +1885,7 @@ function setupResponsiveShell() {
 
   handleViewportChange();
   updateMobileFilterSummary();
+  updateSidebarScrollAffordances();
 }
 
 function setupSourceControls() {
@@ -2055,6 +2127,12 @@ function formatTs(ts) {
   const ms = parseTimestampToMs(ts);
   if (!Number.isFinite(ms)) return "N/A";
   return new Date(ms).toLocaleString();
+}
+
+function formatDateOnly(ts) {
+  const ms = parseTimestampToMs(ts);
+  if (!Number.isFinite(ms)) return "N/A";
+  return new Date(ms).toLocaleDateString();
 }
 
 function setSourceControlsDisabled(disabled) {
@@ -2368,11 +2446,34 @@ function createBarRow(
   }
 
   const insideLabel = asTrimmedString(insideBarText);
-  if (insideLabel) {
+  const trackBadges = Array.isArray(options.trackBadges)
+    ? uniqueNonEmptyStrings(options.trackBadges.map((badge) => asTrimmedString(badge)))
+    : [];
+  if (insideLabel || trackBadges.length) {
     const trackLabel = document.createElement("span");
     trackLabel.className = "bar-track-label";
-    trackLabel.textContent = insideLabel;
-    trackLabel.title = insideLabel;
+    const trackContent = document.createElement("span");
+    trackContent.className = "bar-track-label-content";
+
+    if (insideLabel) {
+      const trackText = document.createElement("span");
+      trackText.className = "bar-track-label-text";
+      trackText.textContent = insideLabel;
+      trackContent.appendChild(trackText);
+    }
+
+    if (trackBadges.length) {
+      const badgesWrap = document.createElement("span");
+      badgesWrap.className = "bar-track-label-badges";
+      const trackBadgeColorMap = options.trackBadgeColorMap instanceof Map ? options.trackBadgeColorMap : new Map();
+      trackBadges.forEach((badge) => {
+        badgesWrap.appendChild(createHtmlTagBadge(badge, trackBadgeColorMap.get(badge), "tag-badge tag-badge-compact"));
+      });
+      trackContent.appendChild(badgesWrap);
+    }
+
+    trackLabel.appendChild(trackContent);
+    trackLabel.title = [insideLabel, ...trackBadges].filter(Boolean).join(" | ");
     trackEl.classList.add("with-label");
     trackEl.appendChild(trackLabel);
   }
@@ -2441,6 +2542,8 @@ function renderLeaderboardChart(container, runs) {
   const source = runs.filter((run) => getMetricValueForRun(run, metricKey) !== null);
   const metricIsLowerBetter = isLowerBetterMetric(metricKey);
   const showApproximateCi = supportsApproximateCi(metricKey);
+  const showSelectedTagBadges = hasMultipleSelectedTags();
+  const selectedTagColorMap = buildSelectedTagColorMap();
 
   if (!source.length) {
     container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
@@ -2545,6 +2648,7 @@ function renderLeaderboardChart(container, runs) {
       if (isTopRun) {
         badges.push("TOP");
       }
+      const trackBadges = showSelectedTagBadges ? getSelectedTagsForRun(entry.run) : [];
       let rowClass = "";
       if (isTopRun) {
         rowClass = "bar-row-top";
@@ -2558,8 +2662,8 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(entry.run),
           entry.ci,
-          hasMultipleTasks ? entry.run.task : "",
-          { badges, rowClass }
+          hasMultipleTasks || showSelectedTagBadges ? entry.run.task : "",
+          { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap }
         )
       );
       return;
@@ -2584,6 +2688,7 @@ function renderLeaderboardChart(container, runs) {
     if (groupHasTopRun) {
       badges.push("TOP");
     }
+    const groupTrackBadges = showSelectedTagBadges ? getSelectedTagsForRuns(entry.runs) : [];
     let rowClass = "";
     if (groupHasTopRun) {
       rowClass = "bar-row-top";
@@ -2600,10 +2705,12 @@ function renderLeaderboardChart(container, runs) {
         null,
         null,
         entry.ci,
-        hasMultipleTasks ? getConcatenatedTaskLabel(entry.runs) : "",
+        hasMultipleTasks || showSelectedTagBadges ? getConcatenatedTaskLabel(entry.runs) : "",
         {
           badges,
           rowClass,
+          trackBadges: groupTrackBadges,
+          trackBadgeColorMap: selectedTagColorMap,
           distribution: distributionValues.length ? { values: distributionValues } : null,
         }
       )
@@ -2619,6 +2726,7 @@ function renderLeaderboardChart(container, runs) {
       if (showTopOnRun) {
         runBadges.push("TOP");
       }
+      const runTrackBadges = showSelectedTagBadges ? getSelectedTagsForRun(run) : [];
       let runRowClass = "";
       if (showTopOnRun) {
         runRowClass = "bar-row-top";
@@ -2632,8 +2740,13 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(run),
           runCi,
-          hasMultipleTasks ? run.task : "",
-          { badges: runBadges, rowClass: runRowClass }
+          hasMultipleTasks || showSelectedTagBadges ? run.task : "",
+          {
+            badges: runBadges,
+            rowClass: runRowClass,
+            trackBadges: runTrackBadges,
+            trackBadgeColorMap: selectedTagColorMap,
+          }
         )
       );
     });
@@ -2792,6 +2905,111 @@ function truncateTimeSeriesLabel(label, maxLength = 18) {
   return `${text.slice(0, maxLength - 1)}...`;
 }
 
+function hasMultipleSelectedTags() {
+  return Array.isArray(state.selectedTags) && state.selectedTags.length > 1;
+}
+
+function buildSelectedTagColorMap(tags = state.selectedTags) {
+  const uniqueTags = uniqueNonEmptyStrings(tags);
+  return new Map(
+    uniqueTags.map((tag, index) => [tag, SELECTED_TAG_BADGE_COLORS[index % SELECTED_TAG_BADGE_COLORS.length]])
+  );
+}
+
+function getSelectedTagsForRun(run, selectedTags = state.selectedTags) {
+  if (!Array.isArray(selectedTags) || selectedTags.length <= 1) {
+    return [];
+  }
+  const runTagSet = new Set((Array.isArray(run && run.tags) ? run.tags : []).map((tag) => asTrimmedString(tag)).filter(Boolean));
+  return selectedTags.filter((tag) => runTagSet.has(tag));
+}
+
+function getSelectedTagsForRuns(runs, selectedTags = state.selectedTags) {
+  if (!Array.isArray(selectedTags) || selectedTags.length <= 1) {
+    return [];
+  }
+  const presentTags = new Set(
+    (runs || [])
+      .flatMap((run) => (Array.isArray(run && run.tags) ? run.tags : []))
+      .map((tag) => asTrimmedString(tag))
+      .filter(Boolean)
+  );
+  return selectedTags.filter((tag) => presentTags.has(tag));
+}
+
+function createHtmlTagBadge(tag, color, className = "tag-badge") {
+  const badge = document.createElement("span");
+  badge.className = className;
+  badge.textContent = tag;
+  if (color) {
+    badge.style.setProperty("--tag-badge-color", color);
+  }
+  return badge;
+}
+
+function estimateTimeSeriesTagBadgeWidth(label) {
+  const text = asTrimmedString(label);
+  return Math.max(28, text.length * 6.3 + 14);
+}
+
+function createTimeSeriesTagBadgeGroup(tags, tagColorMap, x, y, bounds = {}) {
+  const visibleTags = uniqueNonEmptyStrings(tags);
+  if (!visibleTags.length) {
+    return null;
+  }
+
+  const gap = 4;
+  const height = 16;
+  const badgeRows = visibleTags.map((tag) => {
+    const label = truncateTimeSeriesLabel(tag, 14);
+    return {
+      label,
+      color: tagColorMap.get(tag),
+      width: estimateTimeSeriesTagBadgeWidth(label),
+    };
+  });
+  const totalWidth = badgeRows.reduce((sum, entry, index) => sum + entry.width + (index > 0 ? gap : 0), 0);
+  const minX = typeof bounds.minX === "number" ? bounds.minX : 0;
+  const maxX = typeof bounds.maxX === "number" ? bounds.maxX : Number.POSITIVE_INFINITY;
+  const maxY = typeof bounds.maxY === "number" ? bounds.maxY : Number.POSITIVE_INFINITY;
+  const clampedX = Math.max(minX, Math.min(x, maxX - totalWidth));
+  const clampedY = Math.max(0, Math.min(y, maxY - height));
+
+  const group = createSvgNode("g", {
+    class: "time-series-tag-badge-group",
+    transform: `translate(${clampedX} ${clampedY})`,
+  });
+
+  let offsetX = 0;
+  badgeRows.forEach((entry, index) => {
+    const fillColor = entry.color || SELECTED_TAG_BADGE_COLORS[index % SELECTED_TAG_BADGE_COLORS.length];
+    const rect = createSvgNode("rect", {
+      x: offsetX,
+      y: 0,
+      width: entry.width,
+      height,
+      rx: 8,
+      class: "time-series-tag-badge-rect",
+    });
+    rect.style.fill = fillColor;
+    rect.style.stroke = fillColor;
+    group.appendChild(rect);
+
+    const text = createSvgNode("text", {
+      x: offsetX + entry.width / 2,
+      y: 11.3,
+      "text-anchor": "middle",
+      class: "time-series-tag-badge-text",
+    });
+    text.textContent = entry.label;
+    group.appendChild(text);
+
+    offsetX += entry.width + gap;
+  });
+
+  return group;
+}
+
 function clampTimeSeriesViewport(viewport, fullDomain) {
   const normalized = normalizeTimeSeriesViewport(viewport);
   if (!normalized || !fullDomain) {
@@ -2814,6 +3032,8 @@ function renderLeaderboardTimeSeries(container, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const showApproximateCi = supportsApproximateCi(metricKey);
+  const showSelectedTagBadges = hasMultipleSelectedTags();
+  const selectedTagColorMap = buildSelectedTagColorMap();
   const source = runs
     .map((run) => {
       const timestampMs = parseRunTimestampMs(run);
@@ -3108,6 +3328,18 @@ function renderLeaderboardTimeSeries(container, runs) {
       label.textContent = truncateTimeSeriesLabel(`${entry.run.task} | ${getRunModelDisplayName(entry.run)}`, 26);
       svg.appendChild(label);
     }
+
+    if (showSelectedTagBadges && state.timeSeriesShowLabels) {
+      const pointTags = getSelectedTagsForRun(entry.run);
+      const badgeGroup = createTimeSeriesTagBadgeGroup(pointTags, selectedTagColorMap, pointX + 7, pointY + 6, {
+        minX: margin.left + 2,
+        maxX: width - margin.right - 2,
+        maxY: height - margin.bottom - 2,
+      });
+      if (badgeGroup) {
+        svg.appendChild(badgeGroup);
+      }
+    }
   });
 
   const selectionRect = createSvgNode("rect", {
@@ -3293,6 +3525,8 @@ function setupLeaderboardMetricsScrollAffordance(wrap, hint) {
 
 function renderLeaderboardMetricsTable(container, runs) {
   const sortSpec = resolveLeaderboardMetricsTableSortSpec();
+  const showSelectedTagBadges = hasMultipleSelectedTags();
+  const selectedTagColorMap = buildSelectedTagColorMap();
   const source = runs.filter((run) =>
     LEADERBOARD_TABLE_METRICS.some((key) => getMetricValueForRun(run, key) !== null)
   );
@@ -3368,13 +3602,29 @@ function renderLeaderboardMetricsTable(container, runs) {
 
     const runCell = document.createElement("td");
     runCell.className = "leaderboard-run-cell";
-    runCell.title = `${run.task} / ${getRunModelDisplayName(run)} / ${run.fileName}`;
-    runCell.textContent = getLeaderboardMetricsTableRunLabel(run);
+    const runLabel = getLeaderboardMetricsTableRunLabel(run);
+    const runTags = showSelectedTagBadges ? getSelectedTagsForRun(run) : [];
+    runCell.title = [runLabel, ...runTags, run.fileName].filter(Boolean).join(" / ");
+    const runContent = document.createElement("span");
+    runContent.className = "leaderboard-run-cell-content";
+    const runLabelEl = document.createElement("span");
+    runLabelEl.className = "leaderboard-run-label";
+    runLabelEl.textContent = runLabel;
+    runContent.appendChild(runLabelEl);
+    if (runTags.length) {
+      const badgesWrap = document.createElement("span");
+      badgesWrap.className = "leaderboard-run-tag-badges";
+      runTags.forEach((tag) => {
+        badgesWrap.appendChild(createHtmlTagBadge(tag, selectedTagColorMap.get(tag), "tag-badge tag-badge-compact"));
+      });
+      runContent.appendChild(badgesWrap);
+    }
+    runCell.appendChild(runContent);
     tr.appendChild(runCell);
 
     const timestampCell = document.createElement("td");
     timestampCell.className = "mono";
-    timestampCell.textContent = formatTs(run.timestamp);
+    timestampCell.textContent = formatDateOnly(run.timestamp);
     tr.appendChild(timestampCell);
 
     LEADERBOARD_TABLE_METRICS.forEach((key) => {
@@ -3510,6 +3760,7 @@ const TIME_SERIES_TASK_COLORS = [
   "#34d399",
 ];
 const TIME_SERIES_MODEL_SHAPES = ["circle", "square", "diamond", "triangle", "triangle_down", "hexagon", "pentagon", "octagon"];
+const SELECTED_TAG_BADGE_COLORS = ["#6ea8ff", "#50e3c2", "#ffb36b", "#f472b6", "#facc15", "#22d3ee", "#fb7185", "#4ade80"];
 
 function toNonNegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -4168,6 +4419,9 @@ function render() {
   renderLeaderboard(state.filtered);
   renderTokenSignals(state.filtered);
   renderTable(state.filtered);
+  requestAnimationFrame(() => {
+    updateSidebarScrollAffordances();
+  });
 }
 
 function renderError(message, preserveExisting = false) {

@@ -5224,36 +5224,99 @@ class RequestedControlRejectedError(RuntimeError):
     """Raised when requested controls are rejected by the endpoint."""
 
 
+CONFUSION_MATRIX_DENSE_MAX_SIZE = 15
+CONFUSION_HEATMAP_SUMMARY_LABEL_LIMIT = 12
+CONFUSION_HEATMAP_SUPPORT_LABEL_LIMIT = 6
+CONFUSION_HEATMAP_ERROR_LABEL_LIMIT = 6
+CONFUSION_HEATMAP_OTHER_LABEL = "OTHER"
+
+
+def build_sparse_confusion_triplets(
+    truths: Iterable[str],
+    preds: Iterable[str],
+    labels: List[str],
+) -> Tuple[List[List[int]], List[int], List[int], List[int], int]:
+    """Build sparse confusion triplets and supporting per-label totals."""
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    sparse_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+    row_totals = [0 for _ in labels]
+    col_totals = [0 for _ in labels]
+    true_positives = [0 for _ in labels]
+    correct = 0
+
+    for y_true, y_pred in zip(truths, preds):
+        true_index = label_to_index[y_true]
+        pred_index = label_to_index[y_pred]
+        sparse_counts[(true_index, pred_index)] += 1
+        row_totals[true_index] += 1
+        col_totals[pred_index] += 1
+        if true_index == pred_index:
+            true_positives[true_index] += 1
+            correct += 1
+
+    sparse_triplets = [
+        [true_index, pred_index, count]
+        for (true_index, pred_index), count in sorted(sparse_counts.items())
+        if count > 0
+    ]
+    return sparse_triplets, row_totals, col_totals, true_positives, correct
+
+
+def build_dense_confusion_matrix(
+    labels: List[str],
+    sparse_triplets: Iterable[Iterable[int]],
+) -> Dict[str, Dict[str, int]]:
+    """Materialize a dense label-keyed confusion matrix from sparse triplets."""
+    confusion: Dict[str, Dict[str, int]] = {
+        true_label: {pred_label: 0 for pred_label in labels}
+        for true_label in labels
+    }
+    for triplet in sparse_triplets:
+        if not isinstance(triplet, (list, tuple)) or len(triplet) != 3:
+            continue
+        true_index, pred_index, count = triplet
+        if (
+            not isinstance(true_index, int)
+            or not isinstance(pred_index, int)
+            or not isinstance(count, int)
+            or count <= 0
+            or true_index < 0
+            or pred_index < 0
+            or true_index >= len(labels)
+            or pred_index >= len(labels)
+        ):
+            continue
+        confusion[labels[true_index]][labels[pred_index]] = count
+    return confusion
+
+
 def compute_metrics(
     truths: Iterable[str],
     preds: Iterable[str],
 ) -> Dict[str, Any]:
-    """Compute accuracy, macro metrics, per-label stats, and confusion matrix."""
+    """Compute accuracy, macro metrics, per-label stats, and confusion matrix artifacts."""
     truths = list(truths)
     preds = list(preds)
     if len(truths) != len(preds):
         raise ValueError("Length mismatch between truths and predictions.")
 
     labels = sorted(set(truths) | set(preds))
-
-    confusion: Dict[str, Dict[str, int]] = {t: {p: 0 for p in labels} for t in labels}
     total = len(truths)
-    correct = 0
-
-    for y_true, y_pred in zip(truths, preds):
-        confusion[y_true][y_pred] += 1
-        if y_true == y_pred:
-            correct += 1
+    sparse_triplets, row_totals, col_totals, true_positives, correct = build_sparse_confusion_triplets(
+        truths,
+        preds,
+        labels,
+    )
 
     per_label: Dict[str, Dict[str, float]] = {}
     precision_sum = 0.0
     recall_sum = 0.0
     f1_sum = 0.0
 
-    for label in labels:
-        tp = confusion[label][label]
-        fp = sum(confusion[other][label] for other in labels if other != label)
-        fn = sum(confusion[label][other] for other in labels if other != label)
+    for index, label in enumerate(labels):
+        tp = true_positives[index]
+        fp = col_totals[index] - tp
+        fn = row_totals[index] - tp
 
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
@@ -5267,20 +5330,27 @@ def compute_metrics(
             "precision": precision,
             "recall": recall,
             "f1": f1,
-            "support": sum(confusion[label].values()),
+            "support": row_totals[index],
         }
 
-    label_count = len(labels) if labels else 1
+    label_count = len(labels)
     metrics = {
         "accuracy": correct / total if total else 0.0,
-        "macro_precision": precision_sum / label_count,
-        "macro_recall": recall_sum / label_count,
-        "macro_f1": f1_sum / label_count,
+        "macro_precision": precision_sum / (label_count if label_count else 1),
+        "macro_recall": recall_sum / (label_count if label_count else 1),
+        "macro_f1": f1_sum / (label_count if label_count else 1),
         "per_label": per_label,
-        "confusion_matrix": confusion,
         "labels": labels,
+        "label_count": label_count,
         "total_examples": total,
     }
+
+    if label_count <= CONFUSION_MATRIX_DENSE_MAX_SIZE:
+        metrics["confusion_matrix"] = build_dense_confusion_matrix(labels, sparse_triplets)
+    else:
+        metrics["confusion_matrix_sparse"] = sparse_triplets
+        metrics["confusion_matrix_format"] = "sparse_triplets"
+        metrics["confusion_matrix_nonzero_cells"] = len(sparse_triplets)
     return metrics
 
 
@@ -5564,8 +5634,7 @@ def compute_calibration_metrics(
 
 
 def generate_confusion_heatmap(
-    confusion: Dict[str, Dict[str, int]],
-    labels: List[str],
+    metrics: Dict[str, Any],
     output_path: str,
 ) -> None:
     """Render a dual-panel confusion matrix heatmap (counts + row percentages)."""
@@ -5573,15 +5642,131 @@ def generate_confusion_heatmap(
         return
     import matplotlib.pyplot as plt
 
-    if not confusion or not labels:
+    labels = metrics.get("labels", [])
+    if not isinstance(labels, list) or not labels:
         logging.warning("Confusion matrix or label list empty; skipping heatmap.")
         return
 
-    size = len(labels)
-    matrix = [
-        [float(confusion.get(true_label, {}).get(pred_label, 0)) for pred_label in labels]
-        for true_label in labels
-    ]
+    sparse_triplets: List[Tuple[int, int, int]] = []
+    raw_sparse = metrics.get("confusion_matrix_sparse")
+    if isinstance(raw_sparse, list):
+        for triplet in raw_sparse:
+            if not isinstance(triplet, (list, tuple)) or len(triplet) != 3:
+                continue
+            true_index, pred_index, count = triplet
+            if (
+                not isinstance(true_index, int)
+                or not isinstance(pred_index, int)
+                or not isinstance(count, int)
+                or count <= 0
+                or true_index < 0
+                or pred_index < 0
+                or true_index >= len(labels)
+                or pred_index >= len(labels)
+            ):
+                continue
+            sparse_triplets.append((true_index, pred_index, count))
+    else:
+        confusion = metrics.get("confusion_matrix")
+        if isinstance(confusion, dict):
+            for true_index, true_label in enumerate(labels):
+                row = confusion.get(true_label, {})
+                if not isinstance(row, dict):
+                    continue
+                for pred_index, pred_label in enumerate(labels):
+                    raw_count = row.get(pred_label, 0)
+                    try:
+                        count = int(raw_count)
+                    except (TypeError, ValueError):
+                        continue
+                    if count > 0:
+                        sparse_triplets.append((true_index, pred_index, count))
+
+    if not sparse_triplets:
+        logging.warning("Confusion matrix contains no non-zero cells; skipping heatmap.")
+        return
+
+    def build_matrix_from_sparse(
+        label_count: int,
+        triplets: Iterable[Tuple[int, int, int]],
+    ) -> List[List[float]]:
+        matrix = [[0.0 for _ in range(label_count)] for _ in range(label_count)]
+        for true_index, pred_index, count in triplets:
+            matrix[true_index][pred_index] += float(count)
+        return matrix
+
+    def summarize_matrix(
+        source_labels: List[str],
+        triplets: List[Tuple[int, int, int]],
+    ) -> Tuple[List[str], List[List[float]]]:
+        row_totals = [0 for _ in source_labels]
+        col_totals = [0 for _ in source_labels]
+        true_positives = [0 for _ in source_labels]
+        for true_index, pred_index, count in triplets:
+            row_totals[true_index] += count
+            col_totals[pred_index] += count
+            if true_index == pred_index:
+                true_positives[true_index] += count
+
+        support_ranking = sorted(
+            range(len(source_labels)),
+            key=lambda index: (-row_totals[index], source_labels[index]),
+        )
+        error_ranking = sorted(
+            range(len(source_labels)),
+            key=lambda index: (
+                -((row_totals[index] - true_positives[index]) + (col_totals[index] - true_positives[index])),
+                -row_totals[index],
+                source_labels[index],
+            ),
+        )
+
+        explicit_limit = min(CONFUSION_HEATMAP_SUMMARY_LABEL_LIMIT, len(source_labels))
+        support_limit = min(CONFUSION_HEATMAP_SUPPORT_LABEL_LIMIT, explicit_limit)
+        selected_indices: List[int] = []
+
+        for index in support_ranking:
+            if len(selected_indices) >= support_limit:
+                break
+            selected_indices.append(index)
+
+        for index in error_ranking:
+            if len(selected_indices) >= explicit_limit:
+                break
+            if index in selected_indices:
+                continue
+            selected_indices.append(index)
+
+        explicit_index_map = {label_index: display_index for display_index, label_index in enumerate(selected_indices)}
+        omitted_exists = len(selected_indices) < len(source_labels)
+        other_index = len(selected_indices) if omitted_exists else None
+        display_size = len(selected_indices) + (1 if omitted_exists else 0)
+        summarized = [[0.0 for _ in range(display_size)] for _ in range(display_size)]
+
+        for true_index, pred_index, count in triplets:
+            display_true = explicit_index_map.get(true_index, other_index)
+            display_pred = explicit_index_map.get(pred_index, other_index)
+            if display_true is None or display_pred is None:
+                continue
+            summarized[display_true][display_pred] += float(count)
+
+        display_labels = [source_labels[index] for index in selected_indices]
+        if omitted_exists:
+            display_labels.append(CONFUSION_HEATMAP_OTHER_LABEL)
+        return display_labels, summarized
+
+    full_size = len(labels)
+    if full_size > CONFUSION_MATRIX_DENSE_MAX_SIZE:
+        heatmap_labels, matrix = summarize_matrix(labels, sparse_triplets)
+        overview_title = "Summarized Confusion Matrix Overview (top labels + OTHER)"
+        panel_prefix = "Summarized Confusion Matrix"
+    else:
+        heatmap_labels = labels
+        matrix = build_matrix_from_sparse(full_size, sparse_triplets)
+        overview_title = "Confusion Matrix Overview"
+        panel_prefix = "Confusion Matrix"
+
+    size = len(heatmap_labels)
     row_totals = [sum(row) for row in matrix]
     percentage_matrix: List[List[float]] = []
     for total, row in zip(row_totals, matrix):
@@ -5596,8 +5781,8 @@ def generate_confusion_heatmap(
     fig, axes = plt.subplots(1, 2, figsize=(fig_width, fig_height), constrained_layout=True)
 
     specs = [
-        ("Confusion Matrix (counts)", matrix, lambda v: f"{int(round(v))}"),
-        ("Confusion Matrix (row %)", percentage_matrix, lambda v: f"{v:.1f}%"),
+        (f"{panel_prefix} (counts)", matrix, lambda v: f"{int(round(v))}"),
+        (f"{panel_prefix} (row %)", percentage_matrix, lambda v: f"{v:.1f}%"),
     ]
 
     for ax, (title, data, formatter) in zip(axes, specs):
@@ -5606,9 +5791,9 @@ def generate_confusion_heatmap(
         ax.set_xlabel("Predicted")
         ax.set_ylabel("Actual")
         ax.set_xticks(range(size))
-        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.set_xticklabels(heatmap_labels, rotation=45, ha="right")
         ax.set_yticks(range(size))
-        ax.set_yticklabels(labels)
+        ax.set_yticklabels(heatmap_labels)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
         data_max = max((max(row) for row in data), default=0) or 1.0
@@ -5626,7 +5811,7 @@ def generate_confusion_heatmap(
                     fontsize=9,
                 )
 
-    fig.suptitle("Confusion Matrix Overview", fontsize=14)
+    fig.suptitle(overview_title, fontsize=14)
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
     logging.info("Saved confusion heatmap to %s", output_path)
@@ -7110,11 +7295,9 @@ def process_dataset(
             metrics["first_prompt_timestamp"],
             metrics["last_prompt_timestamp"],
         )
-    confusion = metrics.get("confusion_matrix")
-    labels = metrics.get("labels", [])
-    if confusion:
+    if metrics.get("labels"):
         heatmap_path = build_artifact_path(output_path, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
-        generate_confusion_heatmap(confusion, labels, heatmap_path)
+        generate_confusion_heatmap(metrics, heatmap_path)
 
     configured_controls_non_null = request_control_summary.get("configured", {})
     if configured_controls_non_null:
@@ -7371,11 +7554,9 @@ def process_metrics_only_output(
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)
     logging.info("Saved metrics to %s", metrics_output)
-    confusion = metrics.get("confusion_matrix")
-    labels = metrics.get("labels", [])
-    if confusion:
+    if metrics.get("labels"):
         heatmap_path = build_artifact_path(resolved_output, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
-        generate_confusion_heatmap(confusion, labels, heatmap_path)
+        generate_confusion_heatmap(metrics, heatmap_path)
 
     if calibration_enabled and confidences and correctness:
         calibration_path = build_artifact_path(resolved_output, "_calibration.png", DEFAULT_METRICS_DIR)

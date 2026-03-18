@@ -108,14 +108,61 @@ code {
 
 .sidebar {
   border-right: 1px solid var(--line);
-  padding: 1.3rem 1.05rem;
   background: var(--panel-glass);
   backdrop-filter: blur(18px) saturate(140%);
   position: sticky;
   top: 1rem;
+  max-height: calc(100vh - 2rem);
   align-self: start;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   transition: transform 220ms ease, opacity 220ms ease;
+}
+
+.sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  padding: 1.3rem 1.05rem;
+  overflow: auto;
+}
+
+.sidebar-scroll-overlay {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 72px;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.sidebar-scroll-overlay-top {
+  top: 0;
+  align-items: flex-start;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paper-strong) 84%, transparent), transparent 100%);
+}
+
+.sidebar-scroll-overlay-bottom {
+  bottom: 0;
+  align-items: flex-end;
+  padding-bottom: 0.45rem;
+  background: linear-gradient(0deg, color-mix(in srgb, var(--paper-strong) 84%, transparent), transparent 100%);
+}
+
+.sidebar-scroll-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  pointer-events: auto;
+  box-shadow: var(--shadow-soft);
+}
+
+.sidebar-scroll-btn:hover {
+  transform: translateY(-1px);
 }
 
 .sidebar-collapse-btn {
@@ -131,7 +178,7 @@ code {
   justify-content: center;
 }
 
-body.desktop-sidebar-collapsed .sidebar {
+body.desktop-sidebar-collapsed .sidebar-scroll {
   padding-inline: 0.7rem;
   overflow: hidden;
 }
@@ -156,6 +203,10 @@ body.desktop-sidebar-collapsed .sidebar-tools {
 body.desktop-sidebar-collapsed .brand-actions {
   margin-left: 0;
   flex-direction: column;
+}
+
+body.desktop-sidebar-collapsed .sidebar-scroll-overlay {
+  display: none !important;
 }
 
 body.desktop-sidebar-collapsed .sidebar-collapse-btn svg {
@@ -205,6 +256,22 @@ body.desktop-sidebar-collapsed .sidebar-collapse-btn svg {
   place-items: center;
   font-weight: 700;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 12px 26px rgba(27, 92, 168, 0.28);
+}
+
+@media (min-width: 1101px) {
+  .sidebar-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .sidebar-scroll-overlay {
+    display: flex;
+  }
 }
 
 .theme-icon-toggle {
@@ -1003,8 +1070,26 @@ select[multiple] {
 .leaderboard-run-cell {
   max-width: 320px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.leaderboard-run-cell-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.leaderboard-run-label {
+  min-width: 0;
+}
+
+.leaderboard-run-tag-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  flex-wrap: wrap;
 }
 
 .time-series-head {
@@ -1126,6 +1211,22 @@ select[multiple] {
   stroke: color-mix(in srgb, var(--paper-strong) 92%, transparent);
   stroke-width: 3px;
   stroke-linejoin: round;
+}
+
+.time-series-tag-badge-group {
+  pointer-events: none;
+}
+
+.time-series-tag-badge-rect {
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.time-series-tag-badge-text {
+  fill: rgba(4, 17, 29, 0.82);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", monospace;
 }
 
 .time-series-legends {
@@ -1343,6 +1444,28 @@ select[multiple] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.tag-badge {
+  --tag-badge-color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--tag-badge-color) 88%, #ffffff 12%);
+  background: color-mix(in srgb, var(--tag-badge-color) 88%, #ffffff 12%);
+  color: #04111d;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+  padding: 0.09rem 0.36rem;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.16) inset;
+}
+
+.tag-badge-compact {
+  font-size: 0.54rem;
+  padding: 0.06rem 0.32rem;
+}
+
 .bar-track {
   background: var(--bar-track);
   border-radius: 999px;
@@ -1449,6 +1572,29 @@ select[multiple] {
     rgba(2, 8, 18, 0.24) 62%,
     rgba(2, 8, 18, 0.06) 100%
   );
+}
+
+.bar-track-label-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.bar-track-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track-label-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  flex: 0 0 auto;
+  text-shadow: none;
 }
 
 html[data-theme="light"] .bar-track-label {
@@ -1937,10 +2083,16 @@ tbody tr.selected-row {
 
   .sidebar {
     position: static;
+    max-height: none;
     height: auto;
     overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-scroll {
+    max-height: none;
+    overflow: visible;
   }
 
   .sidebar-collapse-btn {
@@ -1985,6 +2137,12 @@ tbody tr.selected-row {
     opacity: 0;
     pointer-events: none;
     z-index: 80;
+    overflow: hidden;
+  }
+
+  .sidebar-scroll {
+    height: 100%;
+    padding: 1rem 0.9rem 1.1rem;
     overflow: auto;
   }
 
