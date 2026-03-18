@@ -114,7 +114,7 @@ const PERCENT_METRIC_KEYS = new Set([
 const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
-const RADAR_SCALE_KEYS = new Set(["linear", "log"]);
+const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "time_series", "table", "best_by_task", "radar"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
@@ -142,7 +142,7 @@ const RADAR_AXIS_LABELS = {
 
 const RADAR_SCALE_LABELS = {
   linear: "Linear",
-  log: "Log",
+  contrast: "Contrast",
 };
 
 function supportsDirectoryPicker() {
@@ -1252,8 +1252,12 @@ function restoreUiState() {
       if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
         state.radarAxis = payload.radarAxis;
       }
-      if (typeof payload.radarScale === "string" && RADAR_SCALE_KEYS.has(payload.radarScale)) {
-        state.radarScale = payload.radarScale;
+      if (typeof payload.radarScale === "string") {
+        if (RADAR_SCALE_KEYS.has(payload.radarScale)) {
+          state.radarScale = payload.radarScale;
+        } else if (payload.radarScale === "log") {
+          state.radarScale = "contrast";
+        }
       }
       if (typeof payload.hideNoAccuracy === "boolean") {
         state.hideNoAccuracy = payload.hideNoAccuracy;
@@ -3923,10 +3927,12 @@ function normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode) {
 
   const maxValue = Math.max(1, toNonNegativeNumber(axisMax));
   const clampedValue = Math.min(maxValue, toNonNegativeNumber(rawValue));
-  if (scaleMode === "log") {
-    return Math.max(0, Math.min(1, Math.log1p(clampedValue) / Math.log1p(maxValue)));
+  const linearRatio = Math.max(0, Math.min(1, clampedValue / maxValue));
+  if (scaleMode === "contrast") {
+    const gamma = 2.5;
+    return Math.pow(linearRatio, gamma);
   }
-  return Math.max(0, Math.min(1, clampedValue / maxValue));
+  return linearRatio;
 }
 
 function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode) {
@@ -3951,7 +3957,7 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode) {
   svg.setAttribute("role", "img");
   svg.setAttribute(
     "aria-label",
-    `Radar chart comparing model metric profiles across selected dimensions using ${scaleMode === "log" ? "logarithmic" : "linear"} scaling`
+    `Radar chart comparing model metric profiles across selected dimensions using ${scaleMode === "contrast" ? "contrast" : "linear"} scaling`
   );
 
   const angleFor = (index) => -Math.PI / 2 + (2 * Math.PI * index) / tasks.length;
@@ -4062,7 +4068,7 @@ function renderRadarPanel(panel, runs) {
 
   const scaleToggle = document.createElement("div");
   scaleToggle.className = "radar-mode-toggle";
-  ["linear", "log"].forEach((mode) => {
+  ["linear", "contrast"].forEach((mode) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `radar-mode-btn${scaleMode === mode ? " active" : ""}`;
