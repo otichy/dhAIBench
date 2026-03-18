@@ -100,12 +100,68 @@ DEFAULT_TIMEOUT_PROBE_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "timeout_pro
 DEFAULT_TIMEOUT_PROBE_SAMPLE_SIZE = 60
 DEFAULT_TIMEOUT_PROBE_REPEATS = 2
 TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS = 120.0
+DEFAULT_SYSTEM_PROMPT = "You are a linguistic classifier that excels at semantic disambiguation."
 RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
 OLD_RUN_BASENAME_RE = re.compile(
     rf"^(?P<task>.+?)_out_(?P<tail>.+?)_(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
 )
 NEW_RUN_BASENAME_RE = re.compile(
     rf"^(?P<task>.+?)__(?P<provider>.*?)__(?P<model>.*?)__(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
+)
+RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
+    "input",
+    "labels",
+    "task_name",
+    "task_description",
+    "tags",
+    "model",
+    "temperature",
+    "top_p",
+    "top_k",
+    "service_tier",
+    "verbosity",
+    "reasoning_effort",
+    "thinking_level",
+    "effort",
+    "strict_control_acceptance",
+    "provider",
+    "system_prompt",
+    "system_prompt_b64",
+    "few_shot_examples",
+    "prompt_layout",
+    "cache_pad_target_tokens",
+    "prompt_cache_key",
+    "gemini_cached_content",
+    "requesty_auto_cache",
+    "vertex_auto_adc_login",
+    "vertex_access_token_refresh_seconds",
+    "create_gemini_cache",
+    "gemini_cache_ttl",
+    "gemini_cache_ttl_autoupdate",
+    "keep_gemini_cache",
+    "enable_cot",
+    "no_explanation",
+    "logprobs",
+    "calibration",
+    "confusion_heatmap",
+    "api_key_var",
+    "api_base_var",
+    "max_retries",
+    "retry_delay",
+    "request_interval_ms",
+    "request_timeout_seconds",
+    "threads",
+    "prompt_log_detail",
+    "flush_rows",
+    "flush_seconds",
+    "validator_cmd",
+    "validator_args",
+    "validator_timeout",
+    "validator_prompt_max_candidates",
+    "validator_prompt_max_chars",
+    "validator_exhausted_policy",
+    "validator_debug",
+    "log_level",
 )
 
 
@@ -140,6 +196,28 @@ def build_artifact_path(output_csv_path: str, suffix: str, target_dir: str) -> s
     }
     normalized_suffix = suffix_map.get(suffix, suffix)
     return os.path.join(target_dir, f"{normalized_base}{normalized_suffix}")
+
+
+def resolve_prompt_log_path_for_output(output_csv_path: str) -> str:
+    """Resolve the prompt-log path for an output CSV, with legacy sidecar fallback."""
+    current_path = build_artifact_path(output_csv_path, ".log", DEFAULT_LOGS_DIR)
+    legacy_path = os.path.splitext(output_csv_path)[0] + ".log"
+    if os.path.exists(current_path):
+        return current_path
+    if os.path.exists(legacy_path):
+        return legacy_path
+    return current_path
+
+
+def resolve_metrics_artifact_path_for_output(output_csv_path: str) -> str:
+    """Resolve the metrics artifact path for an output CSV, with legacy sidecar fallback."""
+    current_path = build_artifact_path(output_csv_path, "_metrics.json", DEFAULT_METRICS_DIR)
+    legacy_path = os.path.splitext(output_csv_path)[0] + "_metrics.json"
+    if os.path.exists(current_path):
+        return current_path
+    if os.path.exists(legacy_path):
+        return legacy_path
+    return current_path
 
 
 # --------------------------- Utilities ------------------------------------- #
@@ -1264,6 +1342,146 @@ def resolve_invocation_tokens(argv: Optional[List[str]]) -> List[str]:
     return [str(script_token), *[str(token) for token in argv]]
 
 
+def collect_explicit_cli_dests(
+    parser: argparse.ArgumentParser,
+    argv: Optional[List[str]],
+) -> set[str]:
+    """Return argparse dest names that were explicitly present in the CLI argv."""
+    raw_tokens = sys.argv[1:] if argv is None else argv
+    option_actions = getattr(parser, "_option_string_actions", {})
+    explicit: set[str] = set()
+    for token in raw_tokens:
+        action = option_actions.get(str(token))
+        if action is None:
+            continue
+        dest = getattr(action, "dest", None)
+        if dest and dest is not argparse.SUPPRESS:
+            explicit.add(str(dest))
+    if "system_prompt" in explicit or "system_prompt_b64" in explicit:
+        explicit.add("system_prompt")
+        explicit.add("system_prompt_b64")
+    return explicit
+
+
+def normalize_recorded_argv_for_parser(recorded_argv: Optional[List[Any]]) -> List[str]:
+    """Normalize stored run-command argv into parser-ready tokens."""
+    if not recorded_argv:
+        return []
+    tokens = [str(token) for token in recorded_argv if str(token).strip()]
+    if tokens and not tokens[0].startswith("-"):
+        return tokens[1:]
+    return tokens
+
+
+def normalize_resume_value(dest: str, value: Any) -> Any:
+    """Normalize a recovered resume value into the current argparse shape."""
+    if dest == "input":
+        if value is None:
+            return []
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return [cleaned] if cleaned else []
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        cleaned = str(value).strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return copy.deepcopy(value)
+
+
+def is_missing_resume_value(value: Any) -> bool:
+    """Return True when a recovered resume value should be treated as absent."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple)):
+        return len(value) == 0
+    return False
+
+
+def normalize_resume_run_config(config: Any) -> Dict[str, Any]:
+    """Normalize a stored run-config payload to the known resume-recoverable keys."""
+    if not isinstance(config, dict):
+        return {}
+    normalized: Dict[str, Any] = {}
+    for dest in RESUME_RECOVERABLE_ARG_DESTS:
+        if dest not in config:
+            continue
+        normalized[dest] = normalize_resume_value(dest, config.get(dest))
+    return normalized
+
+
+def merge_resume_defaults(target: Dict[str, Any], source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fill missing resume defaults in target from source."""
+    if not source:
+        return target
+    for dest, raw_value in source.items():
+        if dest not in RESUME_RECOVERABLE_ARG_DESTS:
+            continue
+        normalized_value = normalize_resume_value(dest, raw_value)
+        if is_missing_resume_value(normalized_value):
+            continue
+        if dest in target and not is_missing_resume_value(target[dest]):
+            continue
+        target[dest] = normalized_value
+    return target
+
+
+def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
+    """Capture a canonical run-config snapshot for later resume recovery."""
+    snapshot: Dict[str, Any] = {}
+    for dest in RESUME_RECOVERABLE_ARG_DESTS:
+        if not hasattr(args, dest):
+            continue
+        if dest == "system_prompt_b64":
+            snapshot[dest] = None
+            continue
+        snapshot[dest] = normalize_resume_value(dest, getattr(args, dest))
+    raw_system_prompt = getattr(args, "system_prompt", None)
+    encoded_system_prompt = getattr(args, "system_prompt_b64", None)
+    if encoded_system_prompt:
+        decoded_system_prompt = decode_system_prompt_b64(encoded_system_prompt) or DEFAULT_SYSTEM_PROMPT
+    else:
+        decoded_system_prompt = decode_cli_system_prompt(raw_system_prompt) or DEFAULT_SYSTEM_PROMPT
+    snapshot["system_prompt"] = str(decoded_system_prompt or DEFAULT_SYSTEM_PROMPT)
+    snapshot["system_prompt_b64"] = None
+    return snapshot
+
+
+def apply_resume_artifact_defaults(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    argv: Optional[List[str]],
+) -> argparse.Namespace:
+    """Apply prompt-log / metrics-derived defaults for an explicit --resume run."""
+    if not getattr(args, "resume", False):
+        return args
+
+    output_value = str(getattr(args, "output", "") or "").strip()
+    if not output_value:
+        parser.error("--resume requires --output pointing to an existing output CSV.")
+    resolved_output = resolve_user_path(output_value)
+    if not os.path.isfile(resolved_output):
+        parser.error(
+            f"--resume requires an existing output CSV file. Not found: {resolved_output}"
+        )
+
+    explicit_dests = collect_explicit_cli_dests(parser, argv)
+    recovered_defaults = recover_resume_defaults_from_artifacts(parser, resolved_output)
+    for dest in RESUME_RECOVERABLE_ARG_DESTS:
+        if dest in explicit_dests or not hasattr(args, dest):
+            continue
+        if dest not in recovered_defaults:
+            continue
+        setattr(args, dest, copy.deepcopy(recovered_defaults[dest]))
+    args.output = resolved_output
+    return args
+
+
 def build_validator_command(validator_cmd: str, raw_validator_args: Optional[str]) -> List[str]:
     """Build argv for the validator process, using sys.executable for .py scripts."""
     cmd = (validator_cmd or "").strip()
@@ -2216,13 +2434,19 @@ def sanitize_model_details_for_metrics(model_details: Dict[str, Any]) -> Dict[st
     return sanitized
 
 
-def build_prompt_log_run_metadata_record(model_details: Dict[str, Any]) -> Dict[str, Any]:
+def build_prompt_log_run_metadata_record(
+    model_details: Dict[str, Any],
+    run_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Build a run-metadata record written to the prompt log."""
-    return {
+    record = {
         "record_type": "run_metadata",
         "timestamp": utc_timestamp(),
         "model_details": model_details,
     }
+    if run_config:
+        record["run_config"] = copy.deepcopy(run_config)
+    return record
 
 
 def build_run_command_record(
@@ -2958,6 +3182,156 @@ def get_last_run_command_from_prompt_log(path: str) -> Optional[str]:
         if command_value:
             last_command = command_value
     return last_command
+
+
+def extract_last_run_command_argv_from_log_records(
+    log_records: Iterable[Dict[str, Any]],
+) -> Optional[List[str]]:
+    """Return the latest stored run-command argv from prompt-log records."""
+    last_argv: Optional[List[str]] = None
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("record_type", "")).strip() != "run_command":
+            continue
+        argv_value = record.get("argv")
+        if isinstance(argv_value, list):
+            tokens = [str(token) for token in argv_value if str(token).strip()]
+            if tokens:
+                last_argv = tokens
+    return last_argv
+
+
+def extract_run_config_from_log_records(
+    log_records: Iterable[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Extract the latest stored run-config snapshot from prompt-log records."""
+    latest_run_config: Optional[Dict[str, Any]] = None
+    for record in log_records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("record_type") != "run_metadata":
+            continue
+        run_config = normalize_resume_run_config(record.get("run_config"))
+        if run_config:
+            latest_run_config = run_config
+    return latest_run_config
+
+
+def load_metrics_payload(path: str) -> Optional[Dict[str, Any]]:
+    """Load a metrics JSON artifact if it exists and contains an object payload."""
+    resolved = resolve_user_path(path)
+    if not os.path.exists(resolved):
+        return None
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:  # noqa: BLE001
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def extract_resume_defaults_from_model_details(model_details: Any) -> Dict[str, Any]:
+    """Derive resume defaults from stored model-details metadata."""
+    if not isinstance(model_details, dict):
+        return {}
+    recovered: Dict[str, Any] = {}
+    provider = str(model_details.get("provider") or "").strip()
+    if provider:
+        recovered["provider"] = provider
+    requested_model = str(model_details.get("model_requested") or "").strip()
+    if requested_model:
+        recovered["model"] = requested_model
+    gemini_cached_content = str(model_details.get("gemini_cached_content") or "").strip()
+    if gemini_cached_content:
+        recovered["gemini_cached_content"] = gemini_cached_content
+    return recovered
+
+
+def extract_resume_defaults_from_metrics_payload(payload: Any) -> Dict[str, Any]:
+    """Derive best-effort resume defaults from a metrics artifact payload."""
+    if not isinstance(payload, dict):
+        return {}
+    recovered = normalize_resume_run_config(payload.get("run_config"))
+    if recovered:
+        return recovered
+
+    derived: Dict[str, Any] = {}
+    source_input_csv = str(payload.get("source_input_csv") or "").strip()
+    if source_input_csv:
+        derived["input"] = [source_input_csv]
+    source_labels_csv = str(payload.get("source_labels_csv") or "").strip()
+    if source_labels_csv:
+        derived["labels"] = source_labels_csv
+    task_name = str(payload.get("task_name") or "").strip()
+    if task_name:
+        derived["task_name"] = task_name
+    prompt_layout = str(payload.get("prompt_layout") or "").strip()
+    if prompt_layout:
+        derived["prompt_layout"] = prompt_layout
+    task_description = str(payload.get("task_description") or "").strip()
+    if task_description:
+        derived["task_description"] = task_description
+    tags = normalize_metrics_tags_value(payload.get("tags"))
+    if tags:
+        derived["tags"] = tags
+
+    cache_padding = payload.get("cache_padding")
+    if isinstance(cache_padding, dict):
+        target_tokens = cache_padding.get("target_shared_prefix_tokens")
+        if isinstance(target_tokens, (int, float)):
+            derived["cache_pad_target_tokens"] = int(target_tokens)
+
+    request_control_summary = payload.get("request_control_summary")
+    if isinstance(request_control_summary, dict):
+        configured = request_control_summary.get("configured")
+        if isinstance(configured, dict):
+            for control_name in (
+                "reasoning_effort",
+                "thinking_level",
+                "effort",
+                "verbosity",
+                "prompt_cache_key",
+                "gemini_cached_content",
+                "requesty_auto_cache",
+            ):
+                control_value = configured.get(control_name)
+                if control_value is not None:
+                    derived[control_name] = control_value
+
+    return merge_resume_defaults(derived, extract_resume_defaults_from_model_details(payload.get("model_details")))
+
+
+def recover_resume_defaults_from_artifacts(
+    parser: argparse.ArgumentParser,
+    output_path: str,
+) -> Dict[str, Any]:
+    """Recover resume defaults from prompt-log and metrics artifacts for an output CSV."""
+    recovered: Dict[str, Any] = {}
+
+    log_path = resolve_prompt_log_path_for_output(output_path)
+    log_records: List[Dict[str, Any]] = []
+    if os.path.exists(log_path):
+        log_records = load_existing_prompt_log(log_path)
+        merge_resume_defaults(recovered, extract_run_config_from_log_records(log_records))
+        merge_resume_defaults(
+            recovered,
+            extract_resume_defaults_from_model_details(extract_model_details_from_log_records(log_records)),
+        )
+        recorded_argv = extract_last_run_command_argv_from_log_records(log_records)
+        if recorded_argv:
+            try:
+                parsed_args, _ = parser.parse_known_args(
+                    normalize_recorded_argv_for_parser(recorded_argv)
+                )
+            except SystemExit:
+                parsed_args = None
+            if parsed_args is not None:
+                merge_resume_defaults(recovered, build_run_config_snapshot(parsed_args))
+
+    metrics_path = resolve_metrics_artifact_path_for_output(output_path)
+    merge_resume_defaults(recovered, extract_resume_defaults_from_metrics_payload(load_metrics_payload(metrics_path)))
+    return recovered
 
 
 def migrate_legacy_prompt_log_to_ndjson(path: str) -> bool:
@@ -3713,6 +4087,45 @@ def load_existing_output_predictions(
 def is_unclassified_prediction_label(label: Optional[str]) -> bool:
     """Return True when a prediction label should be treated as unclassified."""
     return str(label or "").strip().casefold() == "unclassified"
+
+
+def log_unclassified_resume_hint(
+    output_path: str,
+    predictions: Dict[str, Prediction],
+    reprompt_unclassified: bool = False,
+) -> None:
+    """Warn when an output still contains unclassified predictions and suggest a resume command."""
+    total_predictions = len(predictions)
+    if total_predictions <= 0:
+        return
+    unclassified_count = sum(
+        1 for prediction in predictions.values() if is_unclassified_prediction_label(prediction.label)
+    )
+    if unclassified_count <= 0:
+        return
+
+    resume_command = render_cli_command(
+        ["python", "benchmark_agent.py", "--resume", "--output", output_path, "--unclassified"]
+    )
+    unclassified_share = (float(unclassified_count) / float(total_predictions)) * 100.0
+    if reprompt_unclassified:
+        logging.warning(
+            "Run finished with %d/%d prediction(s) still labeled 'unclassified' (%.1f%%). "
+            "If you want to try those rows again, rerun: %s",
+            unclassified_count,
+            total_predictions,
+            unclassified_share,
+            resume_command,
+        )
+    else:
+        logging.warning(
+            "Run finished with %d/%d prediction(s) labeled 'unclassified' (%.1f%%). "
+            "To re-prompt only those rows and potentially improve results, rerun: %s",
+            unclassified_count,
+            total_predictions,
+            unclassified_share,
+            resume_command,
+        )
 
 
 def remove_output_rows_by_id(output_path: str, ids_to_remove: set[str]) -> int:
@@ -6612,8 +7025,11 @@ def process_dataset(
 
     ensure_directory(output_path)
     ensure_data_layout()
-    log_path = build_artifact_path(output_path, ".log", DEFAULT_LOGS_DIR)
+    log_path = resolve_prompt_log_path_for_output(output_path)
     ensure_directory(log_path)
+    run_config_snapshot = copy.deepcopy(
+        getattr(args, "_run_config_snapshot", build_run_config_snapshot(args))
+    )
     fieldnames = [
         "ID",
         "leftContext",
@@ -6641,10 +7057,18 @@ def process_dataset(
         ]
     )
 
-    resume_mode = os.path.isfile(output_path) and os.path.getsize(output_path) > 0
+    resume_mode = bool(getattr(args, "resume", False))
     writer_fieldnames = list(fieldnames)
     reprompt_unclassified = bool(getattr(args, "reprompt_unclassified", False))
     if resume_mode:
+        if not os.path.isfile(output_path):
+            raise FileNotFoundError(
+                f"Resume mode requires an existing output CSV file: {output_path}"
+            )
+        if os.path.getsize(output_path) <= 0:
+            raise ValueError(
+                f"Resume mode requires a non-empty output CSV file with a header: {output_path}"
+            )
         (
             existing_fieldnames,
             existing_predictions,
@@ -6653,61 +7077,53 @@ def process_dataset(
             existing_reported_tokens,
         ) = load_existing_output_predictions(output_path)
         if not existing_fieldnames:
-            logging.warning(
-                "Existing output file %s has no CSV header; starting a fresh output file.",
-                output_path,
+            raise ValueError(
+                f"Resume mode requires a valid output CSV header in {output_path}."
             )
-            resume_mode = False
-        else:
-            if reprompt_unclassified:
-                reprompt_ids = sorted(
-                    example_id
-                    for example_id, prediction in existing_predictions.items()
-                    if is_unclassified_prediction_label(prediction.label)
+        if reprompt_unclassified:
+            reprompt_ids = sorted(
+                example_id
+                for example_id, prediction in existing_predictions.items()
+                if is_unclassified_prediction_label(prediction.label)
+            )
+            if reprompt_ids:
+                removed_rows = remove_output_rows_by_id(output_path, set(reprompt_ids))
+                logging.info(
+                    "Reprompt-unclassified mode: removed %d row(s) across %d ID(s) with prediction='unclassified' from %s.",
+                    removed_rows,
+                    len(reprompt_ids),
+                    output_path,
                 )
-                if reprompt_ids:
-                    removed_rows = remove_output_rows_by_id(output_path, set(reprompt_ids))
-                    logging.info(
-                        "Reprompt-unclassified mode: removed %d row(s) across %d ID(s) with prediction='unclassified' from %s.",
-                        removed_rows,
-                        len(reprompt_ids),
-                        output_path,
-                    )
-                    (
-                        existing_fieldnames,
-                        existing_predictions,
-                        existing_prompt_tokens,
-                        existing_completion_tokens,
-                        existing_reported_tokens,
-                    ) = load_existing_output_predictions(output_path)
-                else:
-                    logging.info(
-                        "Reprompt-unclassified mode enabled, but no existing rows with prediction='unclassified' were found."
-                    )
-
-            writer_fieldnames = existing_fieldnames
-            predictions.update(existing_predictions)
-            total_prompt_tokens += existing_prompt_tokens
-            total_completion_tokens += existing_completion_tokens
-            total_reported_tokens += existing_reported_tokens
-
-            missing_writer_fields = {"ID", "prediction"} - set(writer_fieldnames)
-            if missing_writer_fields:
-                raise ValueError(
-                    f"Cannot resume writing to {output_path}: missing required columns {sorted(missing_writer_fields)}."
+                (
+                    existing_fieldnames,
+                    existing_predictions,
+                    existing_prompt_tokens,
+                    existing_completion_tokens,
+                    existing_reported_tokens,
+                ) = load_existing_output_predictions(output_path)
+            else:
+                logging.info(
+                    "Reprompt-unclassified mode enabled, but no existing rows with prediction='unclassified' were found."
                 )
 
-            missing_columns = [name for name in fieldnames if name not in writer_fieldnames]
-            if missing_columns:
-                logging.warning(
-                    "Resuming into an older output schema; new rows cannot populate columns: %s",
-                    ", ".join(missing_columns),
-                )
-    elif reprompt_unclassified:
-        logging.info(
-            "Reprompt-unclassified mode requested, but %s does not exist yet; running a full pass.",
-            output_path,
-        )
+        writer_fieldnames = existing_fieldnames
+        predictions.update(existing_predictions)
+        total_prompt_tokens += existing_prompt_tokens
+        total_completion_tokens += existing_completion_tokens
+        total_reported_tokens += existing_reported_tokens
+
+        missing_writer_fields = {"ID", "prediction"} - set(writer_fieldnames)
+        if missing_writer_fields:
+            raise ValueError(
+                f"Cannot resume writing to {output_path}: missing required columns {sorted(missing_writer_fields)}."
+            )
+
+        missing_columns = [name for name in fieldnames if name not in writer_fieldnames]
+        if missing_columns:
+            logging.warning(
+                "Resuming into an older output schema; new rows cannot populate columns: %s",
+                ", ".join(missing_columns),
+            )
 
     processed_ids = set(predictions.keys())
     processed_in_input = sum(1 for ex in examples if ex.example_id in processed_ids)
@@ -6824,7 +7240,10 @@ def process_dataset(
         api_base_var=args.api_base_var,
         gemini_cached_content=args.gemini_cached_content,
     )
-    run_metadata_record = build_prompt_log_run_metadata_record(run_model_details)
+    run_metadata_record = build_prompt_log_run_metadata_record(
+        run_model_details,
+        run_config=run_config_snapshot,
+    )
     normalized_command = str(run_command or "").strip()
     command_logged = False
     command_reason = "initial_run"
@@ -7261,6 +7680,12 @@ def process_dataset(
 
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
+        "run_config": copy.deepcopy(run_config_snapshot),
+        "source_input_csv": os.path.abspath(input_path),
+        "source_output_csv": os.path.abspath(output_path),
+        "source_labels_csv": (
+            os.path.abspath(resolve_user_path(args.labels)) if getattr(args, "labels", None) else ""
+        ),
         "task_name": str(getattr(args, "task_name", "") or "").strip(),
         "prompt_layout": args.prompt_layout,
         "task_description": str(getattr(args, "task_description", "") or "").strip(),
@@ -7295,7 +7720,7 @@ def process_dataset(
             metrics["first_prompt_timestamp"],
             metrics["last_prompt_timestamp"],
         )
-    if metrics.get("labels"):
+    if getattr(args, "confusion_heatmap", True) and metrics.get("labels"):
         heatmap_path = build_artifact_path(output_path, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
         generate_confusion_heatmap(metrics, heatmap_path)
 
@@ -7391,6 +7816,12 @@ def process_dataset(
             total_token_usage,
         )
 
+    log_unclassified_resume_hint(
+        output_path=output_path,
+        predictions=predictions,
+        reprompt_unclassified=reprompt_unclassified,
+    )
+
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
 
 
@@ -7474,10 +7905,7 @@ def process_metrics_only_output(
         confidences.append(prediction.confidence)
 
     ensure_data_layout()
-    log_path = build_artifact_path(resolved_output, ".log", DEFAULT_LOGS_DIR)
-    if not os.path.exists(log_path):
-        legacy_log_path = os.path.splitext(resolved_output)[0] + ".log"
-        log_path = legacy_log_path if os.path.exists(legacy_log_path) else log_path
+    log_path = resolve_prompt_log_path_for_output(resolved_output)
     log_records = load_existing_prompt_log(log_path)
     prompt_time_window = compute_prompt_time_window(log_records)
     configured_controls = {
@@ -7492,6 +7920,10 @@ def process_metrics_only_output(
     request_control_summary = compute_request_control_summary(log_records, configured_controls)
     usage_metadata_summary = compute_usage_metadata_summary(log_records)
     token_usage_totals = compute_token_usage_totals(log_records)
+    existing_metrics_payload = load_metrics_payload(resolve_metrics_artifact_path_for_output(resolved_output))
+    recovered_run_config = extract_run_config_from_log_records(log_records)
+    if not recovered_run_config and existing_metrics_payload is not None:
+        recovered_run_config = normalize_resume_run_config(existing_metrics_payload.get("run_config"))
     run_model_details = extract_model_details_from_log_records(log_records) or build_run_model_details(
         provider=getattr(args, "provider", "openai"),
         requested_model=str(getattr(args, "model", "") or ""),
@@ -7512,8 +7944,25 @@ def process_metrics_only_output(
     }
 
     metrics_output = build_artifact_path(resolved_output, "_metrics.json", DEFAULT_METRICS_DIR)
+    recovered_input_paths = normalize_resume_value(
+        "input",
+        (recovered_run_config or {}).get("input"),
+    )
+    recovered_input_path = recovered_input_paths[0] if recovered_input_paths else ""
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
+        "run_config": copy.deepcopy(recovered_run_config) if recovered_run_config else {},
+        "source_input_csv": str(
+            (existing_metrics_payload or {}).get("source_input_csv")
+            or recovered_input_path
+            or ""
+        ).strip(),
+        "source_output_csv": os.path.abspath(resolved_output),
+        "source_labels_csv": str(
+            (existing_metrics_payload or {}).get("source_labels_csv")
+            or (recovered_run_config or {}).get("labels")
+            or ""
+        ).strip(),
         "task_name": str(getattr(args, "task_name", "") or "").strip(),
         "prompt_layout": None,
         "task_description": str(getattr(args, "task_description", "") or "").strip(),
@@ -7554,7 +8003,7 @@ def process_metrics_only_output(
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)
     logging.info("Saved metrics to %s", metrics_output)
-    if metrics.get("labels"):
+    if getattr(args, "confusion_heatmap", True) and metrics.get("labels"):
         heatmap_path = build_artifact_path(resolved_output, "_confusion_heatmap.png", DEFAULT_METRICS_DIR)
         generate_confusion_heatmap(metrics, heatmap_path)
 
@@ -7598,9 +8047,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional output CSV path or directory. When omitted, defaults to "
-            "<input>__<provider>__<model>__<timestamp>.csv alongside each input file. "
-            "If the resolved output CSV already exists, the run resumes from the first ID "
-            "not present in that file."
+            "<input>__<provider>__<model>__<timestamp>.csv alongside each input file."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume a run from an existing --output CSV. The agent reconstructs the prior "
+            "run configuration from the corresponding prompt log and/or metrics artifact when "
+            "available; any explicitly provided CLI flags take precedence."
         ),
     )
     parser.add_argument(
@@ -7630,8 +8086,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         dest="reprompt_unclassified",
         action="store_true",
         help=(
-            "Resume helper: when --output points to an existing CSV, remove rows whose "
-            "prediction is 'unclassified' and re-prompt only those IDs. "
+            "Resume helper: with --resume, remove rows whose prediction is "
+            "'unclassified' from the existing output and re-prompt only those IDs. "
             "Alias --unlcassified is accepted for compatibility."
         ),
     )
@@ -7715,7 +8171,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument(
         "--system_prompt",
-        default="You are a linguistic classifier that excels at semantic disambiguation.",
+        default=DEFAULT_SYSTEM_PROMPT,
         help="System prompt injected into the chat completion.",
     )
     prompt_group.add_argument(
@@ -7856,6 +8312,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--calibration",
         action="store_true",
         help="Generate a calibration plot using the model's confidences.",
+    )
+    parser.add_argument(
+        "--confusion_heatmap",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Generate a confusion heatmap when label-based metrics are available. "
+            "Enabled by default; use --no-confusion_heatmap to disable it."
+        ),
     )
     parser.add_argument(
         "--api_key_var",
@@ -8084,29 +8549,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     invocation_tokens = resolve_invocation_tokens(argv)
     invocation_command = render_cli_command(invocation_tokens)
-    if args.system_prompt_b64:
-        decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)
-        args.system_prompt = decoded_prompt or ""
-    else:
-        args.system_prompt = decode_cli_system_prompt(args.system_prompt)
-
-    ensure_data_layout()
-    session_log_file = os.path.join(
-        DEFAULT_LOGS_DIR,
-        f"benchmark_agent_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.log",
-    )
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(session_log_file, encoding="utf-8"),
-        ],
-    )
-    logging.info("Session log file: %s", session_log_file)
 
     if args.update_models and args.summarize_log_errors:
         parser.error("--summarize-log-errors and --update-models cannot be used together.")
+    if args.resume and args.update_models:
+        parser.error("--resume and --update-models cannot be used together.")
+    if args.resume and args.summarize_log_errors:
+        parser.error("--resume and --summarize-log-errors cannot be used together.")
     if args.metrics_only and args.update_models:
         parser.error("--metrics_only and --update-models cannot be used together.")
     if args.metrics_only and args.summarize_log_errors:
@@ -8117,6 +8566,38 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--timeout_probe and --summarize-log-errors cannot be used together.")
     if args.timeout_probe and args.metrics_only:
         parser.error("--timeout_probe and --metrics_only cannot be used together.")
+    if args.resume and args.metrics_only:
+        parser.error("--resume and --metrics_only cannot be used together.")
+    if args.resume and args.timeout_probe:
+        parser.error("--resume and --timeout_probe cannot be used together.")
+    if args.reprompt_unclassified and not args.resume:
+        parser.error("--unclassified requires --resume.")
+
+    if args.resume:
+        args = apply_resume_artifact_defaults(parser, args, argv)
+
+    if args.system_prompt_b64:
+        decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)
+        args.system_prompt = decoded_prompt or ""
+    else:
+        args.system_prompt = decode_cli_system_prompt(args.system_prompt)
+    args._run_config_snapshot = build_run_config_snapshot(args)
+
+    ensure_data_layout()
+    session_log_file = os.path.join(
+        DEFAULT_LOGS_DIR,
+        f"benchmark_agent_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.log",
+    )
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(session_log_file, encoding="utf-8"),
+        ],
+    )
+    logging.info("Session log file: %s", session_log_file)
+
     if args.update_models:
         return update_model_catalog(args.models_providers, resolve_user_path(args.models_output))
     if args.summarize_log_errors:
@@ -8127,14 +8608,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not args.input:
         parser.error(
-            "--input is required unless --update-models or --summarize-log-errors is specified."
+            "--input is required unless --update-models or --summarize-log-errors is specified, "
+            "or it can be recovered via --resume."
         )
 
     if not args.metrics_only and not args.model:
         parser.error(
             "--model is required unless --metrics_only, --update-models, "
-            "or --summarize-log-errors is specified."
+            "or --summarize-log-errors is specified, or it can be recovered via --resume."
         )
+    if args.resume and len(args.input) != 1:
+        parser.error("--resume currently supports exactly one --input file.")
     if args.cache_pad_target_tokens < 0:
         parser.error("--cache_pad_target_tokens must be >= 0.")
     if args.timeout_probe_size <= 0:

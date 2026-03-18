@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -6,431 +6,357 @@
     <style>
       :root {
         color-scheme: light;
-        font-family: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", sans-serif;
-        --bg: #f3f7fc;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        --bg: #f2f5f9;
         --card: #ffffff;
+        --line: #cfdae7;
         --ink: #16253a;
-        --muted: #4c5f78;
-        --line: #cfdceb;
-        --accent: #1f66b1;
-        --accent-soft: #e6f1fb;
-        --control-height: 2.35rem;
-        --required: #b54708;
-        --required-soft: #fff2e8;
-        --flag: #0050a4;
-        --value: #1f7a1f;
-        --script: #7a1f7a;
-        --binary: #8f4a00;
+        --muted: #53657d;
+        --accent: #175996;
+        --accent-soft: #eaf3fb;
+        --control-height: 2.4rem;
       }
       body {
         margin: 0;
         padding: 1.5rem;
-        line-height: 1.45;
-        color: var(--ink);
         background:
-          radial-gradient(circle at top right, #d9ecff 0%, rgba(217, 236, 255, 0) 50%),
-          radial-gradient(circle at bottom left, #e8f6e8 0%, rgba(232, 246, 232, 0) 55%),
+          radial-gradient(circle at top right, #dcecff 0%, rgba(220, 236, 255, 0) 45%),
+          radial-gradient(circle at bottom left, #edf7ee 0%, rgba(237, 247, 238, 0) 50%),
           var(--bg);
+        color: var(--ink);
       }
       .page {
-        max-width: 1320px;
+        max-width: 1380px;
         margin: 0 auto;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 370px;
-        gap: 1.25rem;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 1.2rem;
         align-items: start;
       }
-      .main-column {
-        min-width: 0;
+      .page-header,
+      fieldset,
+      .section-card,
+      .command-panel {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--card);
+        box-shadow: 0 10px 24px rgba(22, 37, 58, 0.06);
       }
-      .page-header {
-        margin-bottom: 1rem;
+      .page-header,
+      .command-panel {
+        padding: 1rem 1.1rem;
       }
-      h1 {
-        margin: 0 0 0.5rem;
-        letter-spacing: 0.01em;
+      .page-header h1 {
+        margin: 0 0 0.4rem;
       }
-      .subtitle {
+      .page-header p {
         margin: 0;
         color: var(--muted);
       }
+      .mode-bar {
+        margin-top: 0.9rem;
+        display: flex;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+      }
+      .mode-button,
+      button {
+        min-height: var(--control-height);
+        padding: 0.45rem 0.9rem;
+        border: none;
+        border-radius: 999px;
+        background: #dce9f6;
+        color: #18436e;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .mode-button.is-active,
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      form {
+        margin-top: 1rem;
+      }
       fieldset {
-        border: 1px solid var(--line);
-        background: var(--card);
-        border-radius: 12px;
-        padding: 0.95rem 1.35rem;
         margin: 0 0 1rem;
-        box-shadow: 0 6px 16px rgba(22, 37, 58, 0.045);
+        padding: 1rem 1.15rem;
+      }
+      .section-card {
+        margin: 0 0 1rem;
+      }
+      .section-card > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 1rem 1.15rem;
+        font-weight: 700;
+        color: #18436e;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.8rem;
+      }
+      .section-card > summary::-webkit-details-marker {
+        display: none;
+      }
+      .section-card > summary::after {
+        content: "Show";
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 3.7rem;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        background: #eaf3fb;
+        color: var(--accent);
+        font-size: 0.76rem;
+        font-weight: 700;
+      }
+      .section-card[open] > summary {
+        border-bottom: 1px solid var(--line);
+      }
+      .section-card[open] > summary::after {
+        content: "Hide";
+      }
+      .section-card-body {
+        padding: 1rem 1.15rem;
       }
       legend {
+        padding: 0 0.45rem;
         font-weight: 700;
-        padding: 0 0.5rem;
-        color: var(--ink);
+      }
+      .section-lead,
+      .hint,
+      .mode-note {
+        color: var(--muted);
       }
       .section-lead {
         margin-top: 0;
-        color: var(--muted);
       }
-      .required-card {
-        border-color: #f0b487;
-        background: linear-gradient(180deg, #fffefc 0%, #ffffff 100%);
+      .mode-note {
+        margin: 0 0 0.8rem;
+        padding: 0.75rem 0.9rem;
+        border-radius: 12px;
+        background: #f5f8fc;
+        border: 1px solid #dde7f1;
       }
-      .required-field input,
-      .required-field textarea,
-      .required-field select {
-        border: 1.5px solid #f0c5a2;
-        background: #fffaf5;
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0.85rem 1.1rem;
       }
-      .required-field input:focus,
-      .required-field textarea:focus,
-      .required-field select:focus {
-        outline: none;
-        border-color: #d97706;
-        box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
+      .dataset-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 0.95rem;
+      }
+      body[data-command-mode="resume"] .dataset-grid {
+        grid-template-columns: 1fr;
+      }
+      .dataset-input,
+      .dataset-output {
+        border: 1px solid #dce6f0;
+        border-radius: 12px;
+        padding: 0.8rem;
+        background: #fbfdff;
+      }
+      body[data-command-mode="resume"] .dataset-output {
+        background: #f7fbff;
       }
       label {
         display: flex;
         flex-direction: column;
-        margin-bottom: 1rem;
-        font-weight: 600;
+        gap: 0.2rem;
+        font-weight: 700;
+        margin-bottom: 0.95rem;
       }
       label span {
         font-weight: 400;
       }
       input,
-      textarea,
-      select {
-        margin-top: 0.35rem;
-        padding: 0.38rem 0.58rem;
-        font-size: 0.98rem;
-        font-family: inherit;
-        border: 1px solid #b8cadd;
-        border-radius: 8px;
+      select,
+      textarea {
+        margin-top: 0.25rem;
+        padding: 0.45rem 0.6rem;
+        font: inherit;
+        border: 1px solid #b9cadb;
+        border-radius: 10px;
         box-sizing: border-box;
-        transition:
-          border-color 140ms ease,
-          box-shadow 140ms ease,
-          background-color 140ms ease;
       }
       input:not([type="checkbox"]),
       select {
-        height: var(--control-height);
+        min-height: var(--control-height);
         width: 100%;
-      }
-      input:focus,
-      textarea:focus,
-      select:focus {
-        outline: none;
-        border-color: #5f8fc1;
-        box-shadow: 0 0 0 2px rgba(95, 143, 193, 0.15);
-      }
-      input[type="checkbox"] {
-        min-height: initial;
-        width: 1rem;
-        height: 1rem;
-        flex: 0 0 1rem;
-        border-radius: 4px;
-        accent-color: #2f7abf;
-        vertical-align: middle;
-        position: relative;
-        top: 0;
-        margin: 0;
       }
       textarea {
-        width: 100%;
         min-height: 7rem;
         resize: vertical;
-        line-height: 1.4;
       }
       #input_path {
-        min-height: var(--control-height);
-        height: var(--control-height);
-      }
-      #system_prompt {
-        min-height: 6.8rem;
-      }
-      input[type="number"] {
-        padding-right: 0.45rem;
-      }
-      select {
-        appearance: auto;
-        background-color: #fff;
-      }
-      label {
-        gap: 0.06rem;
+        min-height: 5rem;
       }
       .inline {
         display: flex;
         flex-direction: row;
         align-items: center;
         gap: 0.5rem;
-        font-weight: 600;
         min-height: var(--control-height);
-      }
-      .inline span {
-        font-weight: 400;
       }
       .inline input[type="checkbox"] {
-        width: 1.05rem;
-        height: 1.05rem;
+        width: 1rem;
+        height: 1rem;
+        margin: 0;
       }
-      .hint {
-        display: block;
-        font-size: 0.88rem;
-        color: var(--muted);
-        margin-top: 0.28rem;
-        line-height: 1.35;
-      }
-      .tool-row {
+      .label-heading {
         display: flex;
-        flex-wrap: wrap;
-        gap: 0.65rem 1rem;
-        margin-bottom: 1rem;
         align-items: center;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        font-weight: 700;
       }
-      .catalog-controls {
+      .field-tags {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+      .field-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.08rem 0.45rem;
+        border: 1px solid #d5e0ec;
+        border-radius: 999px;
+        background: #f3f7fb;
+        color: #36516c;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .provider-subheading {
+        margin: 0.2rem 0 0.8rem;
         display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.2rem;
-      }
-      .catalog-controls .hint {
-        margin-top: 0;
-      }
-      .core-setup-grid {
-        display: grid;
-        grid-template-columns: minmax(220px, 0.9fr) minmax(300px, 1.2fr) minmax(280px, 1fr);
-        gap: 0.85rem 1rem;
-        align-items: start;
-      }
-      .core-column {
-        border: 1px solid #d6e3f2;
-        border-radius: 10px;
-        padding: 0.72rem 0.82rem 0.2rem;
-        background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
-      }
-      .core-column-title {
-        margin: 0 0 0.62rem;
-        font-size: 0.96rem;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        grid-column: 1 / -1;
+        color: #24476d;
         font-weight: 700;
-        color: #1c4f82;
-      }
-      .core-column label:last-of-type {
-        margin-bottom: 0.25rem;
-      }
-      .core-column .catalog-controls {
-        width: 100%;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 0.85rem 1.35rem;
-        align-items: start;
-      }
-      .grid.compact {
-        gap: 0.55rem 1rem;
-      }
-      details.optional-group {
-        border: 1px dashed var(--line);
-        border-radius: 10px;
-        padding: 0.7rem 0.85rem 0.15rem;
-        margin: 0.75rem 0;
-        background: #fcfdff;
-      }
-      details.optional-group > summary {
-        cursor: pointer;
-        font-weight: 700;
-        color: #1c4f82;
-        margin-bottom: 0.55rem;
-      }
-      details.optional-group[open] > summary {
-        margin-bottom: 0.8rem;
-      }
-      .token-control-split {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 0.85rem 1rem;
-      }
-      .token-panel {
-        border: 1px solid #d6e3f2;
-        border-radius: 10px;
-        padding: 0.72rem 0.82rem 0.2rem;
-        background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
-      }
-      .token-panel.output-panel {
-        background: linear-gradient(180deg, #f7fbf8 0%, #ffffff 100%);
-      }
-      .token-panel-title {
-        margin: 0 0 0.24rem;
-        font-size: 0.96rem;
-        font-weight: 700;
-        color: #1c4f82;
-      }
-      .token-panel-hint {
-        margin: 0 0 0.62rem;
-        font-size: 0.84rem;
-        color: var(--muted);
-      }
-      .token-panel .grid {
-        gap: 0.62rem 1rem;
-      }
-      pre {
-        background: #f5f8fc;
-        padding: 1rem;
-        overflow-x: auto;
-        white-space: pre-wrap;
-        border-radius: 10px;
-        border: 1px solid var(--line);
-      }
-      button {
-        min-height: var(--control-height);
-        padding: 0.35rem 0.95rem;
-        font-size: 0.98rem;
-        font-weight: 600;
-        cursor: pointer;
-        border: none;
-        border-radius: 8px;
-        background: var(--accent);
-        color: white;
-      }
-      button:active {
-        transform: translateY(1px);
       }
       .input-with-action {
         display: flex;
-        align-items: center;
         gap: 0.45rem;
-        margin-top: 0.35rem;
-      }
-      .input-with-action input {
-        margin-top: 0;
-        flex: 1;
+        align-items: center;
       }
       .clear-model-button {
-        flex: 0 0 auto;
         width: var(--control-height);
         height: var(--control-height);
-        margin-top: 0;
+        border-radius: 10px;
         padding: 0;
-        font-weight: 700;
-        font-size: 1.05rem;
-        line-height: 1;
-        border-radius: 8px;
-        background: #2b6cb5;
       }
-      input[list]::-webkit-calendar-picker-indicator {
-        display: none;
+      details.optional-group,
+      details.inspect-panel {
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        padding: 0.8rem 0.9rem;
+        background: #fcfdff;
+      }
+      details > summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: #18436e;
+      }
+      .inspect-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 0.9rem;
+        margin-top: 0.9rem;
+      }
+      .inspect-card,
+      .command-preview,
+      .prompt-message-preview {
+        border: 1px solid #d8e4f0;
+        border-radius: 12px;
+        background: #f8fbff;
+      }
+      .inspect-card {
+        padding: 0.8rem;
       }
       .command-panel {
         position: sticky;
         top: 1rem;
-        border: 1px solid #bdd4ec;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-        border-radius: 12px;
-        padding: 1rem;
-        box-shadow: 0 12px 24px rgba(31, 102, 177, 0.12);
+        background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
       }
-      .command-panel h2 {
-        margin: 0 0 0.35rem;
+      .command-panel.is-collapsed .expanded-only,
+      .command-panel.is-collapsed #command-output {
+        display: none;
       }
-      .panel-note {
-        margin: 0 0 0.8rem;
-        color: var(--muted);
-        font-size: 0.92rem;
-      }
-      .command-sections {
-        display: grid;
-        gap: 0.8rem;
-      }
-      .live-section {
-        border: 1px solid #d5e4f3;
-        background: #ffffff;
-        border-radius: 10px;
-        padding: 0.7rem;
-      }
-      .live-section-title {
-        margin: 0 0 0.55rem;
-        font-size: 0.84rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #174676;
-      }
-      .token-estimate {
-        margin: 0;
-        padding: 0.55rem 0.65rem;
-        border: 1px solid #d5e4f3;
-        background: #f5f9ff;
-        border-radius: 8px;
-        font-size: 0.88rem;
-        color: #18344d;
-        line-height: 1.35;
-      }
-      .token-estimate strong {
+      .command-panel .summary-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
         font-weight: 700;
       }
-      .token-estimate-controls {
-        margin: 0.65rem 0 0;
-        display: grid;
-        gap: 0.45rem;
+      .command-actions {
+        display: flex;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+        margin: 0.85rem 0;
       }
-      .token-estimate-controls input[type="file"] {
-        margin: 0;
-        padding: 0.15rem 0;
-      }
-      .token-estimate-status {
-        margin: 0;
-        font-size: 0.83rem;
-        color: #35526d;
-      }
-      code {
-        font-weight: bolder;
-      }
-      .command-preview {
-        margin: 0 0 0.65rem;
-        padding: 0.62rem 0.66rem;
-        border: 1px solid #d5e4f3;
-        border-radius: 8px;
-        background: #f8fbff;
+      .command-preview,
+      .prompt-message-preview {
+        padding: 0.8rem;
         white-space: pre-wrap;
-        min-height: 160px;
-      }
-      .prompt-preview-details {
-        margin-top: 0.68rem;
-        border: 1px solid #d5e4f3;
-        border-radius: 8px;
-        background: #f8fbff;
-        padding: 0.45rem 0.55rem;
-      }
-      .prompt-preview-details > summary {
-        cursor: pointer;
-        font-weight: 700;
-        color: #174676;
-      }
-      .prompt-preview-meta {
-        margin: 0.45rem 0 0.55rem;
-        font-size: 0.83rem;
-        color: #35526d;
+        overflow-x: auto;
       }
       .prompt-message-title {
-        margin: 0.48rem 0 0.28rem;
+        margin: 0.85rem 0 0.35rem;
         font-size: 0.78rem;
-        letter-spacing: 0.02em;
         font-weight: 700;
+        letter-spacing: 0.03em;
         text-transform: uppercase;
-        color: #1f4d7b;
+        color: #19456f;
       }
-      .prompt-message-preview {
-        margin: 0;
-        max-height: 240px;
-        overflow: auto;
-        padding: 0.56rem 0.6rem;
-        border: 1px solid #cfdeee;
-        border-radius: 6px;
-        background: #ffffff;
-        white-space: pre-wrap;
-        font-size: 0.83rem;
-        line-height: 1.35;
+      .token-estimate-status,
+      .panel-note {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .catalog-controls {
+        display: grid;
+        gap: 0.35rem;
+      }
+      .model-provider-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 0.95fr);
+        gap: 1.2rem;
+        align-items: start;
+      }
+      .model-provider-fields {
+        display: grid;
+        gap: 0.95rem;
+      }
+      .model-provider-refresh {
+        display: grid;
+        gap: 0.55rem;
+        align-content: start;
+        padding-top: 0.15rem;
+      }
+      .model-provider-refresh .primary {
+        width: 100%;
+      }
+      .token-estimate-controls {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+      .token-estimate-controls input[type="file"] {
+        padding: 0;
+        border: none;
+        background: transparent;
       }
       .cmd-token {
         word-break: break-word;
@@ -438,117 +364,81 @@
       .cmd-space {
         white-space: pre;
       }
-      .cmd-bin {
-        color: var(--binary);
-        font-weight: 700;
-      }
-      .cmd-script {
-        color: var(--script);
-        font-weight: 600;
-      }
-      .cmd-flag {
-        color: var(--flag);
-        font-weight: 700;
-      }
-      .cmd-value {
-        color: var(--value);
-      }
-      .cmd-plain {
-        color: var(--ink);
-      }
-      .command-actions {
-        display: flex;
-        gap: 0.6rem;
-        flex-wrap: wrap;
-      }
-      .cli-help {
-        margin-top: 1rem;
-      }
-      .cli-help summary {
-        cursor: pointer;
-        font-weight: 700;
-      }
-      @media (max-width: 1060px) {
-        .page {
+      .cmd-bin { color: #8f4a00; font-weight: 700; }
+      .cmd-script { color: #7a1f7a; font-weight: 600; }
+      .cmd-flag { color: #0050a4; font-weight: 700; }
+      .cmd-value { color: #1f7a1f; }
+      @media (max-width: 1120px) {
+        .page,
+        .inspect-grid,
+        .dataset-grid,
+        .model-provider-layout {
           grid-template-columns: 1fr;
         }
         .command-panel {
           position: static;
-          order: -1;
-        }
-      }
-      @media (max-width: 920px) {
-        .core-setup-grid {
-          grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
-  <body>
+  <body data-gui-variant="mode-first" data-command-mode="run">
     <div class="page">
-      <main class="main-column">
+      <main>
         <header class="page-header">
-          <h1>LLM Linguistic Classification Benchmark Agent</h1>
-          <p class="subtitle">
-            Required inputs are highlighted first. Optional and advanced controls are collapsed to reduce visual clutter.
-          </p>
+          <h1>LLM Benchmark Agent Configuration</h1>
+          <p>Mode-first configuration GUI for benchmark runs, resume, metrics-only recompute, and run-and-validate workflows.</p>
+          <div class="mode-bar" aria-label="Command mode">
+            <button type="button" class="mode-button is-active" data-mode-choice="run">Run</button>
+            <button type="button" class="mode-button" data-mode-choice="validator">Run &amp; Validate</button>
+            <button type="button" class="mode-button" data-mode-choice="resume">Resume</button>
+            <button type="button" class="mode-button" data-mode-choice="metrics">Metrics only</button>
+          </div>
         </header>
 
         <form id="config-form">
-          <fieldset class="required-card">
-            <legend>Core Setup</legend>
-            <p class="section-lead">Set these first to build a runnable command.</p>
-            <div class="core-setup-grid">
-              <section class="core-column">
-                <h3 class="core-column-title">Refresh</h3>
-                <div class="catalog-controls">
-                  <button type="button" id="refresh-models-button">Refresh Model List</button>
-                  <span class="hint">Run <code>python benchmark_agent.py --update-models</code> first, then refresh here.</span>
-                  <span class="hint" id="model-catalog-meta"></span>
-                  <span id="refresh-models-status" class="hint"></span>
-                </div>
-              </section>
-              <section class="core-column">
-                <h3 class="core-column-title">I/O</h3>
-                <label class="required-field"
-                  >Input CSV Path(s)
-                  <textarea
-                    id="input_path"
-                    name="input_path"
-                    placeholder="data/input/examples.csv&#10;data/input/examples_2.csv"
-                    required
-                  ></textarea>
+          <fieldset>
+            <legend><span data-current-mode-label>Run</span> Setup</legend>
+            <p class="mode-note" data-mode-visible="run">Standard benchmark run with provider, model, prompt, execution, and evaluation controls.</p>
+            <p class="mode-note" data-mode-visible="validator">Run &amp; Validate uses the normal benchmark flow, but keeps validator controls in the main path.</p>
+            <p class="mode-note" data-mode-visible="resume">Resume is triggered explicitly with <code>--resume</code>. The command recovers the previous run configuration from the output&apos;s prompt log and metrics artifacts when available; use <code>--unclassified</code> only when you want to re-prompt rows already labeled <code>unclassified</code>.</p>
+            <p class="mode-note" data-mode-visible="metrics">Metrics only recomputes artifacts from existing output CSV files and does not emit <code>--model</code>.</p>
+            <div class="dataset-grid">
+              <section class="dataset-input" data-mode-visible="run validator metrics">
+                <label>
+                  <span class="label-heading">
+                    <span data-mode-visible="run validator">Input CSV Path(s)</span>
+                    <span data-mode-visible="metrics">Existing Output CSV Path(s)</span>
+                    <span class="field-tags"><span class="field-tag">Required</span></span>
+                  </span>
+                  <textarea id="input_path" name="input_path" placeholder="data/input/examples.csv&#10;data/input/examples_2.csv" required></textarea>
                   <span class="hint">Provide one path per line.</span>
                 </label>
-                <label
-                  >Output CSV Path
-                  <input type="text" id="output_path" name="output_path" placeholder="data/output/results.csv" />
-                  <span class="hint">Optional: dir for multi-file input or an existing file to resume.</span>
-                </label>
-                <label class="inline">
-                  <input type="checkbox" id="reprompt_unclassified" name="reprompt_unclassified" />
-                  <span>Resume mode: re-prompt only <code>unclassified</code> rows (<code>--unclassified</code>)</span>
-                </label>
               </section>
-              <section class="core-column">
-                <h3 class="core-column-title">Model/Provider</h3>
-                <label class="required-field"
-                  >Model Name
-                  <div class="input-with-action">
-                    <input
-                      type="text"
-                      id="model"
-                      name="model"
-                      placeholder="gpt-4o-mini"
-                      list="model-options"
-                      required
-                    />
-                    <button type="button" id="model-clear-button" class="clear-model-button">x</button>
-                  </div>
-                  <datalist id="model-options"></datalist>
+              <section class="dataset-output" data-mode-visible="run validator resume">
+                <label>
+                  <span class="label-heading">
+                    <span>Output CSV Path</span>
+                    <span class="field-tags"><span class="field-tag" id="output-path-mode-badge">Optional</span></span>
+                  </span>
+                  <input type="text" id="output_path" name="output_path" placeholder="data/output/results.csv" />
+                  <span class="hint" id="output-path-mode-hint">Leave blank for the default generated output path.</span>
                 </label>
-                <label class="required-field"
-                  >Provider
+                <div data-mode-visible="resume">
+                  <label class="inline">
+                    <input type="checkbox" id="reprompt_unclassified" name="reprompt_unclassified" />
+                    <span>Resume mode: re-prompt only <code>unclassified</code> rows</span>
+                  </label>
+                </div>
+              </section>
+            </div>
+          </fieldset>
+
+          <fieldset data-mode-visible="run validator">
+            <legend>Model &amp; Provider</legend>
+            <div class="model-provider-layout">
+              <section class="model-provider-fields">
+                <label>
+                  <span class="label-heading">Provider <span class="field-tags"><span class="field-tag">Required</span></span></span>
                   <select id="provider" name="provider">
                     <option value="openai" selected>OpenAI-Compatible</option>
                     <option value="anthropic">Anthropic (OpenAI proxy)</option>
@@ -560,2161 +450,192 @@
                     <option value="requesty">Requesty (OpenAI proxy)</option>
                   </select>
                 </label>
+                <label>
+                  <span class="label-heading">Model Name <span class="field-tags"><span class="field-tag">Required</span></span></span>
+                  <div class="input-with-action">
+                    <input type="text" id="model" name="model" placeholder="gpt-4o-mini" list="model-options" required />
+                    <button type="button" id="model-clear-button" class="clear-model-button">x</button>
+                  </div>
+                </label>
+                <datalist id="model-options"></datalist>
+              </section>
+              <section class="model-provider-refresh">
+                <div class="catalog-controls">
+                  <button type="button" id="refresh-models-button" class="primary">Refresh Model List</button>
+                  <span class="hint">Run <code>python benchmark_agent.py --update-models</code> first, then refresh here.</span>
+                  <span class="hint" id="model-catalog-meta"></span>
+                  <span class="hint" id="refresh-models-status"></span>
+                </div>
               </section>
             </div>
           </fieldset>
 
-          <fieldset>
-            <legend>Prompt Behavior</legend>
-            <label
-              >System Prompt
-              <span class="hint">Only this field may be base64-encoded in the generated command when multi-line text is used.</span>
-              <textarea
-                id="system_prompt"
-                name="system_prompt"
-                placeholder="You are a linguistic classifier that excels at semantic disambiguation."
-              ></textarea>
+          <fieldset data-mode-visible="run validator">
+            <legend>Prompt Strategy</legend>
+            <label>System Prompt
+              <textarea id="system_prompt" name="system_prompt" placeholder="You are a linguistic classifier that excels at semantic disambiguation."></textarea>
+              <span class="hint">Multi-line prompts will emit <code>--system_prompt_b64</code>.</span>
             </label>
-            <label class="inline">
-              <input type="checkbox" id="include_explanations" name="include_explanations" checked />
-              <span>Include explanations in model outputs</span>
-            </label>
+            <div class="grid">
+              <label><span>Prompt Layout</span><select id="prompt_layout" name="prompt_layout"><option value="standard" selected>Standard</option><option value="compact">Compact</option></select></label>
+              <label><span>Few-shot Examples</span><input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" /></label>
+            </div>
+            <label class="inline"><input type="checkbox" id="include_explanations" name="include_explanations" checked /><span>Include explanations in model outputs</span></label>
+            <label class="inline"><input type="checkbox" id="enable_cot" name="enable_cot" checked /><span>Encourage chain-of-thought reasoning</span></label>
           </fieldset>
 
-          <fieldset>
-            <legend>Optional Runtime Controls</legend>
-            <details class="optional-group">
-              <summary>Sampling, pacing, and service options</summary>
+          <details class="section-card" data-mode-visible="validator">
+            <summary>Validator Setup</summary>
+            <div class="section-card-body">
+              <p class="section-lead">Validator flags are emitted only when a validator command is set.</p>
               <div class="grid">
-                <label
-                  >Temperature
-                  <input type="number" step="0.01" min="0" max="2" id="temperature" name="temperature" placeholder="(optional)" />
+                <label>Validator command<input type="text" id="validator_cmd" name="validator_cmd" placeholder="validators/lemmatization_validator.py" /></label>
+                <label>Validator args<input type="text" id="validator_args" name="validator_args" placeholder="--lexicon data/lemmas.txt --max_distance 2" /></label>
+                <label>Validator timeout (s)<input type="number" step="0.1" min="0.1" id="validator_timeout" name="validator_timeout" value="5.0" /></label>
+                <label>Max candidates<input type="number" min="1" id="validator_prompt_max_candidates" name="validator_prompt_max_candidates" value="50" /></label>
+                <label>Max retry prompt chars<input type="number" min="100" id="validator_prompt_max_chars" name="validator_prompt_max_chars" value="8000" /></label>
+                <label>Exhausted policy<select id="validator_exhausted_policy" name="validator_exhausted_policy"><option value="accept_blank_confidence" selected>Accept, blank confidence</option><option value="unclassified">Force unclassified</option><option value="error">Abort run</option></select></label>
+              </div>
+              <label class="inline"><input type="checkbox" id="validator_debug" name="validator_debug" /><span>Debug validator traffic</span></label>
+            </div>
+          </details>
+
+          <details class="section-card" data-mode-visible="run validator">
+            <summary>Execution</summary>
+            <div class="section-card-body">
+              <div class="grid">
+                <label>Temperature<input type="number" step="0.01" min="0" max="2" id="temperature" name="temperature" placeholder="(optional)" /></label>
+                <label>Top-p<input type="number" step="0.01" min="0" max="1" id="top_p" name="top_p" placeholder="(optional)" /></label>
+                <label>Top-k<input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" /></label>
+                <label>Request Interval (ms)<input type="number" min="0" step="1" id="request_interval_ms" name="request_interval_ms" value="0" /></label>
+                <label>Threads<input type="number" min="1" step="1" id="threads" name="threads" value="1" /></label>
+                <label>Request Timeout (s)<input type="number" min="0" step="0.1" id="request_timeout_seconds" name="request_timeout_seconds" value="30.0" /></label>
+              </div>
+            </div>
+          </details>
+
+          <details class="section-card" data-mode-visible="run validator">
+            <summary>Provider controls</summary>
+            <div class="section-card-body">
+              <div class="grid">
+                <label data-provider-visible="openai">
+                  <span class="label-heading">OpenAI Service Tier <span class="field-tags"><span class="field-tag">OpenAI</span></span></span>
+                  <select id="service_tier" name="service_tier"><option value="standard" selected>Standard (omit)</option><option value="flex">Flex</option><option value="priority">Priority</option></select>
                 </label>
-                <label
-                  >Top-p
-                  <input type="number" step="0.01" min="0" max="1" id="top_p" name="top_p" placeholder="(optional)" />
+                <label data-provider-visible="openai gemini">
+                  <span class="label-heading">Reasoning Effort <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">Gemini</span></span></span>
+                  <select id="reasoning_effort" name="reasoning_effort"><option value="" selected>(omit)</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option></select>
                 </label>
-                <label
-                  >Top-k
-                  <input type="number" min="1" id="top_k" name="top_k" placeholder="(optional)" />
+                <label data-provider-visible="openai">
+                  <span class="label-heading">Verbosity <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">GPT</span></span></span>
+                  <select id="verbosity" name="verbosity"><option value="" selected>(omit)</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
                 </label>
-                <label
-                  >Request Interval (ms)
-                  <input type="number" min="0" step="1" id="request_interval_ms" name="request_interval_ms" value="0" />
+                <label data-provider-visible="gemini">
+                  <span class="label-heading">Gemini Thinking Level <span class="field-tags"><span class="field-tag">Gemini</span></span></span>
+                  <select id="thinking_level" name="thinking_level"><option value="" selected>(omit)</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
                 </label>
-                <label
-                  >Threads
-                  <input type="number" min="1" step="1" id="threads" name="threads" value="1" />
-                  <span class="hint">Concurrent worker threads for classification. Output order remains aligned with input.</span>
+                <label data-provider-visible="claude">
+                  <span class="label-heading">Claude Effort <span class="field-tags"><span class="field-tag">Claude</span></span></span>
+                  <select id="effort" name="effort"><option value="" selected>(omit)</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="max">Max</option></select>
                 </label>
-                <label
-                  >Prompt Log Detail
-                  <select id="prompt_log_detail" name="prompt_log_detail">
-                    <option value="full" selected>Full</option>
-                    <option value="compact">Compact</option>
-                  </select>
-                  <span class="hint">Compact omits heavy request/response text from prompt logs.</span>
-                </label>
-                <label
-                  >Flush Every N Rows
-                  <input type="number" min="1" step="1" id="flush_rows" name="flush_rows" value="100" />
-                </label>
-                <label
-                  >Flush Every N Seconds
-                  <input type="number" min="0" step="0.1" id="flush_seconds" name="flush_seconds" value="2.0" />
-                </label>
-                <label
-                  >OpenAI Service Tier
-                  <select id="service_tier" name="service_tier">
-                    <option value="standard" selected>Standard (omit)</option>
-                    <option value="flex">Flex</option>
-                    <option value="priority">Priority</option>
-                  </select>
-                </label>
-                <label
-                  >Few-shot Examples
-                  <input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" />
+                <label>Shared Prefix Token Target<input type="number" min="0" step="1" id="cache_pad_target_tokens" name="cache_pad_target_tokens" value="0" /></label>
+                <label>Prompt Cache Key<input type="text" id="prompt_cache_key" name="prompt_cache_key" placeholder="benchmark-prefix-v1" /></label>
+              </div>
+              <label class="inline"><input type="checkbox" id="strict_control_acceptance" name="strict_control_acceptance" checked /><span>Fail if request controls are rejected</span></label>
+              <label class="inline" data-provider-visible="requesty"><input type="checkbox" id="requesty_auto_cache" name="requesty_auto_cache" /><span>Enable Requesty auto cache <span class="field-tags"><span class="field-tag">Requesty</span></span></span></label>
+              <div id="vertex-auth-options" class="grid" style="display:none" data-provider-visible="vertex">
+                <p class="provider-subheading">Vertex Authentication <span class="field-tags"><span class="field-tag">Vertex</span></span></p>
+                <label class="inline"><input type="checkbox" id="vertex_auto_adc_login" name="vertex_auto_adc_login" checked /><span>Auto-launch Vertex ADC login if missing</span></label>
+                <label>
+                  <span class="label-heading">Vertex Token Refresh Seconds <span class="field-tags"><span class="field-tag">Vertex</span></span></span>
+                  <input type="number" min="60" step="1" id="vertex_access_token_refresh_seconds" name="vertex_access_token_refresh_seconds" value="3300" />
                 </label>
               </div>
-            </details>
+              <div data-provider-visible="gemini">
+                <p class="provider-subheading">Gemini Context Cache <span class="field-tags"><span class="field-tag">Gemini</span></span></p>
+                <label class="inline"><input type="checkbox" id="create_gemini_cache" name="create_gemini_cache" onchange="toggleGeminiCacheMode(this.checked)" /><span>Auto-create Gemini cache from system prompt <span class="field-tags"><span class="field-tag">Gemini</span></span></span></label>
+                <div id="gemini_cache_create_options" style="display:none" class="grid">
+                  <label>
+                    <span class="label-heading">Cache TTL (seconds) <span class="field-tags"><span class="field-tag">Gemini</span></span></span>
+                    <input type="number" min="60" step="60" id="gemini_cache_ttl" name="gemini_cache_ttl" value="3600" />
+                  </label>
+                  <label class="inline"><input type="checkbox" id="gemini_cache_ttl_autoupdate" name="gemini_cache_ttl_autoupdate" checked /><span>Auto-refresh cache TTL during run <span class="field-tags"><span class="field-tag">Gemini</span></span></span></label>
+                  <label class="inline"><input type="checkbox" id="keep_gemini_cache" name="keep_gemini_cache" /><span>Keep cache after run <span class="field-tags"><span class="field-tag">Gemini</span></span></span></label>
+                </div>
+                <div id="gemini_cache_manual" class="grid">
+                  <label>
+                    <span class="label-heading">Gemini Cached Content <span class="field-tags"><span class="field-tag">Gemini</span></span></span>
+                    <input type="text" id="gemini_cached_content" name="gemini_cached_content" placeholder="cachedContents/your-cache-id" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </details>
 
-            <details class="optional-group">
-              <summary>Prompt length and cache controls</summary>
-              <div class="token-control-split">
-                <section class="token-panel input-panel">
-                  <h4 class="token-panel-title">Input token controls</h4>
-                  <p class="token-panel-hint">Affect prompt size, cacheability, and prefix reuse.</p>
-                  <div class="grid">
-                    <label
-                      >Prompt Layout
-                      <select id="prompt_layout" name="prompt_layout">
-                        <option value="standard" selected>Standard</option>
-                        <option value="compact">Compact (cache-optimized)</option>
-                      </select>
-                    </label>
-                    <label
-                      >Shared Prefix Token Target (auto padded)
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        id="cache_pad_target_tokens"
-                        name="cache_pad_target_tokens"
-                        value="0"
-                      />
-                      <span class="hint">Shared-prefix token target. If set, runtime pads only the cacheable shared prefix (not row-specific payload fields).</span>
-                    </label>
-                    <label
-                      >Prompt Cache Key
-                      <input
-                        type="text"
-                        id="prompt_cache_key"
-                        name="prompt_cache_key"
-                        placeholder="benchmark-prefix-v1"
-                      />
-                      <span class="hint">Optional cache routing key for providers that support <code>prompt_cache_key</code>.</span>
-                    </label>
-                  </div>
-                  <label class="inline">
-                    <input type="checkbox" id="requesty_auto_cache" name="requesty_auto_cache" />
-                    <span>Enable Requesty auto cache (<code>extra_body.requesty.auto_cache</code>)</span>
-                  </label>
-                  <label class="inline">
-                    <input type="checkbox" id="create_gemini_cache" name="create_gemini_cache" onchange="toggleGeminiCacheMode(this.checked)" />
-                    <span>Auto-create Gemini cache from system prompt</span>
-                  </label>
-                  <div id="gemini_cache_create_options" style="display:none" class="grid">
-                    <label>Cache TTL (seconds)
-                      <input
-                        type="number"
-                        min="60"
-                        step="60"
-                        id="gemini_cache_ttl"
-                        name="gemini_cache_ttl"
-                        value="3600"
-                      />
-                      <span class="hint">How long to keep the cache (default: 3600 = 1 hour). With auto-update enabled, TTL is refreshed during long runs.</span>
-                    </label>
-                    <label class="inline">
-                      <input type="checkbox" id="gemini_cache_ttl_autoupdate" name="gemini_cache_ttl_autoupdate" checked />
-                      <span>Auto-refresh cache TTL during run (recommended)</span>
-                    </label>
-                    <label class="inline">
-                      <input type="checkbox" id="keep_gemini_cache" name="keep_gemini_cache" />
-                      <span>Keep cache after run (logs name for reuse via <code>--gemini_cached_content</code>)</span>
-                    </label>
-                  </div>
-                  <div id="gemini_cache_manual" class="grid">
-                    <label
-                      >Gemini Cached Content
-                      <input
-                        type="text"
-                        id="gemini_cached_content"
-                        name="gemini_cached_content"
-                        placeholder="cachedContents/your-cache-id"
-                      />
-                      <span class="hint">Pre-created Gemini context-cache resource name. Use this if the cache already exists, or use auto-create above.</span>
-                    </label>
-                  </div>
-                  <label class="inline">
-                    <input type="checkbox" id="enable_cot" name="enable_cot" />
-                    <span>Encourage chain-of-thought reasoning</span>
-                  </label>
-                </section>
-                <section class="token-panel output-panel">
-                  <h4 class="token-panel-title">Output/reasoning token controls</h4>
-                  <p class="token-panel-hint">Bias completion detail and hidden reasoning token budgets.</p>
-                  <div class="grid">
-                    <label
-                      >GPT Reasoning Effort
-                      <select id="reasoning_effort" name="reasoning_effort">
-                        <option value="" selected>(omit)</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="xhigh">XHigh</option>
-                      </select>
-                    </label>
-                    <label
-                      >GPT Verbosity
-                      <select id="verbosity" name="verbosity">
-                        <option value="" selected>(omit)</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                      </select>
-                    </label>
-                    <label
-                      >Gemini Thinking Level
-                      <select id="thinking_level" name="thinking_level">
-                        <option value="" selected>(omit)</option>
-                        <option value="minimal">Minimal (Flash only)</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                      </select>
-                    </label>
-                    <label
-                      >Claude Effort
-                      <select id="effort" name="effort">
-                        <option value="" selected>(omit)</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="max">Max</option>
-                      </select>
-                    </label>
+          <details class="section-card" data-mode-visible="run validator metrics">
+            <summary>Evaluation &amp; Metadata</summary>
+            <div class="section-card-body">
+              <div class="grid">
+                <label>Labels CSV Path<input type="text" id="labels_path" name="labels_path" placeholder="data/input/labels.csv" /></label>
+                <label>Task Name<input type="text" id="task_name" name="task_name" placeholder="OE_number" /></label>
+                <label>Task Description<input type="text" id="task_description" name="task_description" placeholder="Old English noun number classification benchmark" /></label>
+                <label>Tags<input type="text" id="tags" name="tags" placeholder="old-english;number;morphology" /></label>
+              </div>
+              <label class="inline"><input type="checkbox" id="calibration" name="calibration" checked /><span>Generate calibration plot</span></label>
+              <label class="inline"><input type="checkbox" id="confusion_heatmap" name="confusion_heatmap" checked /><span>Generate confusion heatmap</span></label>
+              <label class="inline" data-mode-hidden="metrics"><input type="checkbox" id="logprobs" name="logprobs" /><span>Request token logprobs</span></label>
+            </div>
+          </details>
+
+          <details class="section-card" data-mode-visible="run validator">
+            <summary>Logging</summary>
+            <div class="section-card-body">
+              <div class="grid">
+                <label>Prompt Log Detail<select id="prompt_log_detail" name="prompt_log_detail"><option value="full" selected>Full</option><option value="compact">Compact</option></select></label>
+                <label>Flush Every N Rows<input type="number" min="1" step="1" id="flush_rows" name="flush_rows" value="100" /></label>
+                <label>Flush Every N Seconds<input type="number" min="0" step="0.1" id="flush_seconds" name="flush_seconds" value="2.0" /></label>
+              </div>
+            </div>
+          </details>
+
+          <details class="section-card" data-mode-visible="run validator">
+            <summary>Inspect Prompt &amp; Cache</summary>
+            <div class="section-card-body">
+              <div class="inspect-grid">
+                <section class="inspect-card">
+                  <div id="prompt-token-estimate"><strong>Shared prefix estimate:</strong> waiting for input...</div>
+                  <div class="token-estimate-controls">
+                    <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
+                    <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
+                    <p id="prompt-token-estimate-status" class="token-estimate-status">Shared-prefix estimate ignores row-specific CSV fields; sampling is optional.</p>
                   </div>
                 </section>
+                <section class="inspect-card">
+                  <p id="prompt-preview-meta" class="panel-note">Sample a CSV file to preview the first data row inside the prompt payload.</p>
+                  <p class="prompt-message-title">System</p>
+                  <pre id="prompt-preview-system" class="prompt-message-preview">[system message preview]</pre>
+                  <p class="prompt-message-title">User</p>
+                  <pre id="prompt-preview-user" class="prompt-message-preview">[user message preview]</pre>
+                </section>
               </div>
-            </details>
-
-            <details class="optional-group">
-              <summary>Input/output extras and credentials</summary>
-              <div class="grid">
-                <label
-                  >Labels CSV Path
-                  <input type="text" id="labels_path" name="labels_path" placeholder="data/input/labels.csv" />
-                </label>
-                <label
-                  >Task Name (metrics metadata)
-                  <input type="text" id="task_name" name="task_name" placeholder="OE_number" />
-                </label>
-                <label
-                  >Task Description (metrics metadata)
-                  <input
-                    type="text"
-                    id="task_description"
-                    name="task_description"
-                    placeholder="Old English noun number classification benchmark"
-                  />
-                </label>
-                <label
-                  >Tags (metrics metadata)
-                  <input type="text" id="tags" name="tags" placeholder="old-english;number;morphology" />
-                  <span class="hint">Use semicolons to separate tags (for example: <code>tag1;tag2;tag3</code>).</span>
-                </label>
-                <label class="inline">
-                  <input type="checkbox" id="metrics_only" name="metrics_only" />
-                  <span>Metrics-only mode (reuse existing output CSV in <code>--input</code>)</span>
-                </label>
-                <label
-                  >Request Timeout (seconds)
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    id="request_timeout_seconds"
-                    name="request_timeout_seconds"
-                    value="30.0"
-                  />
-                  <span class="hint">Per-request API timeout. Set 0 to disable timeout (not recommended).</span>
-                </label>
-                <label
-                  >API Key/Token Environment Variable
-                  <input type="text" id="api_key_var" name="api_key_var" placeholder="OPENAI_API_KEY" />
-                  <span class="hint">Leave blank to use the provider default.</span>
-                </label>
-                <label
-                  >API Base URL Environment Variable
-                  <input type="text" id="api_base_var" name="api_base_var" placeholder="OPENAI_BASE_URL" />
-                  <span class="hint">Leave blank to use the provider default endpoint variable.</span>
-                </label>
-              </div>
-              <div id="vertex-auth-options" class="grid" style="display:none">
-                <label class="inline">
-                  <input type="checkbox" id="vertex_auto_adc_login" name="vertex_auto_adc_login" checked />
-                  <span>Auto-launch Vertex ADC login if missing</span>
-                </label>
-                <label
-                  >Vertex Token Refresh Seconds
-                  <input
-                    type="number"
-                    min="60"
-                    step="1"
-                    id="vertex_access_token_refresh_seconds"
-                    name="vertex_access_token_refresh_seconds"
-                    value="3300"
-                  />
-                  <span class="hint">How often the access token is refreshed before expiry (default: 3300).</span>
-                </label>
-              </div>
-              <label class="inline">
-                <input type="checkbox" id="calibration" name="calibration" />
-                <span>Enable calibration plot</span>
-              </label>
-              <label class="inline">
-                <input type="checkbox" id="logprobs" name="logprobs" />
-                <span>Request token logprobs</span>
-              </label>
-              <label class="inline">
-                <input
-                  type="checkbox"
-                  id="strict_control_acceptance"
-                  name="strict_control_acceptance"
-                />
-                <span>Fail if request controls are rejected</span>
-              </label>
-            </details>
-          </fieldset>
-
-          <fieldset>
-            <legend>Advanced Validator (Optional)</legend>
-            <details class="optional-group">
-              <summary>Configure external validator and retry behavior</summary>
-              <p class="section-lead">
-                Useful for very large label spaces. The validator can accept, normalize, or request retries with a smaller candidate set.
-              </p>
-              <label class="inline">
-                <input type="checkbox" id="validator_enable" name="validator_enable" />
-                <span>Enable validator</span>
-              </label>
-              <div class="grid">
-                <label
-                  >Validator command
-                  <span class="hint">Executable path or a <code>.py</code> script (runs via current Python).</span>
-                  <input type="text" id="validator_cmd" name="validator_cmd" placeholder="validators/lemmatization_validator.py" />
-                </label>
-                <label
-                  >Validator args
-                  <span class="hint">Single string passed to <code>--validator_args</code> (supports quoting).</span>
-                  <input
-                    type="text"
-                    id="validator_args"
-                    name="validator_args"
-                    placeholder="--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30"
-                  />
-                </label>
-                <label
-                  >Validator timeout (s)
-                  <input type="number" step="0.1" min="0.1" id="validator_timeout" name="validator_timeout" value="5.0" />
-                </label>
-                <label
-                  >Max candidates
-                  <input type="number" min="1" id="validator_prompt_max_candidates" name="validator_prompt_max_candidates" value="50" />
-                </label>
-                <label
-                  >Max retry prompt chars
-                  <input type="number" min="100" id="validator_prompt_max_chars" name="validator_prompt_max_chars" value="8000" />
-                </label>
-                <label
-                  >Exhausted policy
-                  <select id="validator_exhausted_policy" name="validator_exhausted_policy">
-                    <option value="accept_blank_confidence" selected>Accept, blank confidence</option>
-                    <option value="unclassified">Force unclassified</option>
-                    <option value="error">Abort run</option>
-                  </select>
-                </label>
-              </div>
-              <label class="inline">
-                <input type="checkbox" id="validator_debug" name="validator_debug" />
-                <span>Debug validator traffic (requires DEBUG log level)</span>
-              </label>
-            </details>
-          </fieldset>
+            </div>
+          </details>
         </form>
-
-        <details class="cli-help">
-          <summary>CLI Help Reference</summary>
-          <p class="hint">
-            For the full current reference, run <code>python benchmark_agent.py --help</code> in your terminal.
-          </p>
-          <pre>usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
-                          [--output OUTPUT] [--unclassified]
-                          [--task_name TASK_NAME]
-                          [--task_description TASK_DESCRIPTION]
-                          [--tags TAGS] [--model MODEL]
-                          [--temperature TEMPERATURE] [--top_p TOP_P]
-                          [--top_k TOP_K]
-                          [--service_tier {standard,flex,priority}]
-                          [--verbosity {low,medium,high}]
-                          [--reasoning_effort {low,medium,high,xhigh}]
-                          [--thinking_level {minimal,low,medium,high}]
-                          [--effort {low,medium,high,max}]
-                          [--strict_control_acceptance]
-                          [--provider PROVIDER]
-                          [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
-                          [--few_shot_examples FEW_SHOT_EXAMPLES]
-                          [--prompt_layout {standard,compact}]
-                          [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
-                          [--prompt_cache_key PROMPT_CACHE_KEY]
-                          [--gemini_cached_content GEMINI_CACHED_CONTENT]
-                          [--requesty_auto_cache | --no-requesty_auto_cache]
-                          [--vertex_auto_adc_login | --no-vertex_auto_adc_login]
-                          [--vertex_access_token_refresh_seconds VERTEX_ACCESS_TOKEN_REFRESH_SECONDS]
-                          [--enable_cot] [--no_explanation]
-                          [--logprobs | --no-logprobs] [--calibration]
-                          [--api_key_var API_KEY_VAR]
-                          [--api_base_var API_BASE_VAR]
-                          [--max_retries MAX_RETRIES]
-                          [--retry_delay RETRY_DELAY]
-                          [--request_interval_ms REQUEST_INTERVAL_MS]
-                          [--threads THREADS]
-                          [--prompt_log_detail {full,compact}]
-                          [--flush_rows FLUSH_ROWS]
-                          [--flush_seconds FLUSH_SECONDS]
-                          [--request_timeout_seconds REQUEST_TIMEOUT_SECONDS]
-                          [--validator_cmd VALIDATOR_CMD]
-                          [--validator_args VALIDATOR_ARGS]
-                          [--validator_timeout VALIDATOR_TIMEOUT]
-                          [--validator_prompt_max_candidates VALIDATOR_PROMPT_MAX_CANDIDATES]
-                          [--validator_prompt_max_chars VALIDATOR_PROMPT_MAX_CHARS]
-                          [--validator_exhausted_policy {accept_blank_confidence,unclassified,error}]
-                          [--validator_debug] [--log_level LOG_LEVEL]
-                          [--update-models] [--models-output MODELS_OUTPUT]
-                          [--models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]]
-                          [--metrics_only]
-
-Benchmark an OpenAI model on a linguistic classification dataset.
-
-options:
-  -h, --help            show this help message and exit
-  --input INPUT [INPUT ...]
-                        Path(s) to input CSV file(s) with examples.
-  --labels LABELS       Optional path to CSV file that provides ground-truth
-                        labels (ID;truth).
-  --output OUTPUT       Optional output CSV path or directory. When omitted,
-                        defaults to &lt;input&gt;__&lt;provider&gt;__&lt;model&gt;__&lt;timestamp&gt;.csv
-                        alongside each input file. If the resolved output CSV
-                        already exists, the run resumes from the first ID not
-                        present in that file.
-  --unclassified        Resume helper: when --output points to an existing
-                        CSV, remove rows whose prediction is 'unclassified'
-                        and re-prompt only those IDs.
-  --task_name TASK_NAME
-                        Optional task name stored in metrics metadata. If
-                        omitted, it is inferred from the output filename.
-  --task_description TASK_DESCRIPTION
-                        Optional free-text task description stored in metrics
-                        metadata.
-  --tags TAGS           Optional metrics tags (semicolon-delimited string
-                        recommended), stored in metrics metadata.
-  --model MODEL         Model name (e.g., gpt-4-turbo).
-  --metrics_only, --metrics-only
-                        Skip model/API calls and compute metrics from existing
-                        output CSV file(s) provided via --input.
-  --temperature TEMPERATURE
-                        Sampling temperature. Omit to let the provider/model
-                        use its default.
-  --top_p TOP_P         Nucleus sampling parameter. Omit to let the
-                        provider/model use its default.
-  --top_k TOP_K         Top-k sampling (ignored for APIs that do not support
-                        it).
-  --service_tier {standard,flex,priority}
-                        Optional service-tier hint for providers that support
-                        differentiated throughput.
-  --verbosity {low,medium,high}
-                        Optional output verbosity control for GPT models. Sent
-                        as verbosity (Chat Completions) or text.verbosity
-                        (Responses API).
-  --reasoning_effort {low,medium,high,xhigh}
-                        Optional reasoning effort level. Sent as
-                        reasoning.effort for OpenAI-style models and as
-                        reasoning_effort for Gemini targets.
-  --thinking_level {minimal,low,medium,high}
-                        Optional Gemini thinking level (minimal applies
-                        to Gemini Flash models). Sent as
-                        extra_body.google.thinking_config for Gemini OpenAI-compatible
-                        targets.
-  --effort {low,medium,high,max}
-                        Optional Claude effort level. Sent as effort when
-                        provided.
-  --strict_control_acceptance
-                        Fail an example when requested controls are rejected or
-                        not present in the final successful request payload.
-  --provider PROVIDER   Model provider identifier used to look up default
-                        credentials. Known providers are preconfigured; custom
-                        providers are inferred from &lt;PROVIDER&gt;_API_KEY (or
-                        &lt;PROVIDER&gt;_ACCESS_TOKEN) and &lt;PROVIDER&gt;_BASE_URL.
-  --system_prompt SYSTEM_PROMPT
-                        System prompt injected into the chat completion.
-  --system_prompt_b64 SYSTEM_PROMPT_B64
-                        Base64-encoded system prompt (used by the GUI to
-                        ensure cross-platform commands).
-  --few_shot_examples FEW_SHOT_EXAMPLES
-                        Number of labeled examples to prepend as few-shot
-                        demonstrations.
-  --prompt_layout {standard,compact}
-                        Prompt payload layout. standard preserves the current
-                        verbose payload; compact removes duplicated fields to
-                        improve cache reuse.
-  --cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS
-                        Optional shared-prefix token target for cache padding.
-                        If >0, shared-prefix length is calibrated from early
-                        prompt structure; subsequent prompts are padded toward
-                        this shared-prefix target.
-  --prompt_cache_key PROMPT_CACHE_KEY
-                        Optional provider cache-routing key (when supported)
-                        to improve prompt-cache hit consistency for stable
-                        prompt prefixes.
-  --gemini_cached_content GEMINI_CACHED_CONTENT
-                        Optional Gemini context-cache resource name passed via
-                        extra_body.google.cached_content when targeting Gemini
-                        OpenAI-compatible endpoints.
-  --requesty_auto_cache, --no-requesty_auto_cache
-                        Enable/disable Requesty automatic caching by sending
-                        extra_body.requesty.auto_cache. Only used when
-                        --provider requesty.
-  --vertex_auto_adc_login, --no-vertex_auto_adc_login
-                        Enable/disable automatic one-time ADC login for
-                        Vertex when credentials are missing (browser-based
-                        gcloud auth flow). Only used when --provider vertex.
-  --vertex_access_token_refresh_seconds VERTEX_ACCESS_TOKEN_REFRESH_SECONDS
-                        Override Vertex access-token refresh interval in
-                        seconds. Only used when --provider vertex.
-  --enable_cot          If set, encourages the model to reason step-by-step
-                        before answering.
-  --no_explanation      Skip requesting explanations to reduce token usage.
-  --logprobs, --no-logprobs
-                        Enable token log probabilities when supported.
-                        Disabled by default for better large-run throughput.
-  --calibration         Generate a calibration plot using the model's
-                        confidences.
-  --api_key_var API_KEY_VAR
-                        Environment variable name that stores the API key or
-                        access token.
-  --api_base_var API_BASE_VAR
-                        Environment variable name that stores the API base
-                        URL.
-  --max_retries MAX_RETRIES
-                        Maximum number of retry attempts per example on API
-                        errors.
-  --retry_delay RETRY_DELAY
-                        Delay (seconds) between API retries.
-  --request_interval_ms REQUEST_INTERVAL_MS
-                        Minimum delay in milliseconds between outgoing API
-                        requests. Use 0 to disable request pacing.
-  --threads THREADS     Number of concurrent worker threads used to classify
-                        examples. Use 1 to keep sequential processing.
-  --prompt_log_detail {full,compact}
-                        Prompt-log detail level. full stores full
-                        request/response text; compact omits heavy text
-                        fields.
-  --flush_rows FLUSH_ROWS
-                        Flush CSV and NDJSON prompt log after this many
-                        committed rows.
-  --flush_seconds FLUSH_SECONDS
-                        Flush CSV and NDJSON prompt log after this many
-                        seconds even if flush_rows was not reached.
-  --request_timeout_seconds REQUEST_TIMEOUT_SECONDS
-                        Per-request timeout in seconds for provider API calls.
-                        Use 0 or a negative value to disable timeout.
-  --validator_cmd VALIDATOR_CMD
-                        Optional path to an NDJSON validator
-                        executable/script. When provided, the agent will
-                        validate each prediction and may retry with extra
-                        constraints. If the path ends with .py it will be run
-                        via the current Python interpreter.
-  --validator_args VALIDATOR_ARGS
-                        Optional extra arguments passed to the validator
-                        command as a single string (supports quoting).
-                        Example: "--lexicon data/lemmas.txt --max_distance 2".
-  --validator_timeout VALIDATOR_TIMEOUT
-                        Timeout (seconds) for each validator request/response
-                        roundtrip.
-  --validator_prompt_max_candidates VALIDATOR_PROMPT_MAX_CANDIDATES
-                        Maximum number of allowed_labels candidates rendered
-                        into a validator retry prompt.
-  --validator_prompt_max_chars VALIDATOR_PROMPT_MAX_CHARS
-                        Maximum character length of the validator retry
-                        instruction appended to the prompt.
-  --validator_exhausted_policy {accept_blank_confidence,unclassified,error}
-                        What to do when the validator keeps requesting retry
-                        but --max_retries is exhausted.
-                        accept_blank_confidence keeps the last label but
-                        blanks confidence; unclassified forces label to
-                        "unclassified"; error aborts the run.
-  --validator_debug     Log validator NDJSON send/receive payloads at DEBUG
-                        level.
-  --log_level LOG_LEVEL
-                        Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-  --update-models, -updatemodels
-                        If set, fetch available models for configured
-                        providers and update config_models.js.
-  --models-output MODELS_OUTPUT
-                        Output path for generated model catalog JS when
-                        --update-models is used.
-  --models-providers MODELS_PROVIDERS [MODELS_PROVIDERS ...]
-                        Optional list of provider slugs to update when
-                        --update-models is specified. Custom slugs are
-                        allowed; env vars are inferred as &lt;SLUG&gt;_API_KEY (or
-                        &lt;SLUG&gt;_ACCESS_TOKEN) and &lt;SLUG&gt;_BASE_URL.
-
-Tip: this GUI is a command builder. You can still edit any generated CLI flag manually before running.</pre>
-        </details>
       </main>
 
-      <aside class="command-panel">
-        <h2>Live Command</h2>
-        <p class="panel-note">Updates as you edit fields. Flags and values are color-coded for quick scanning.</p>
-        <div class="command-sections">
-          <section class="live-section">
-            <h3 class="live-section-title">Command</h3>
-            <div class="command-actions">
-              <button type="button" id="copy-button">Copy Command</button>
-              <button type="button" id="reset-button">Reset Defaults</button>
-            </div>
-            <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
-            <details class="prompt-preview-details">
-              <summary>Prompt Preview (Exact API System/User Messages)</summary>
-              <p id="prompt-preview-meta" class="prompt-preview-meta">
-                Sample a CSV file to preview the first data row inside the prompt payload.
-              </p>
-              <p class="prompt-message-title">System</p>
-              <pre id="prompt-preview-system" class="prompt-message-preview">[system message preview]</pre>
-              <p class="prompt-message-title">User</p>
-              <pre id="prompt-preview-user" class="prompt-message-preview">[user message preview]</pre>
-            </details>
-          </section>
-          <section class="live-section">
-            <h3 class="live-section-title">Shared Prefix Estimate</h3>
-            <div id="prompt-token-estimate" class="token-estimate">
-              <strong>Shared prefix estimate:</strong> waiting for input...
-            </div>
-            <div class="token-estimate-controls">
-              <input type="file" id="estimate-csv-file" accept=".csv,text/csv" />
-              <button type="button" id="sample-csv-button">Sample CSV For Estimate</button>
-              <p id="prompt-token-estimate-status" class="token-estimate-status">
-                Shared-prefix estimate ignores row-specific CSV fields; sampling is optional.
-              </p>
-            </div>
-          </section>
+      <aside class="command-panel is-collapsed">
+        <span class="summary-chip" id="sidebar-mode-label">Run</span>
+        <p class="panel-note" id="sidebar-flag-count">0 non-default flags</p>
+        <div class="command-actions">
+          <button type="button" id="sidebar-toggle-button" class="primary">Expand</button>
+          <button type="button" id="copy-button">Copy</button>
+          <button type="button" id="reset-button" class="expanded-only">Reset Defaults</button>
         </div>
+        <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
       </aside>
     </div>
 
     <script src="config_models.js"></script>
-    <script>
-      let isInitializing = true;
-      let latestCommandText = 'python benchmark_agent.py --input "" --model ""';
-
-      const STORAGE_KEY = "benchmarkAgentConfig.v1";
-
-      const form = document.getElementById("config-form");
-      const commandOutput = document.getElementById("command-output");
-      const promptTokenEstimate = document.getElementById("prompt-token-estimate");
-      const promptTokenEstimateStatus = document.getElementById("prompt-token-estimate-status");
-      const promptPreviewSystem = document.getElementById("prompt-preview-system");
-      const promptPreviewUser = document.getElementById("prompt-preview-user");
-      const promptPreviewMeta = document.getElementById("prompt-preview-meta");
-      const estimateCsvFileInput = document.getElementById("estimate-csv-file");
-      const sampleCsvButton = document.getElementById("sample-csv-button");
-      const copyButton = document.getElementById("copy-button");
-      const resetButton = document.getElementById("reset-button");
-      const providerSelect = document.getElementById("provider");
-      const vertexAuthOptions = document.getElementById("vertex-auth-options");
-      const apiKeyVarInput = document.getElementById("api_key_var");
-      const apiBaseVarInput = document.getElementById("api_base_var");
-      const refreshModelsButton = document.getElementById("refresh-models-button");
-      const refreshModelsStatus = document.getElementById("refresh-models-status");
-      const modelInput = document.getElementById("model");
-      const modelClearButton = document.getElementById("model-clear-button");
-      const modelList = document.getElementById("model-options");
-      const modelCatalogMeta = document.getElementById("model-catalog-meta");
-      let modelCatalog =
-        window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
-          ? window.MODEL_CATALOG
-          : {};
-      const PROMPT_ESTIMATE_SAMPLE_LIMIT = 100;
-      const PROMPT_CACHE_HINT_TOKENS = 1024;
-      const MAX_CACHE_PADDING_TOKENS = 200000;
-      const NODE_MARKER_LEFT = "\u27E6";
-      const NODE_MARKER_RIGHT = "\u27E7";
-      const LEGACY_NODE_MARKER_LEFT = "\u00E2\u017A\u00A6";
-      const LEGACY_NODE_MARKER_RIGHT = "\u00E2\u017A\u00A7";
-      const NODE_MARKER_VARIANTS = [
-        [NODE_MARKER_LEFT, NODE_MARKER_RIGHT],
-        [LEGACY_NODE_MARKER_LEFT, LEGACY_NODE_MARKER_RIGHT],
-      ];
-      const MANDATORY_SYSTEM_APPEND =
-        `Classify ONLY the text that is explicitly wrapped inside ${NODE_MARKER_LEFT} ${NODE_MARKER_RIGHT} ` +
-        "(the 'node' or its marked sub-span). " +
-        "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. " +
-        'If you cannot determine the class/label for the node, return "unclassified".';
-      const PROMPT_PREVIEW_PLACEHOLDER_ROW = Object.freeze({
-        leftContext: "[leftContext from first sampled CSV row]",
-        node: "[node from first sampled CSV row]",
-        rightContext: "[rightContext from first sampled CSV row]",
-        info: "[info from first sampled CSV row]",
-      });
-      const CACHE_PADDING_PREFIX =
-        "Cache-normalization filler block. Ignore this block for classification.\nCACHE_PAD_BEGIN";
-      const CACHE_PADDING_TOKEN = " cachepad";
-      const CACHE_PADDING_SUFFIX = "\nCACHE_PAD_END";
-      let sampledEstimateRows = null;
-      let sampledEstimateSource = "";
-
-      const defaultValues = {
-        provider: "openai",
-        temperature: "",
-        top_p: "",
-        verbosity: "",
-        reasoning_effort: "",
-        thinking_level: "",
-        effort: "",
-        logprobs: false,
-        strict_control_acceptance: false,
-        request_interval_ms: "0",
-        threads: "1",
-        prompt_log_detail: "full",
-        flush_rows: "100",
-        flush_seconds: "2.0",
-        request_timeout_seconds: "30.0",
-        few_shot_examples: "0",
-        prompt_layout: "standard",
-        cache_pad_target_tokens: "0",
-        prompt_cache_key: "",
-        requesty_auto_cache: false,
-        vertex_auto_adc_login: true,
-        vertex_access_token_refresh_seconds: "3300",
-        gemini_cached_content: "",
-        create_gemini_cache: false,
-        gemini_cache_ttl: "3600",
-        gemini_cache_ttl_autoupdate: true,
-        keep_gemini_cache: false,
-        service_tier: "standard",
-        include_explanations: true,
-        api_key_var: "",
-        api_base_var: "",
-        system_prompt:
-          "You are a linguistic classifier that excels at semantic disambiguation.",
-        validator_enable: false,
-        validator_cmd: "",
-        validator_args: "",
-        validator_timeout: "5.0",
-        validator_prompt_max_candidates: "50",
-        validator_prompt_max_chars: "8000",
-        validator_exhausted_policy: "accept_blank_confidence",
-        validator_debug: false,
-        metrics_only: false,
-        reprompt_unclassified: false,
-        task_name: "",
-        task_description: "",
-        tags: "",
-      };
-
-      const providerDefaults = {
-        openai: { apiKeyVar: "OPENAI_API_KEY", apiBaseVar: "OPENAI_BASE_URL" },
-        anthropic: {
-          apiKeyVar: "ANTHROPIC_API_KEY",
-          apiBaseVar: "ANTHROPIC_BASE_URL",
-        },
-        cohere: { apiKeyVar: "COHERE_API_KEY", apiBaseVar: "COHERE_BASE_URL" },
-        google: { apiKeyVar: "GOOGLE_API_KEY", apiBaseVar: "GOOGLE_BASE_URL" },
-        vertex: {
-          apiKeyVar: "VERTEX_ACCESS_TOKEN",
-          apiBaseVar: "VERTEX_BASE_URL",
-        },
-        huggingface: {
-          apiKeyVar: "HF_API_KEY",
-          apiBaseVar: "HF_BASE_URL",
-        },
-        "e-infra": {
-          apiKeyVar: "E-INFRA_API_KEY",
-          apiBaseVar: "E-INFRA_BASE_URL",
-        },
-        requesty: {
-          apiKeyVar: "REQUESTY_API_KEY",
-          apiBaseVar: "REQUESTY_BASE_URL",
-        },
-      };
-      const knownProviderLabels = {
-        openai: "OpenAI-Compatible",
-        anthropic: "Anthropic (OpenAI proxy)",
-        cohere: "Cohere (OpenAI proxy)",
-        google: "Google (OpenAI proxy)",
-        vertex: "Vertex AI (OpenAI proxy)",
-        huggingface: "Hugging Face (OpenAI proxy)",
-        "e-infra": "E-INFRA (OpenAI proxy)",
-        requesty: "Requesty (OpenAI proxy)",
-      };
-      const inputHelpTextById = {
-        input_path: "One or more CSV input files. Use one path per line.",
-        model: "Model identifier. Click and pick from cached models or type your own model id.",
-        provider: "Provider slug used by --provider. Refresh updates this list from config_models.js.",
-        system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
-        enable_cot: "Encourage model to 'Think ... step-by-step' to elicit chain-of-thought behaviour.",
-        include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
-        logprobs: "If checked, adds --logprobs to request token-level probability estimates (off by default).",
-        temperature: "Optional temperature sampling value. Leave blank to omit this parameter.",
-        top_p: "Optional nucleus sampling parameter. Leave blank to omit this parameter.",
-        top_k: "Optional top-k sampling parameter, if your provider supports it.",
-        request_interval_ms: "Minimum delay in milliseconds between API requests.",
-        threads: "Number of concurrent worker threads. Output rows are still written in input order.",
-        prompt_log_detail: "Prompt-log payload level. compact omits heavy request/response text fields.",
-        flush_rows: "Flush CSV and prompt log after this many committed rows.",
-        flush_seconds: "Flush CSV and prompt log after this many seconds even when flush_rows is not reached.",
-        request_timeout_seconds:
-          "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
-        service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
-        reasoning_effort:
-          "Reasoning effort level (low, medium, high, xhigh). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
-        verbosity:
-          "GPT output verbosity level (low, medium, high). Maps to verbosity in Chat Completions and text.verbosity in Responses API.",
-        thinking_level:
-          "Gemini thinking level (minimal, low, medium, high). Minimal applies only to Gemini Flash models. For Gemini targets this maps to extra_body.google.thinking_config.",
-        effort: "Claude effort control (low, medium, high, max). Adds --effort.",
-        strict_control_acceptance:
-          "Abort examples where requested controls are rejected or omitted from the final successful request.",
-        few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
-        prompt_layout:
-          "Prompt payload shape. compact reduces duplicated per-example text to improve cache reuse.",
-        cache_pad_target_tokens:
-          "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
-        prompt_cache_key:
-          "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
-        requesty_auto_cache:
-          "Enable Requesty auto caching by adding --requesty_auto_cache (maps to extra_body.requesty.auto_cache).",
-        vertex_auto_adc_login:
-          "If enabled for Vertex, automatically launches `gcloud auth application-default login` once when ADC is missing.",
-        vertex_access_token_refresh_seconds:
-          "Vertex access-token refresh interval in seconds (default: 3300).",
-        gemini_cached_content:
-          "Optional Gemini context-cache resource name sent as --gemini_cached_content (Gemini OpenAI-compatible endpoints).",
-        create_gemini_cache:
-          "Automatically create a Gemini CachedContent from the system prompt before the run and delete it afterward.",
-        gemini_cache_ttl:
-          "Time-to-live in seconds for the auto-created Gemini cache (default: 3600 = 1 hour).",
-        gemini_cache_ttl_autoupdate:
-          "When enabled, auto-refreshes cache TTL during long runs to avoid expiration.",
-        keep_gemini_cache:
-          "Do not delete the auto-created cache after the run. The resource name is logged for reuse.",
-        labels_path: "Optional labels CSV path. If omitted, labels are expected in the input file.",
-        task_name:
-          "Optional task name written to metrics metadata. Leave blank to infer from output filename.",
-        task_description: "Optional free-text task description written to metrics metadata.",
-        tags:
-          "Optional metrics tags. Use semicolon-separated tags (for example: tag1;tag2;tag3).",
-        metrics_only:
-          "Skip API calls and only recompute metrics from existing output CSVs listed in input_path. Truth labels come from output truth column and can be overridden via labels_path.",
-        output_path: "Optional output CSV file path, or output directory when running multiple inputs. Set an existing output file to resume.",
-        reprompt_unclassified:
-          "When checked, emits --unclassified so resume mode re-prompts only rows currently labeled unclassified.",
-        api_key_var: "Environment variable that stores the API key or access token used for this run.",
-        api_base_var: "Environment variable containing the provider base URL.",
-        calibration: "Generate calibration outputs in addition to regular metrics.",
-        validator_enable: "Enable external validator roundtrip and retry logic.",
-        validator_cmd: "Executable or .py script path used for label validation.",
-        validator_args: "Raw argument string passed to validator via --validator_args.",
-        validator_timeout: "Timeout in seconds for each validator invocation.",
-        validator_prompt_max_candidates: "Max candidate labels shown in validator retry prompts.",
-        validator_prompt_max_chars: "Hard cap for validator retry prompt character length.",
-        validator_exhausted_policy: "Action when validator retries are exhausted.",
-        validator_debug: "Emit verbose validator payload logging (DEBUG mode).",
-      };
-
-      function getWindowModelCatalog() {
-        return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
-          ? window.MODEL_CATALOG
-          : {};
-      }
-
-      function providerSlugToEnvPrefix(slug) {
-        const safe = (slug || "")
-          .toString()
-          .trim()
-          .toUpperCase()
-          .replace(/[^A-Z0-9]+/g, "_")
-          .replace(/^_+|_+$/g, "");
-        return safe || "PROVIDER";
-      }
-
-      function shellQuote(value) {
-        if (value === undefined || value === null) {
-          return '""';
-        }
-        const stringValue = String(value);
-        if (!stringValue.length) {
-          return '""';
-        }
-        if (/^[A-Za-z0-9._@%+=:,\\/\\-]+$/.test(stringValue)) {
-          return stringValue;
-        }
-        // Use Windows-friendly quoting for generated commands (cmd/PowerShell):
-        // wrap in double quotes and escape embedded quotes by doubling them.
-        const escaped = stringValue.replace(/"/g, '""');
-        return `"${escaped}"`;
-      }
-
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-      }
-
-      function classifyCommandToken(token, index, tokens) {
-        if (index === 0) return "cmd-bin";
-        if (index === 1) return "cmd-script";
-        if (token.startsWith("--")) return "cmd-flag";
-        const prev = tokens[index - 1] || "";
-        if (prev.startsWith("--")) return "cmd-value";
-        return "cmd-plain";
-      }
-
-      function renderCommandTokens(tokens) {
-        return tokens
-          .map((token, index) => {
-            const cls = classifyCommandToken(token, index, tokens);
-            return `<span class="cmd-token ${cls}">${escapeHtml(token)}</span>`;
-          })
-          .join('<span class="cmd-space"> </span>');
-      }
-
-      function getPromptEstimateConfig(data) {
-        const rawSystemPrompt = data.get("system_prompt");
-        const trimmedSystemPrompt =
-          typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
-        const effectiveSystemPrompt = trimmedSystemPrompt || defaultValues.system_prompt;
-        const systemMessage = `${effectiveSystemPrompt}\n\n${MANDATORY_SYSTEM_APPEND}`;
-
-        const layoutRaw = (data.get("prompt_layout") || defaultValues.prompt_layout || "standard")
-          .toString()
-          .trim()
-          .toLowerCase();
-        const layout = layoutRaw === "compact" ? "compact" : "standard";
-        const includeExplanations = Boolean(data.get("include_explanations"));
-        const enableCot = Boolean(data.get("enable_cot"));
-        const markerPair = `${NODE_MARKER_LEFT}...${NODE_MARKER_RIGHT}`;
-        const fewShotRaw = (data.get("few_shot_examples") || "0").toString().trim();
-        const parsedFewShot = Number.parseInt(fewShotRaw || "0", 10);
-        const fewShotCount =
-          Number.isFinite(parsedFewShot) && parsedFewShot > 0 ? parsedFewShot : 0;
-
-        const userInstructions =
-          layout === "standard"
-            ? [
-                `You will receive a text excerpt with separate left/right context fields and a marked example where the node is wrapped as ${NODE_MARKER_LEFT}node${NODE_MARKER_RIGHT}.`,
-                `When the node itself contains inner ${markerPair} spans, those marked passages are the classification target; the rest of the node and the contexts remain useful evidence only.`,
-                "Identify the label that best matches the required span according to the task definition.",
-                "The payload includes a classification_target helper indicating exactly which text must be classified.",
-              ]
-            : [
-                "You will receive left_context, node, and right_context fields for a text excerpt.",
-                `If the node contains inner ${markerPair} spans, classify only those marked spans; otherwise classify the full node.`,
-                "Identify the label that best matches the required span according to the task definition.",
-                "The payload includes a classification_target helper indicating exactly which text must be classified.",
-              ];
-
-        if (enableCot) {
-          userInstructions.splice(
-            2,
-            0,
-            "Think through the linguistic evidence step-by-step before committing to the label."
-          );
-        }
-
-        if (includeExplanations) {
-          userInstructions.push(
-            "Return a JSON object with keys: label (string), explanation (string), confidence (float in [0,1]), node_echo (string), span_source (string)."
-          );
-        } else {
-          userInstructions.push(
-            "Return a JSON object with keys: label (string), confidence (float in [0,1]), node_echo (string), span_source (string). Do not include an explanation field."
-          );
-        }
-
-        userInstructions.push(
-          `Set span_source to "node" when the entire node is being classified. If any inner ${markerPair} spans exist, set span_source to "marked_subspan" and set node_echo to exactly the marked text (join multiple marked spans with a single space, in order).`
-        );
-        userInstructions.push(
-          "An additional field named 'info' may provide guidance or metadata relevant to the label; factor it into your decision."
-        );
-        userInstructions.push(
-          "Contract: if node_echo or span_source fail to meet these requirements, the response will be rejected."
-        );
-        userInstructions.push("Do not include any text outside the JSON object.");
-
-        return {
-          layout,
-          fewShotCount,
-          systemMessage,
-          instructionsText: userInstructions.join("\n"),
-        };
-      }
-
-      function estimateTokensFromChars(charCount) {
-        const safeChars = Math.max(1, charCount);
-        return {
-          estimateMid: Math.max(1, Math.round(safeChars / 4)),
-          estimateLow: Math.max(1, Math.round(safeChars / 4.5)),
-          estimateHigh: Math.max(1, Math.round(safeChars / 3.5)),
-        };
-      }
-
-      function serializePayloadForEstimate(layout, payload) {
-        return layout === "standard"
-          ? JSON.stringify(payload, null, 2)
-          : JSON.stringify(payload, null, 0);
-      }
-
-      function extractMarkedSpansForPair(nodeText, markerLeft, markerRight) {
-        const node = (nodeText || "").toString();
-        const spans = [];
-        let searchStart = 0;
-        while (searchStart < node.length) {
-          const leftIndex = node.indexOf(markerLeft, searchStart);
-          if (leftIndex < 0) {
-            break;
-          }
-          const spanStart = leftIndex + markerLeft.length;
-          const rightIndex = node.indexOf(markerRight, spanStart);
-          if (rightIndex < 0) {
-            break;
-          }
-          const span = node.slice(spanStart, rightIndex).trim();
-          if (span) {
-            spans.push(span);
-          }
-          searchStart = rightIndex + NODE_MARKER_RIGHT.length;
-        }
-        return spans;
-      }
-
-      function extractMarkedSpans(nodeText) {
-        for (const [markerLeft, markerRight] of NODE_MARKER_VARIANTS) {
-          const spans = extractMarkedSpansForPair(nodeText, markerLeft, markerRight);
-          if (spans.length > 0) {
-            return spans;
-          }
-        }
-        return [];
-      }
-
-      function hasAnyNodeMarker(text) {
-        const value = (text || "").toString();
-        return NODE_MARKER_VARIANTS.some(
-          ([markerLeft, markerRight]) =>
-            value.includes(markerLeft) || value.includes(markerRight)
-        );
-      }
-
-      function extractMarkedSpanTarget(nodeText) {
-        const node = (nodeText || "").toString();
-        const spans = extractMarkedSpans(node);
-        if (spans.length) {
-          return {
-            focus: "marked_subspan",
-            text: spans.join(" "),
-          };
-        }
-        return {
-          focus: "node",
-          text: node.trim(),
-        };
-      }
-
-      function markNodeInContextForEstimate(left, node, right) {
-        const leftRaw = (left || "").toString();
-        const nodeRaw = (node || "").toString();
-        const rightRaw = (right || "").toString();
-        const leftPart = leftRaw.replace(/\s+$/u, "");
-        const rightPart = rightRaw.replace(/^\s+/u, "");
-        const leftSep =
-          leftPart.length === 0 ? "" : leftRaw.endsWith(" ") || leftRaw.endsWith("\n") ? "" : " ";
-        const rightSep =
-          rightPart.length === 0 ? "" : rightRaw.startsWith(" ") || rightRaw.startsWith("\n") ? "" : " ";
-        const nodePart = hasAnyNodeMarker(nodeRaw)
-          ? nodeRaw
-          : `${NODE_MARKER_LEFT}${nodeRaw}${NODE_MARKER_RIGHT}`;
-        return `${leftPart}${leftSep}${nodePart}${rightSep}${rightPart}`.trim();
-      }
-
-      function buildEstimateTargetPayload(layout, row) {
-        const leftContext = (row.leftContext || "").toString();
-        const node = (row.node || "").toString();
-        const rightContext = (row.rightContext || "").toString();
-        const info = (row.info || "").toString();
-        const target = extractMarkedSpanTarget(node);
-        const classificationNote =
-          target.focus === "marked_subspan"
-            ? "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
-            : "Classify the entire node; left/right contexts simply provide supporting evidence.";
-
-        if (layout === "compact") {
-          const compactPayload = {
-            left_context: leftContext,
-            node,
-            right_context: rightContext,
-            classification_target: target,
-          };
-          if (info) {
-            compactPayload.info = info;
-          }
-          return compactPayload;
-        }
-
-        return {
-          left_context: leftContext,
-          node,
-          right_context: rightContext,
-          info,
-          marked_example: markNodeInContextForEstimate(leftContext, node, rightContext),
-          classification_target: {
-            focus: target.focus,
-            text: target.text,
-            note: classificationNote,
-          },
-        };
-      }
-
-      function estimateCachePaddingTokenContribution(paddingUnits) {
-        const safeUnits = Math.max(0, Math.min(MAX_CACHE_PADDING_TOKENS, Number(paddingUnits) || 0));
-        if (safeUnits <= 0) {
-          return 0;
-        }
-        const charCount =
-          CACHE_PADDING_PREFIX.length + CACHE_PADDING_TOKEN.length * safeUnits + CACHE_PADDING_SUFFIX.length;
-        return estimateTokensFromChars(charCount).estimateMid;
-      }
-
-      function estimateRequiredCachePaddingUnits(sharedPrefixTokensEstimate, targetSharedPrefixTokens) {
-        const baseline = Math.max(0, Number(sharedPrefixTokensEstimate) || 0);
-        const target = Math.max(0, Number(targetSharedPrefixTokens) || 0);
-        if (target <= 0 || baseline >= target) {
-          return 0;
-        }
-
-        let low = 0;
-        let high = 1;
-        while (high < MAX_CACHE_PADDING_TOKENS && baseline + estimateCachePaddingTokenContribution(high) < target) {
-          high *= 2;
-        }
-        high = Math.min(high, MAX_CACHE_PADDING_TOKENS);
-        if (baseline + estimateCachePaddingTokenContribution(high) < target) {
-          return MAX_CACHE_PADDING_TOKENS;
-        }
-
-        while (low < high) {
-          const mid = Math.floor((low + high) / 2);
-          if (baseline + estimateCachePaddingTokenContribution(mid) >= target) {
-            high = mid;
-          } else {
-            low = mid + 1;
-          }
-        }
-        return low;
-      }
-
-      function buildSharedPrefixEstimate(data) {
-        const config = getPromptEstimateConfig(data);
-        let sharedUserPrefix = config.instructionsText;
-        if (config.fewShotCount > 0) {
-          sharedUserPrefix +=
-            `\n\nHere are ${config.fewShotCount} labeled example(s) you should mimic when classifying:\n` +
-            "[example content omitted in estimate]";
-        }
-        sharedUserPrefix += "\n\nNow classify this example:\n";
-
-        const baseSharedPrefixChars = config.systemMessage.length + sharedUserPrefix.length;
-        const baseTokenEstimates = estimateTokensFromChars(baseSharedPrefixChars);
-        const targetRaw = (data.get("cache_pad_target_tokens") || "0").toString().trim();
-        const targetSharedPrefixTokens = Math.max(0, Number.parseInt(targetRaw || "0", 10) || 0);
-        const paddingUnitsEstimate = estimateRequiredCachePaddingUnits(
-          baseTokenEstimates.estimateMid,
-          targetSharedPrefixTokens
-        );
-        const paddedSharedPrefixTokensEstimate =
-          baseTokenEstimates.estimateMid + estimateCachePaddingTokenContribution(paddingUnitsEstimate);
-        return {
-          layout: config.layout,
-          fewShotCount: config.fewShotCount,
-          baseSharedPrefixChars,
-          baseEstimateMid: baseTokenEstimates.estimateMid,
-          baseEstimateLow: baseTokenEstimates.estimateLow,
-          baseEstimateHigh: baseTokenEstimates.estimateHigh,
-          targetSharedPrefixTokens,
-          paddingUnitsEstimate,
-          paddedSharedPrefixTokensEstimate,
-        };
-      }
-
-      function estimateBasePromptTokens(data) {
-        return buildSharedPrefixEstimate(data);
-      }
-
-      function computeSampledPromptEstimate(data, sampledRows) {
-        if (!Array.isArray(sampledRows) || sampledRows.length === 0) {
-          return null;
-        }
-        const shared = buildSharedPrefixEstimate(data);
-        return {
-          count: sampledRows.length,
-          sharedPrefixEstimateMid: shared.baseEstimateMid,
-          sharedPrefixEstimateLow: shared.baseEstimateLow,
-          sharedPrefixEstimateHigh: shared.baseEstimateHigh,
-          targetSharedPrefixTokens: shared.targetSharedPrefixTokens,
-          paddingUnitsEstimate: shared.paddingUnitsEstimate,
-          paddedSharedPrefixTokensEstimate: shared.paddedSharedPrefixTokensEstimate,
-        };
-      }
-
-      function getPromptPreviewRow() {
-        if (Array.isArray(sampledEstimateRows) && sampledEstimateRows.length > 0) {
-          return {
-            row: sampledEstimateRows[0],
-            sampled: true,
-          };
-        }
-        return {
-          row: PROMPT_PREVIEW_PLACEHOLDER_ROW,
-          sampled: false,
-        };
-      }
-
-      function buildPromptPreview(data) {
-        const config = getPromptEstimateConfig(data);
-        const previewRowInfo = getPromptPreviewRow();
-        let userContent = config.instructionsText;
-        if (config.fewShotCount > 0) {
-          userContent +=
-            `\n\nHere are ${config.fewShotCount} labeled example(s) you should mimic when classifying:\n` +
-            "[few-shot examples are selected at runtime and are omitted from GUI preview]";
-        }
-        userContent += "\n\nNow classify this example:\n";
-        userContent += serializePayloadForEstimate(
-          config.layout,
-          buildEstimateTargetPayload(config.layout, previewRowInfo.row)
-        );
-        const suppressSystemMessage = Boolean(
-          (data.get("gemini_cached_content") || "").toString().trim()
-        );
-        return {
-          systemMessage: suppressSystemMessage
-            ? "[omitted: system message is not sent when --gemini_cached_content is set]"
-            : config.systemMessage,
-          userMessage: userContent,
-          sampled: previewRowInfo.sampled,
-          fewShotCount: config.fewShotCount,
-        };
-      }
-
-      function updatePromptPreview(data) {
-        if (!promptPreviewSystem || !promptPreviewUser || !promptPreviewMeta) {
-          return;
-        }
-        const preview = buildPromptPreview(data);
-        promptPreviewSystem.textContent = preview.systemMessage;
-        promptPreviewUser.textContent = preview.userMessage;
-
-        let metaText = preview.sampled
-          ? "Preview row source: first sampled CSV data row."
-          : "Preview row source: placeholder values (sample CSV to insert first data row).";
-        if (sampledEstimateSource) {
-          metaText += ` Source: ${sampledEstimateSource}.`;
-        }
-        if (preview.fewShotCount > 0) {
-          metaText += ` Few-shot examples configured (${preview.fewShotCount}) but resolved at runtime.`;
-        }
-        promptPreviewMeta.textContent = metaText;
-      }
-
-      function setPromptEstimateStatus(message, isError = false) {
-        if (!promptTokenEstimateStatus) {
-          return;
-        }
-        promptTokenEstimateStatus.textContent = message || "";
-        promptTokenEstimateStatus.style.color = isError ? "#b00020" : "#35526d";
-      }
-
-      function updatePromptTokenEstimate(data) {
-        if (!promptTokenEstimate) {
-          return;
-        }
-        const estimate = estimateBasePromptTokens(data);
-        const fewShotWarning =
-          estimate.fewShotCount > 0
-            ? ` Few-shot example text is omitted (configured count: ${estimate.fewShotCount}).`
-            : "";
-        const sampled = computeSampledPromptEstimate(data, sampledEstimateRows);
-        const sampledNote =
-          sampled && sampled.count > 0
-            ? `<br>Sampled rows: ${sampled.count} (does not change shared-prefix estimate).`
-            : "";
-        const targetNote =
-          estimate.targetSharedPrefixTokens > 0
-            ? `<br>Configured target shared prefix: <code>${estimate.targetSharedPrefixTokens}</code> tokens. ` +
-              `Estimated padding units: <code>${estimate.paddingUnitsEstimate}</code>. ` +
-              `Estimated padded shared prefix: ~${estimate.paddedSharedPrefixTokensEstimate} tokens.`
-            : "";
-        const cacheHintTokens =
-          estimate.targetSharedPrefixTokens > 0
-            ? estimate.targetSharedPrefixTokens
-            : PROMPT_CACHE_HINT_TOKENS;
-        const cacheHintStatus =
-          estimate.paddedSharedPrefixTokensEstimate >= cacheHintTokens
-            ? "target reached by estimate"
-            : "target not reached by estimate";
-
-        let estimateHtml =
-          `<strong>Shared prefix estimate (cacheable part only):</strong> ` +
-          `~${estimate.baseEstimateMid} tokens ` +
-          `(range ${estimate.baseEstimateLow}-${estimate.baseEstimateHigh}), ` +
-          `${estimate.baseSharedPrefixChars} chars.` +
-          `<br>Row-specific payload fields are excluded from this estimate.` +
-          `<br>Cache hint threshold: ~${cacheHintTokens}+ tokens (${cacheHintStatus}).` +
-          `<br>Layout: <code>${escapeHtml(estimate.layout)}</code>.` +
-          targetNote +
-          sampledNote;
-        if (sampledEstimateSource) {
-          estimateHtml += `<br>Sample source: <code>${escapeHtml(sampledEstimateSource)}</code>.`;
-        }
-        estimateHtml += fewShotWarning;
-        promptTokenEstimate.innerHTML = estimateHtml;
-      }
-
-      function parseDelimitedRows(text, delimiter) {
-        const rows = [];
-        let currentRow = [];
-        let currentCell = "";
-        let inQuotes = false;
-        let index = 0;
-        while (index < text.length) {
-          const char = text[index];
-          if (char === '"') {
-            if (inQuotes && text[index + 1] === '"') {
-              currentCell += '"';
-              index += 2;
-              continue;
-            }
-            inQuotes = !inQuotes;
-            index += 1;
-            continue;
-          }
-          if (!inQuotes && char === delimiter) {
-            currentRow.push(currentCell);
-            currentCell = "";
-            index += 1;
-            continue;
-          }
-          if (!inQuotes && (char === "\n" || char === "\r")) {
-            currentRow.push(currentCell);
-            rows.push(currentRow);
-            currentRow = [];
-            currentCell = "";
-            if (char === "\r" && text[index + 1] === "\n") {
-              index += 2;
-            } else {
-              index += 1;
-            }
-            continue;
-          }
-          currentCell += char;
-          index += 1;
-        }
-        if (currentCell.length > 0 || currentRow.length > 0) {
-          currentRow.push(currentCell);
-          rows.push(currentRow);
-        }
-        return rows;
-      }
-
-      function normalizeHeaderName(value) {
-        return (value || "")
-          .toString()
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
-      }
-
-      function parseCsvExamplesForEstimate(text) {
-        const content = (text || "").replace(/^\uFEFF/, "");
-        if (!content.trim()) {
-          return [];
-        }
-        let rows = parseDelimitedRows(content, ";");
-        if (rows.length > 0 && rows[0].length <= 1) {
-          rows = parseDelimitedRows(content, ",");
-        }
-        if (!rows.length) {
-          return [];
-        }
-        const headers = rows[0].map((value) => value.trim());
-        const headerIndex = {};
-        headers.forEach((header, idx) => {
-          const normalized = normalizeHeaderName(header);
-          if (normalized && !Object.prototype.hasOwnProperty.call(headerIndex, normalized)) {
-            headerIndex[normalized] = idx;
-          }
-        });
-        const leftIdx = headerIndex.leftcontext;
-        const nodeIdx = headerIndex.node;
-        const rightIdx = headerIndex.rightcontext;
-        const infoIdx =
-          headerIndex.info !== undefined
-            ? headerIndex.info
-            : headerIndex.metadata !== undefined
-              ? headerIndex.metadata
-              : null;
-        if (nodeIdx === undefined) {
-          throw new Error("CSV must include a node column.");
-        }
-
-        const records = [];
-        for (let idx = 1; idx < rows.length; idx += 1) {
-          const row = rows[idx];
-          if (!Array.isArray(row) || row.every((cell) => !String(cell || "").trim())) {
-            continue;
-          }
-          records.push({
-            leftContext: row[leftIdx] || "",
-            node: row[nodeIdx] || "",
-            rightContext: row[rightIdx] || "",
-            info: infoIdx === null ? "" : row[infoIdx] || "",
-          });
-        }
-        return records;
-      }
-
-      function sampleEvenly(records, sampleSize) {
-        if (!Array.isArray(records) || records.length === 0) {
-          return [];
-        }
-        if (records.length <= sampleSize) {
-          return records.slice();
-        }
-        const sampled = [];
-        const step = records.length / sampleSize;
-        for (let idx = 0; idx < sampleSize; idx += 1) {
-          sampled.push(records[Math.floor(idx * step)]);
-        }
-        return sampled;
-      }
-
-      async function readCsvTextForEstimate() {
-        if (estimateCsvFileInput && estimateCsvFileInput.files && estimateCsvFileInput.files.length > 0) {
-          const csvFile = estimateCsvFileInput.files[0];
-          const text = await csvFile.text();
-          return { text, sourceLabel: csvFile.name || "selected file" };
-        }
-        const inputRaw = (form.elements.namedItem("input_path")?.value || "").toString();
-        const inputPaths = inputRaw
-          .split(/\r?\n/)
-          .map((entry) => entry.trim())
-          .filter((entry) => entry.length > 0);
-        if (!inputPaths.length) {
-          throw new Error("No input CSV path is set. Provide input path or choose a local file.");
-        }
-        const firstPath = inputPaths[0];
-        if (/^[a-zA-Z]:[\\/]/.test(firstPath)) {
-          throw new Error("Local absolute paths cannot be read by browser fetch. Use the file picker.");
-        }
-        const response = await fetch(firstPath, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`Failed to load "${firstPath}" (HTTP ${response.status}). Use the file picker.`);
-        }
-        const text = await response.text();
-        return { text, sourceLabel: firstPath };
-      }
-
-      async function sampleCsvForPromptEstimate() {
-        setPromptEstimateStatus("Sampling CSV rows for token estimate...");
-        if (sampleCsvButton) {
-          sampleCsvButton.disabled = true;
-        }
-        try {
-          const { text, sourceLabel } = await readCsvTextForEstimate();
-          const records = parseCsvExamplesForEstimate(text);
-          if (!records.length) {
-            throw new Error("CSV has no data rows after header.");
-          }
-          sampledEstimateRows = sampleEvenly(records, PROMPT_ESTIMATE_SAMPLE_LIMIT);
-          sampledEstimateSource = sourceLabel;
-          const data = new FormData(form);
-          updatePromptTokenEstimate(data);
-          updatePromptPreview(data);
-          setPromptEstimateStatus(
-            `Sampled ${sampledEstimateRows.length}/${records.length} rows from ${sourceLabel}.`
-          );
-        } catch (error) {
-          sampledEstimateRows = null;
-          sampledEstimateSource = "";
-          const data = new FormData(form);
-          updatePromptTokenEstimate(data);
-          updatePromptPreview(data);
-          setPromptEstimateStatus(error && error.message ? error.message : "CSV sampling failed.", true);
-        } finally {
-          if (sampleCsvButton) {
-            sampleCsvButton.disabled = false;
-          }
-        }
-      }
-
-      function encodeSystemPromptForCli(value) {
-        if (typeof value !== "string" || !value.length) {
-          return "";
-        }
-        const normalized = value.replace(/\r\n?/g, "\n");
-        if (window.TextEncoder) {
-          const encoder = new TextEncoder();
-          const bytes = encoder.encode(normalized);
-          let binary = "";
-          bytes.forEach((byte) => {
-            binary += String.fromCharCode(byte);
-          });
-          return window.btoa(binary);
-        }
-        // Fallback for older browsers without TextEncoder.
-        return window.btoa(unescape(encodeURIComponent(normalized)));
-      }
-
-      function promptNeedsEncoding(value) {
-        if (typeof value !== "string" || !value.length) {
-          return false;
-        }
-        return /[\r\n]/.test(value);
-      }
-
-      function updateModelOptionsForProvider(provider) {
-        if (!modelList) {
-          return;
-        }
-        modelList.innerHTML = "";
-        const entry = modelCatalog[provider];
-        const models =
-          entry && Array.isArray(entry.models) ? entry.models.filter((value) => typeof value === "string") : [];
-        if (models.length) {
-          models.forEach((modelId) => {
-            const option = document.createElement("option");
-            option.value = modelId;
-            modelList.appendChild(option);
-          });
-        }
-        if (modelCatalogMeta) {
-          let note = "";
-          if (models.length) {
-            note = `Loaded ${models.length} cached model${models.length === 1 ? "" : "s"} for "${provider}".`;
-            if (entry && typeof entry.timestamp === "string") {
-              note += ` Updated ${entry.timestamp}.`;
-            }
-            if (entry && entry.error) {
-              note += ` Last fetch issue: ${entry.error}.`;
-            }
-          } else {
-            note = `No cached models for "${provider}". Run python benchmark_agent.py --update-models to refresh.`;
-          }
-          modelCatalogMeta.textContent = note;
-        }
-      }
-      function toggleGeminiCacheMode(createEnabled) {
-        document.getElementById("gemini_cache_create_options").style.display = createEnabled ? "" : "none";
-        document.getElementById("gemini_cache_manual").style.display = createEnabled ? "none" : "";
-      }
-
-      function updateProviderSpecificOptions(provider) {
-        const isVertex = provider === "vertex";
-        if (vertexAuthOptions) {
-          vertexAuthOptions.style.display = isVertex ? "" : "none";
-        }
-      }
-
-      function buildCommand() {
-        const data = new FormData(form);
-        const args = ["python", "benchmark_agent.py"];
-        const metricsOnly = Boolean(data.get("metrics_only"));
-
-        const inputRaw = (data.get("input_path") ?? "").toString();
-        const inputPaths = inputRaw
-          .split(/\r?\n/)
-          .map((entry) => entry.trim())
-          .filter((entry) => entry.length > 0);
-        args.push("--input");
-        if (inputPaths.length === 0) {
-          args.push(shellQuote(""));
-        } else {
-          for (const inputPath of inputPaths) {
-            args.push(shellQuote(inputPath));
-          }
-        }
-
-        const modelValue = data.get("model")?.toString().trim() ?? "";
-        args.push("--model", shellQuote(modelValue));
-
-        const outputValue = data.get("output_path")?.toString().trim();
-        if (outputValue) {
-          args.push("--output", shellQuote(outputValue));
-        }
-        if (data.get("reprompt_unclassified")) {
-          args.push("--unclassified");
-        }
-
-        const taskName = data.get("task_name")?.toString().trim() ?? "";
-        if (taskName) {
-          args.push("--task_name", shellQuote(taskName));
-        }
-
-        const taskDescription = data.get("task_description")?.toString().trim() ?? "";
-        if (taskDescription) {
-          args.push("--task_description", shellQuote(taskDescription));
-        }
-
-        const tags = data.get("tags")?.toString().trim() ?? "";
-        if (tags) {
-          args.push("--tags", shellQuote(tags));
-        }
-
-        const provider = data.get("provider");
-        if (provider && provider !== defaultValues.provider) {
-          args.push("--provider", provider);
-        }
-        if (provider === "vertex") {
-          const vertexAutoAdcLogin = Boolean(data.get("vertex_auto_adc_login"));
-          if (!vertexAutoAdcLogin) {
-            args.push("--no-vertex_auto_adc_login");
-          }
-          const vertexRefreshSeconds =
-            data.get("vertex_access_token_refresh_seconds")?.toString().trim() ?? "";
-          if (
-            vertexRefreshSeconds &&
-            vertexRefreshSeconds !== defaultValues.vertex_access_token_refresh_seconds
-          ) {
-            args.push("--vertex_access_token_refresh_seconds", vertexRefreshSeconds);
-          }
-        }
-
-        const temperature = data.get("temperature")?.trim();
-        if (temperature && temperature !== defaultValues.temperature) {
-          args.push("--temperature", temperature);
-        }
-
-        const topP = data.get("top_p")?.trim();
-        if (topP && topP !== defaultValues.top_p) {
-          args.push("--top_p", topP);
-        }
-
-        const topK = data.get("top_k")?.trim();
-        if (topK) {
-          args.push("--top_k", topK);
-        }
-
-        const requestIntervalMs = data.get("request_interval_ms")?.trim();
-        if (requestIntervalMs && requestIntervalMs !== defaultValues.request_interval_ms) {
-          args.push("--request_interval_ms", requestIntervalMs);
-        }
-
-        const threads = data.get("threads")?.toString().trim() ?? "";
-        if (threads && threads !== defaultValues.threads) {
-          args.push("--threads", threads);
-        }
-
-        const promptLogDetail = data.get("prompt_log_detail");
-        if (promptLogDetail && promptLogDetail !== defaultValues.prompt_log_detail) {
-          args.push("--prompt_log_detail", promptLogDetail);
-        }
-
-        const flushRows = data.get("flush_rows")?.toString().trim() ?? "";
-        if (flushRows && flushRows !== defaultValues.flush_rows) {
-          args.push("--flush_rows", flushRows);
-        }
-
-        const flushSeconds = data.get("flush_seconds")?.toString().trim() ?? "";
-        if (flushSeconds && flushSeconds !== defaultValues.flush_seconds) {
-          args.push("--flush_seconds", flushSeconds);
-        }
-
-        const requestTimeoutSeconds = data.get("request_timeout_seconds")?.toString().trim() ?? "";
-        if (requestTimeoutSeconds && requestTimeoutSeconds !== defaultValues.request_timeout_seconds) {
-          args.push("--request_timeout_seconds", requestTimeoutSeconds);
-        }
-
-        const serviceTier = data.get("service_tier");
-        if (serviceTier && serviceTier !== defaultValues.service_tier) {
-          args.push("--service_tier", serviceTier);
-        }
-
-        const reasoningEffort = data.get("reasoning_effort");
-        if (reasoningEffort && reasoningEffort !== defaultValues.reasoning_effort) {
-          args.push("--reasoning_effort", reasoningEffort);
-        }
-
-        const verbosity = data.get("verbosity");
-        if (verbosity && verbosity !== defaultValues.verbosity) {
-          args.push("--verbosity", verbosity);
-        }
-
-        const thinkingLevel = data.get("thinking_level");
-        if (thinkingLevel && thinkingLevel !== defaultValues.thinking_level) {
-          args.push("--thinking_level", thinkingLevel);
-        }
-
-        const effort = data.get("effort");
-        if (effort && effort !== defaultValues.effort) {
-          args.push("--effort", effort);
-        }
-
-        if (data.get("strict_control_acceptance")) {
-          args.push("--strict_control_acceptance");
-        }
-
-        const fewShot = data.get("few_shot_examples")?.trim();
-        if (fewShot && Number(fewShot) > 0) {
-          args.push("--few_shot_examples", fewShot);
-        }
-
-        const promptLayout = data.get("prompt_layout");
-        if (promptLayout && promptLayout !== defaultValues.prompt_layout) {
-          args.push("--prompt_layout", promptLayout);
-        }
-
-        const cachePadTargetTokens = data.get("cache_pad_target_tokens")?.toString().trim() ?? "";
-        if (cachePadTargetTokens && Number(cachePadTargetTokens) > 0) {
-          args.push("--cache_pad_target_tokens", cachePadTargetTokens);
-        }
-
-        const promptCacheKey = data.get("prompt_cache_key")?.toString().trim() ?? "";
-        if (promptCacheKey) {
-          args.push("--prompt_cache_key", shellQuote(promptCacheKey));
-        }
-
-        if (data.get("requesty_auto_cache")) {
-          args.push("--requesty_auto_cache");
-        }
-
-        const geminiCachedContent = data.get("gemini_cached_content")?.toString().trim() ?? "";
-        if (geminiCachedContent) {
-          args.push("--gemini_cached_content", shellQuote(geminiCachedContent));
-        }
-
-        const createGeminiCache = data.get("create_gemini_cache");
-        if (createGeminiCache) {
-          args.push("--create_gemini_cache");
-          const geminiCacheTtl = data.get("gemini_cache_ttl")?.toString().trim() ?? "";
-          if (geminiCacheTtl && Number(geminiCacheTtl) !== 3600) {
-            args.push("--gemini_cache_ttl", geminiCacheTtl);
-          }
-          if (!data.get("gemini_cache_ttl_autoupdate")) {
-            args.push("--no-gemini_cache_ttl_autoupdate");
-          }
-          if (data.get("keep_gemini_cache")) {
-            args.push("--keep_gemini_cache");
-          }
-        }
-
-        const labelsPath = data.get("labels_path")?.trim();
-        if (labelsPath) {
-          args.push("--labels", shellQuote(labelsPath));
-        }
-
-        if (metricsOnly) {
-          args.push("--metrics_only");
-        }
-
-        const rawSystemPrompt = data.get("system_prompt");
-        const trimmedSystemPrompt =
-          typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
-        if (trimmedSystemPrompt && trimmedSystemPrompt !== defaultValues.system_prompt) {
-          if (promptNeedsEncoding(trimmedSystemPrompt)) {
-            const serializedPrompt = encodeSystemPromptForCli(trimmedSystemPrompt);
-            if (serializedPrompt) {
-              args.push("--system_prompt_b64", serializedPrompt);
-            }
-          } else {
-            args.push("--system_prompt", shellQuote(trimmedSystemPrompt));
-          }
-        }
-
-        if (data.get("enable_cot")) {
-          args.push("--enable_cot");
-        }
-
-        if (!data.get("include_explanations")) {
-          args.push("--no_explanation");
-        }
-
-        if (data.get("logprobs")) {
-          args.push("--logprobs");
-        }
-
-        if (data.get("calibration")) {
-          args.push("--calibration");
-        }
-
-        const apiKeyVar = data.get("api_key_var")?.trim();
-        if (apiKeyVar) {
-          args.push("--api_key_var", shellQuote(apiKeyVar));
-        }
-
-        const apiBaseVar = data.get("api_base_var")?.trim();
-        if (apiBaseVar) {
-          args.push("--api_base_var", shellQuote(apiBaseVar));
-        }
-
-        if (data.get("validator_enable")) {
-          const validatorCmd = data.get("validator_cmd")?.toString().trim() ?? "";
-          if (validatorCmd) {
-            args.push("--validator_cmd", shellQuote(validatorCmd));
-
-            const validatorArgs = data.get("validator_args")?.toString().trim() ?? "";
-            if (validatorArgs) {
-              args.push("--validator_args", shellQuote(validatorArgs));
-            }
-
-            const validatorTimeout = data.get("validator_timeout")?.toString().trim() ?? "";
-            if (validatorTimeout && validatorTimeout !== defaultValues.validator_timeout) {
-              args.push("--validator_timeout", validatorTimeout);
-            }
-
-            const maxCandidates = data.get("validator_prompt_max_candidates")?.toString().trim() ?? "";
-            if (maxCandidates && maxCandidates !== defaultValues.validator_prompt_max_candidates) {
-              args.push("--validator_prompt_max_candidates", maxCandidates);
-            }
-
-            const maxChars = data.get("validator_prompt_max_chars")?.toString().trim() ?? "";
-            if (maxChars && maxChars !== defaultValues.validator_prompt_max_chars) {
-              args.push("--validator_prompt_max_chars", maxChars);
-            }
-
-            const exhaustedPolicy = data.get("validator_exhausted_policy");
-            if (exhaustedPolicy && exhaustedPolicy !== defaultValues.validator_exhausted_policy) {
-              args.push("--validator_exhausted_policy", exhaustedPolicy);
-            }
-
-            if (data.get("validator_debug")) {
-              args.push("--validator_debug");
-            }
-          }
-        }
-
-        latestCommandText = args.join(" ");
-        commandOutput.innerHTML = renderCommandTokens(args);
-        updatePromptTokenEstimate(data);
-        updatePromptPreview(data);
-      }
-
-      function ensureProviderRegistered(slug, labelHint) {
-        const upper = (labelHint || slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")).toUpperCase();
-        if (!providerDefaults[slug]) {
-          providerDefaults[slug] = {
-            apiKeyVar: `${upper}_API_KEY`,
-            apiBaseVar: `${upper}_BASE_URL`,
-          };
-        }
-        if (!Array.from(providerSelect.options).some((opt) => opt.value === slug)) {
-          const option = document.createElement("option");
-          option.value = slug;
-          option.textContent = knownProviderLabels[slug] || `${upper.replace(/_/g, " ")} (catalog)`;
-          providerSelect.appendChild(option);
-        }
-      }
-
-      function setRefreshStatus(message, isError = false) {
-        if (!refreshModelsStatus) {
-          return;
-        }
-        refreshModelsStatus.textContent = message || "";
-        refreshModelsStatus.style.color = isError ? "#b00020" : "";
-      }
-
-      function syncProvidersFromCatalog() {
-        if (!modelCatalog || typeof modelCatalog !== "object") {
-          return;
-        }
-        const catalogEntries = Object.entries(modelCatalog).filter(
-          ([providerSlug]) => typeof providerSlug === "string" && providerSlug.trim().length > 0
-        );
-        if (!catalogEntries.length) {
-          return;
-        }
-
-        const catalogProviderSet = new Set(catalogEntries.map(([providerSlug]) => providerSlug));
-        const selectedBefore = providerSelect.value;
-
-        // Keep the provider dropdown aligned with config_models.js and drop stale entries.
-        for (const option of Array.from(providerSelect.options)) {
-          if (!catalogProviderSet.has(option.value)) {
-            option.remove();
-          }
-        }
-
-        for (const [providerSlug, entry] of catalogEntries) {
-          ensureProviderRegistered(providerSlug, providerSlug);
-          const prefix = providerSlugToEnvPrefix(providerSlug);
-          const apiKeyVar =
-            entry && typeof entry.api_key_var === "string" && entry.api_key_var.trim()
-              ? entry.api_key_var.trim()
-              : `${prefix}_API_KEY`;
-          const apiBaseVar =
-            entry && typeof entry.api_base_var === "string" && entry.api_base_var.trim()
-              ? entry.api_base_var.trim()
-              : `${prefix}_BASE_URL`;
-          providerDefaults[providerSlug] = { apiKeyVar, apiBaseVar };
-
-          const option = Array.from(providerSelect.options).find((item) => item.value === providerSlug);
-          if (option) {
-            option.textContent = knownProviderLabels[providerSlug] || `${prefix.replace(/_/g, " ")} (catalog)`;
-          }
-        }
-
-        if (
-          selectedBefore &&
-          Array.from(providerSelect.options).some((option) => option.value === selectedBefore)
-        ) {
-          providerSelect.value = selectedBefore;
-        } else if (providerSelect.options.length > 0) {
-          providerSelect.value = providerSelect.options[0].value;
-        }
-      }
-
-      function loadModelCatalogScript() {
-        const cacheBustedSrc = `config_models.js?ts=${Date.now()}`;
-        return new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = cacheBustedSrc;
-          script.async = true;
-          script.onload = () => {
-            script.remove();
-            resolve();
-          };
-          script.onerror = () => {
-            script.remove();
-            reject(new Error(`Unable to load ${cacheBustedSrc}`));
-          };
-          document.head.appendChild(script);
-        });
-      }
-
-      async function refreshModelCatalogFromScript() {
-        if (refreshModelsButton) {
-          refreshModelsButton.disabled = true;
-          refreshModelsButton.textContent = "Refreshing...";
-        }
-        setRefreshStatus("Refreshing provider and model list from config_models.js...");
-        try {
-          await loadModelCatalogScript();
-          modelCatalog = getWindowModelCatalog();
-          syncProvidersFromCatalog();
-          updatePlaceholdersForProvider(providerSelect.value);
-          updateModelOptionsForProvider(providerSelect.value);
-          updateProviderSpecificOptions(providerSelect.value);
-          handleFormChange();
-          setRefreshStatus("Provider and model list refreshed.");
-        } catch (error) {
-          console.warn(error);
-          modelCatalog = getWindowModelCatalog();
-          syncProvidersFromCatalog();
-          updatePlaceholdersForProvider(providerSelect.value);
-          updateModelOptionsForProvider(providerSelect.value);
-          updateProviderSpecificOptions(providerSelect.value);
-          setRefreshStatus(
-            "Could not reload config_models.js; showing the currently loaded catalog.",
-            true
-          );
-        } finally {
-          if (refreshModelsButton) {
-            refreshModelsButton.disabled = false;
-            refreshModelsButton.textContent = "Refresh Model List";
-          }
-        }
-      }
-
-      function updatePlaceholdersForProvider(provider) {
-        const defaults = providerDefaults[provider] || providerDefaults.openai;
-        if (!apiKeyVarInput.value) {
-          apiKeyVarInput.placeholder = defaults.apiKeyVar;
-        }
-        if (!apiBaseVarInput.value) {
-          apiBaseVarInput.placeholder = defaults.apiBaseVar;
-        }
-      }
-
-      function applyInputHoverHelp() {
-        Array.from(form.elements).forEach((element) => {
-          if (!element || !(element instanceof HTMLElement)) {
-            return;
-          }
-          if (element.type === "file") {
-            return;
-          }
-          const mapped =
-            (element.id && inputHelpTextById[element.id]) ||
-            (element.name && inputHelpTextById[element.name]) ||
-            "";
-          if (mapped) {
-            element.title = mapped;
-          }
-        });
-        if (refreshModelsButton) {
-          refreshModelsButton.title =
-            "Reload providers and model lists directly from config_models.js without reloading the page.";
-        }
-        if (copyButton) {
-          copyButton.title = "Copy the currently generated command line to clipboard.";
-        }
-        if (resetButton) {
-          resetButton.title = "Reset all GUI fields to defaults and clear saved settings.";
-        }
-        if (modelClearButton) {
-          modelClearButton.title = "Clear the model input field.";
-        }
-        if (sampleCsvButton) {
-          sampleCsvButton.title =
-            "Manually re-sample CSV and refresh prompt token estimate (also runs automatically on file selection).";
-        }
-        if (estimateCsvFileInput) {
-          estimateCsvFileInput.title =
-            "Optional local CSV file used only for prompt-token estimation.";
-        }
-      }
-
-      function saveConfig() {
-        const config = {};
-        Array.from(form.elements).forEach((element) => {
-          if (!element.name || element.type === "file") {
-            return;
-          }
-          if (element.type === "checkbox") {
-            config[element.name] = element.checked;
-          } else {
-            config[element.name] = element.value;
-          }
-        });
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-        } catch (error) {
-          console.warn("Unable to persist configuration:", error);
-        }
-      }
-
-      function loadConfig() {
-        try {
-          const stored = localStorage.getItem(STORAGE_KEY);
-          if (!stored) {
-            return;
-          }
-          const config = JSON.parse(stored);
-          for (const [name, value] of Object.entries(config)) {
-            const control = form.elements.namedItem(name);
-            if (!control || control.type === "file") continue;
-            if (name === "provider" && typeof value === "string") {
-              const hasCatalogProviders =
-                modelCatalog && typeof modelCatalog === "object" && Object.keys(modelCatalog).length > 0;
-              if (hasCatalogProviders && !Object.prototype.hasOwnProperty.call(modelCatalog, value)) {
-                continue;
-              }
-              ensureProviderRegistered(value, value);
-            }
-            if (control instanceof RadioNodeList) {
-              continue;
-            }
-            if (control.type === "checkbox") {
-              control.checked = Boolean(value);
-            } else if (control.tagName === "SELECT") {
-              control.value = value;
-            } else {
-              control.value = value;
-            }
-          }
-        } catch (error) {
-          console.warn("Unable to load stored configuration:", error);
-        }
-      }
-
-      function handleFormChange() {
-        buildCommand();
-        if (!isInitializing) {
-          saveConfig();
-        }
-      }
-
-      function copyCommand() {
-        const command = latestCommandText;
-        navigator.clipboard
-          .writeText(command)
-          .then(() => {
-            copyButton.textContent = "Copied!";
-            setTimeout(() => {
-              copyButton.textContent = "Copy Command";
-            }, 1500);
-          })
-          .catch(() => {
-            copyButton.textContent = "Copy failed";
-            setTimeout(() => {
-              copyButton.textContent = "Copy Command";
-            }, 1500);
-          });
-      }
-
-      function resetConfigToDefaults() {
-        try {
-          localStorage.removeItem(STORAGE_KEY);
-        } catch (error) {
-          console.warn("Unable to clear stored configuration:", error);
-        }
-
-        form.reset();
-        for (const [name, value] of Object.entries(defaultValues)) {
-          const control = form.elements.namedItem(name);
-          if (!control || control.type === "file" || control instanceof RadioNodeList) {
-            continue;
-          }
-          if (control.type === "checkbox") {
-            control.checked = Boolean(value);
-          } else {
-            control.value = value;
-          }
-        }
-
-        if (estimateCsvFileInput) {
-          estimateCsvFileInput.value = "";
-        }
-        sampledEstimateRows = null;
-        sampledEstimateSource = "";
-        setPromptEstimateStatus("Optional: sample a CSV to include real row text in the estimate.");
-
-        ensureProviderRegistered(defaultValues.provider, defaultValues.provider);
-        providerSelect.value = defaultValues.provider;
-        modelInput.value = "";
-        updatePlaceholdersForProvider(providerSelect.value);
-        updateModelOptionsForProvider(providerSelect.value);
-        updateProviderSpecificOptions(providerSelect.value);
-        handleFormChange();
-      }
-
-      modelCatalog = getWindowModelCatalog();
-      syncProvidersFromCatalog();
-      loadConfig();
-      applyInputHoverHelp();
-      updatePlaceholdersForProvider(providerSelect.value);
-      updateModelOptionsForProvider(providerSelect.value);
-      updateProviderSpecificOptions(providerSelect.value);
-
-      form.addEventListener("input", handleFormChange);
-      copyButton.addEventListener("click", copyCommand);
-      if (resetButton) {
-        resetButton.addEventListener("click", resetConfigToDefaults);
-      }
-      if (sampleCsvButton) {
-        sampleCsvButton.addEventListener("click", sampleCsvForPromptEstimate);
-      }
-      if (estimateCsvFileInput) {
-        estimateCsvFileInput.addEventListener("change", async () => {
-          sampledEstimateRows = null;
-          sampledEstimateSource = "";
-          setPromptEstimateStatus("Local CSV selected. Sampling now...");
-          await sampleCsvForPromptEstimate();
-        });
-      }
-      if (refreshModelsButton) {
-        refreshModelsButton.addEventListener("click", refreshModelCatalogFromScript);
-      }
-      providerSelect.addEventListener("change", () => {
-        modelInput.value = "";
-        updatePlaceholdersForProvider(providerSelect.value);
-        updateModelOptionsForProvider(providerSelect.value);
-        updateProviderSpecificOptions(providerSelect.value);
-        handleFormChange();
-      });
-      if (modelClearButton) {
-        modelClearButton.addEventListener("click", () => {
-          modelInput.value = "";
-          modelInput.focus();
-          handleFormChange();
-        });
-      }
-
-      isInitializing = false;
-      updateProviderSpecificOptions(providerSelect.value);
-      handleFormChange();
-    </script>
+    <script src="config_gui_shared.js"></script>
   </body>
 </html>

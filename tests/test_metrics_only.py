@@ -62,6 +62,31 @@ def _write_labels_csv(path: str, rows: list[dict[str, str]]) -> None:
 
 
 class MetricsOnlyTests(unittest.TestCase):
+    def test_metrics_only_honors_no_confusion_heatmap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                _write_output_csv(
+                    output_csv,
+                    [
+                        {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                        {"ID": "2", "prediction": "VERB", "truth": "VERB", "confidence": "0.6"},
+                    ],
+                )
+
+                with patch.object(ba, "generate_confusion_heatmap", return_value=None) as heatmap_mock:
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                            "--no-confusion_heatmap",
+                        ]
+                    )
+
+                self.assertEqual(exit_code, 0)
+                heatmap_mock.assert_not_called()
+
     def test_metrics_only_writes_run_metrics_without_truth_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):

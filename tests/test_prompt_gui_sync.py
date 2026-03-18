@@ -4,9 +4,8 @@ from pathlib import Path
 import benchmark_agent as ba
 
 
-def _load_gui_html() -> str:
-    gui_path = Path(__file__).resolve().parents[1] / "config_gui.html"
-    return gui_path.read_text(encoding="utf-8")
+def _load_file(name: str) -> str:
+    return (Path(__file__).resolve().parents[1] / name).read_text(encoding="utf-8")
 
 
 def _to_gui_instruction_template(text: str) -> str:
@@ -43,23 +42,23 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertNotIn(ba.LEGACY_NODE_MARKER_LEFT, system_text)
 
     def test_gui_includes_mandatory_system_append_text(self) -> None:
-        html = _load_gui_html()
+        shared_js = _load_file("config_gui_shared.js")
         self.assertIn(
             "Classify ONLY the text that is explicitly wrapped inside ${NODE_MARKER_LEFT} ${NODE_MARKER_RIGHT}",
-            html,
+            shared_js,
         )
-        self.assertIn("(the 'node' or its marked sub-span). ", html)
+        self.assertIn("(the 'node' or its marked sub-span). ", shared_js)
         self.assertIn(
             "Use the surrounding context as supporting evidence, but never change the focus away from the highlighted text. ",
-            html,
+            shared_js,
         )
         self.assertIn(
             'If you cannot determine the class/label for the node, return "unclassified".',
-            html,
+            shared_js,
         )
 
     def test_gui_instruction_lines_stay_in_sync_with_script(self) -> None:
-        html = _load_gui_html()
+        shared_js = _load_file("config_gui_shared.js")
         combinations = [
             ("standard", False, True),
             ("standard", False, False),
@@ -77,13 +76,19 @@ class PromptGuiSyncTests(unittest.TestCase):
                 expected_fragment = _to_gui_instruction_template(line)
                 self.assertIn(
                     expected_fragment,
-                    html,
+                    shared_js,
                     msg=(
-                        "GUI prompt preview is out of sync with benchmark_agent.py for "
+                        "Shared GUI prompt source is out of sync with benchmark_agent.py for "
                         f"layout={layout}, enable_cot={enable_cot}, include_explanation={include_explanation}. "
                         f"Missing: {expected_fragment!r}"
                     ),
                 )
+
+    def test_main_gui_references_shared_script(self) -> None:
+        html = _load_file("config_gui.html")
+        self.assertIn('<script src="config_gui_shared.js"></script>', html)
+        self.assertIn('data-gui-variant="mode-first"', html)
+        self.assertNotIn("Mode-First Preview", html)
 
 
 if __name__ == "__main__":

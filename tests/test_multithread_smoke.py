@@ -61,6 +61,7 @@ def _build_args(threads: int) -> argparse.Namespace:
         prompt_cache_key="shared-cache-key",
         requesty_auto_cache=True,
         threads=threads,
+        resume=False,
         reprompt_unclassified=False,
     )
 
@@ -232,6 +233,7 @@ class MultithreadSmokeTests(unittest.TestCase):
     def test_resume_keeps_order_and_processes_only_missing_ids(self) -> None:
         ids = ["id1", "id2", "id3", "id4", "id5"]
         args = _build_args(threads=3)
+        args.resume = True
         stub, call_records = self._make_stub(ids)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -312,6 +314,7 @@ class MultithreadSmokeTests(unittest.TestCase):
     def test_resume_reprompts_only_unclassified_rows(self) -> None:
         ids = ["id1", "id2", "id3"]
         args = _build_args(threads=1)
+        args.resume = True
         args.reprompt_unclassified = True
         call_ids: List[str] = []
 
@@ -379,6 +382,74 @@ class MultithreadSmokeTests(unittest.TestCase):
                 id2_rows = [row for row in rows if row.get("ID") == "id2"]
                 self.assertEqual(len(id2_rows), 1)
                 self.assertEqual(id2_rows[0].get("prediction"), "fixed_label")
+
+    def test_run_warns_about_unclassified_results_with_resume_hint(self) -> None:
+        ids = ["id1", "id2"]
+        args = _build_args(threads=1)
+
+        def stub_with_unclassified(*_args: Any, **kwargs: Any):
+            example = kwargs["example"]
+            label = "unclassified" if example.example_id == "id2" else "fixed_label"
+            prediction = ba.Prediction(
+                label=label,
+                explanation="explanation",
+                confidence=0.75,
+                raw_response="{}",
+                prompt_tokens=9,
+                completion_tokens=3,
+                total_tokens=12,
+                node_echo=example.node,
+                span_source=ba.SPAN_SOURCE_NODE,
+                shared_prefix_tokens_estimate=1200,
+                variable_prompt_tokens_estimate=40,
+            )
+            attempt_logs = [
+                {
+                    "attempt": 1,
+                    "timestamp": ba.utc_timestamp(),
+                    "status": "success",
+                    "response": {"usage_metadata": {}},
+                }
+            ]
+            return prediction, attempt_logs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                _write_input_csv(input_path, ids)
+
+                with (
+                    patch.object(ba, "classify_example", side_effect=stub_with_unclassified),
+                    patch.object(ba, "generate_confusion_heatmap", return_value=None),
+                    self.assertLogs(level="WARNING") as captured_logs,
+                ):
+                    _, _, _, halted = ba.process_dataset(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map={"id1": "fixed_label", "id2": "other_label"},
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --input input.csv --model gpt-4o-mini",
+                        run_command_argv=[
+                            "benchmark_agent.py",
+                            "--input",
+                            "input.csv",
+                            "--model",
+                            "gpt-4o-mini",
+                        ],
+                    )
+
+                self.assertFalse(halted)
+                combined_logs = "\n".join(captured_logs.output)
+                self.assertIn("1/2 prediction(s) labeled 'unclassified'", combined_logs)
+                self.assertIn("--resume --output", combined_logs)
+                self.assertIn("--unclassified", combined_logs)
 
 
 if __name__ == "__main__":

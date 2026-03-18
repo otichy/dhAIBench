@@ -51,6 +51,7 @@ def _build_args(
         flush_rows=flush_rows,
         flush_seconds=flush_seconds,
         threads=threads,
+        resume=False,
     )
 
 
@@ -229,6 +230,7 @@ class PromptLogNdjsonTests(unittest.TestCase):
                     return prediction, attempt_logs
 
                 args = _build_args(prompt_log_detail="full", flush_rows=1, flush_seconds=0.0)
+                args.resume = True
                 with patch.object(ba, "classify_example", side_effect=fake_classify_example):
                     ba.process_dataset(
                         connector=object(),
@@ -261,6 +263,80 @@ class PromptLogNdjsonTests(unittest.TestCase):
                     if isinstance(record, dict) and record.get("record_type") == "run_command"
                 ]
                 self.assertEqual(len(run_commands), 2)
+
+    def test_main_resume_recovers_input_from_log_and_keeps_cli_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "out.csv")
+                log_path = ba.build_artifact_path(output_path, ".log", ba.DEFAULT_LOGS_DIR)
+                _write_input(input_path, ["id1", "id2"])
+
+                with open(output_path, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle, delimiter=";")
+                    writer.writerow(["ID", "prediction"])
+                    writer.writerow(["id1", "existing"])
+
+                with open(log_path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "record_type": "run_command",
+                                "timestamp": ba.utc_timestamp(),
+                                "resume_mode": False,
+                                "reason": "initial_run",
+                                "command": "python benchmark_agent.py --input input.csv --model recovered-model",
+                                "argv": [
+                                    "benchmark_agent.py",
+                                    "--input",
+                                    input_path,
+                                    "--model",
+                                    "recovered-model",
+                                ],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+
+                captured: Dict[str, Any] = {}
+
+                def fake_process_dataset(**kwargs: Any):
+                    captured["input_path"] = kwargs["input_path"]
+                    captured["output_path"] = kwargs["output_path"]
+                    captured["args"] = kwargs["args"]
+                    return (0, 0, 0, False)
+
+                with (
+                    patch.object(
+                        ba,
+                        "parse_env_file",
+                        return_value={
+                            "OPENAI_API_KEY": "test-key",
+                            "OPENAI_BASE_URL": "https://api.example.test/v1",
+                        },
+                    ),
+                    patch.object(ba, "OpenAIConnector", return_value=object()),
+                    patch.object(ba, "process_dataset", side_effect=fake_process_dataset),
+                ):
+                    exit_code = ba.main(
+                        ["--resume", "--output", output_path, "--model", "override-model"]
+                    )
+
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(captured["input_path"], input_path)
+                self.assertEqual(captured["output_path"], output_path)
+                self.assertTrue(captured["args"].resume)
+                self.assertEqual(captured["args"].input, [input_path])
+                self.assertEqual(captured["args"].model, "override-model")
+
+    def test_main_resume_requires_existing_output_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                missing_output = os.path.join(tmpdir, "missing.csv")
+                with self.assertRaises(SystemExit) as raised:
+                    ba.main(["--resume", "--output", missing_output, "--model", "gpt-4o-mini"])
+                self.assertEqual(raised.exception.code, 2)
 
     def test_migrate_corrupted_legacy_json_array_recovers_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
