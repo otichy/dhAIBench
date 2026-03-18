@@ -1772,10 +1772,30 @@ html[data-theme="light"] .bar-track-label {
   gap: 0.45rem;
 }
 
+.radar-controls {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.radar-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.radar-control-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .radar-mode-toggle {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  margin-bottom: 0.55rem;
 }
 
 .radar-mode-btn {
@@ -2247,6 +2267,7 @@ tbody tr.selected-row {
 
   .source-actions,
   .leaderboard-tabs,
+  .radar-control-group,
   .radar-mode-toggle {
     flex-wrap: wrap;
   }

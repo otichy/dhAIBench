@@ -29,6 +29,7 @@ const state = {
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
   radarAxis: "task",
+  radarScale: "linear",
   hideNoAccuracy: false,
   theme: "dark",
   sourceMode: "none",
@@ -113,6 +114,7 @@ const PERCENT_METRIC_KEYS = new Set([
 const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
+const RADAR_SCALE_KEYS = new Set(["linear", "log"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "time_series", "table", "best_by_task", "radar"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
@@ -136,6 +138,11 @@ const METRIC_LABELS = {
 const RADAR_AXIS_LABELS = {
   task: "Task",
   tag: "Tag",
+};
+
+const RADAR_SCALE_LABELS = {
+  linear: "Linear",
+  log: "Log",
 };
 
 function supportsDirectoryPicker() {
@@ -1180,6 +1187,7 @@ function persistUiState() {
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
     radarAxis: state.radarAxis,
+    radarScale: state.radarScale,
     hideNoAccuracy: state.hideNoAccuracy,
     theme: state.theme,
   };
@@ -1243,6 +1251,9 @@ function restoreUiState() {
       }
       if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
         state.radarAxis = payload.radarAxis;
+      }
+      if (typeof payload.radarScale === "string" && RADAR_SCALE_KEYS.has(payload.radarScale)) {
+        state.radarScale = payload.radarScale;
       }
       if (typeof payload.hideNoAccuracy === "boolean") {
         state.hideNoAccuracy = payload.hideNoAccuracy;
@@ -1503,6 +1514,15 @@ function setRadarAxis(axis) {
     return;
   }
   state.radarAxis = axis;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setRadarScale(scale) {
+  if (!RADAR_SCALE_KEYS.has(scale) || state.radarScale === scale) {
+    return;
+  }
+  state.radarScale = scale;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -3896,7 +3916,20 @@ function buildRadarAxisDataset(runs, metricKey, axisMode) {
   };
 }
 
-function buildRadarSvg(tasks, seriesRows, metricKey) {
+function normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode) {
+  if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
+    return isLowerBetterMetric(metricKey) ? 1 : 0;
+  }
+
+  const maxValue = Math.max(1, toNonNegativeNumber(axisMax));
+  const clampedValue = Math.min(maxValue, toNonNegativeNumber(rawValue));
+  if (scaleMode === "log") {
+    return Math.max(0, Math.min(1, Math.log1p(clampedValue) / Math.log1p(maxValue)));
+  }
+  return Math.max(0, Math.min(1, clampedValue / maxValue));
+}
+
+function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode) {
   const ns = "http://www.w3.org/2000/svg";
   const size = 360;
   const center = size / 2;
@@ -3916,7 +3949,10 @@ function buildRadarSvg(tasks, seriesRows, metricKey) {
   svg.setAttribute("class", "radar-svg");
   svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "Radar chart comparing model metric profiles across selected dimensions");
+  svg.setAttribute(
+    "aria-label",
+    `Radar chart comparing model metric profiles across selected dimensions using ${scaleMode === "log" ? "logarithmic" : "linear"} scaling`
+  );
 
   const angleFor = (index) => -Math.PI / 2 + (2 * Math.PI * index) / tasks.length;
   const pointAt = (angle, dist) => [center + Math.cos(angle) * dist, center + Math.sin(angle) * dist];
@@ -3959,10 +3995,7 @@ function buildRadarSvg(tasks, seriesRows, metricKey) {
       .map((_, axisIndex) => {
         const rawValue = row.values[axisIndex];
         const axisMax = axisMaxima[axisIndex] || 1;
-        const normalized =
-          typeof rawValue === "number" && Number.isFinite(rawValue)
-            ? Math.max(0, Math.min(1, rawValue / axisMax))
-            : (isLowerBetterMetric(metricKey) ? 1 : 0);
+        const normalized = normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode);
         return pointAt(angleFor(axisIndex), radius * normalized);
       })
       .map((xy) => xy.join(","))
@@ -3982,6 +4015,7 @@ function renderRadarPanel(panel, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const axisMode = state.radarAxis;
+  const scaleMode = state.radarScale;
   const axisLabel = RADAR_AXIS_LABELS[axisMode] || "Axis";
   const header = document.createElement("h4");
   header.className = "token-radar-header";
@@ -3995,6 +4029,16 @@ function renderRadarPanel(panel, runs) {
     panel.appendChild(note);
   }
 
+  const controls = document.createElement("div");
+  controls.className = "radar-controls";
+
+  const axisControls = document.createElement("div");
+  axisControls.className = "radar-control-group";
+  const axisLabelEl = document.createElement("span");
+  axisLabelEl.className = "radar-control-label";
+  axisLabelEl.textContent = "Axes";
+  axisControls.appendChild(axisLabelEl);
+
   const toggleWrap = document.createElement("div");
   toggleWrap.className = "radar-mode-toggle";
   ["task", "tag"].forEach((mode) => {
@@ -4006,7 +4050,31 @@ function renderRadarPanel(panel, runs) {
     button.addEventListener("click", () => setRadarAxis(mode));
     toggleWrap.appendChild(button);
   });
-  panel.appendChild(toggleWrap);
+  axisControls.appendChild(toggleWrap);
+  controls.appendChild(axisControls);
+
+  const scaleControls = document.createElement("div");
+  scaleControls.className = "radar-control-group";
+  const scaleLabelEl = document.createElement("span");
+  scaleLabelEl.className = "radar-control-label";
+  scaleLabelEl.textContent = "Scale";
+  scaleControls.appendChild(scaleLabelEl);
+
+  const scaleToggle = document.createElement("div");
+  scaleToggle.className = "radar-mode-toggle";
+  ["linear", "log"].forEach((mode) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `radar-mode-btn${scaleMode === mode ? " active" : ""}`;
+    button.textContent = RADAR_SCALE_LABELS[mode];
+    button.setAttribute("aria-pressed", scaleMode === mode ? "true" : "false");
+    button.addEventListener("click", () => setRadarScale(mode));
+    scaleToggle.appendChild(button);
+  });
+  scaleControls.appendChild(scaleToggle);
+  controls.appendChild(scaleControls);
+
+  panel.appendChild(controls);
 
   const dataset = buildRadarAxisDataset(runs, metricKey, axisMode);
   if (dataset.axes.length < 3) {
@@ -4026,7 +4094,7 @@ function renderRadarPanel(panel, runs) {
 
   const wrap = document.createElement("div");
   wrap.className = "radar-wrap";
-  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey));
+  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey, scaleMode));
 
   const legend = document.createElement("div");
   legend.className = "radar-legend";
