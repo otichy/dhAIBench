@@ -1,5 +1,6 @@
 .env
 config_models.js
+/data/analysis/*
 /data/logs/*
 !/data/logs/.gitkeep
 /data/input/*
