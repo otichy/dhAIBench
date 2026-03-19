@@ -3798,16 +3798,24 @@ function computeRunSignalRows(runs) {
   return runs
     .map((run) => {
       const prompts = toNonNegativeNumber(getPromptCountForRun(run));
-      const avgInput = averageOrZero(toNonNegativeNumber(run.inputTokensTotal), prompts);
-      const avgCached = averageOrZero(toNonNegativeNumber(run.cachedInputTokensTotal ?? run.cachedTokens), prompts);
-      const avgOutput = averageOrZero(toNonNegativeNumber(run.outputTokensTotal), prompts);
-      const avgThinking = averageOrZero(toNonNegativeNumber(run.thinkingTokensTotal), prompts);
+      const inputTotal = toNonNegativeNumber(run.inputTokensTotal);
+      const cachedTotal = toNonNegativeNumber(run.cachedInputTokensTotal ?? run.cachedTokens);
+      const outputTotal = toNonNegativeNumber(run.outputTokensTotal);
+      const thinkingTotal = toNonNegativeNumber(run.thinkingTokensTotal);
+      const avgInput = averageOrZero(inputTotal, prompts);
+      const avgCached = averageOrZero(cachedTotal, prompts);
+      const avgOutput = averageOrZero(outputTotal, prompts);
+      const avgThinking = averageOrZero(thinkingTotal, prompts);
       return {
         run,
         model: run.model || "unknown",
         modelDisplay: getRunModelDisplayName(run),
         task: run.task || "unknown",
         prompts,
+        inputTotal,
+        cachedTotal,
+        outputTotal,
+        thinkingTotal,
         avgInput,
         avgCached,
         avgOutput,
@@ -4141,7 +4149,7 @@ function renderTokenSignals(runs) {
   stackPanel.className = "token-stack-panel";
   const stackHeader = document.createElement("h4");
   stackHeader.className = "token-stack-header";
-  stackHeader.textContent = "Average tokens per prompt by run (sorted by model name)";
+  stackHeader.textContent = "Average tokens per prompt by run";
   stackPanel.appendChild(stackHeader);
   appendTokenLegend(stackPanel);
 
@@ -4161,7 +4169,7 @@ function renderTokenSignals(runs) {
     modelLabel.title = row.modelDisplay;
     const meta = document.createElement("span");
     meta.className = "mono";
-    meta.textContent = `${row.task} | avg ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)}`;
+    meta.textContent = `${row.task} | avg/prompt ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)}`;
     head.appendChild(modelLabel);
     head.appendChild(meta);
     rowEl.appendChild(head);
@@ -4176,14 +4184,18 @@ function renderTokenSignals(runs) {
       seg.className = "token-segment";
       seg.style.width = `${percent}%`;
       seg.style.background = segment.color;
-      seg.title = `${segment.label}: ${formatNum(value, 2)} avg/prompt`;
+      const totalKey = segment.key.replace(/^avg/, "").toLowerCase();
+      const totalValue = row[`${totalKey}Total`];
+      seg.title = `${segment.label}: ${formatNum(totalValue, 0)} total | ${formatNum(value, 2)} avg/prompt`;
       track.appendChild(seg);
     });
     rowEl.appendChild(track);
 
     const values = document.createElement("div");
     values.className = "token-row-values mono";
-    values.textContent = `in ${formatNum(row.avgInput, 2)} | cached ${formatNum(row.avgCached, 2)} | out ${formatNum(row.avgOutput, 2)} | think ${formatNum(row.avgThinking, 2)}`;
+    values.textContent =
+      `totals in ${formatNum(row.inputTotal, 0)} | cached ${formatNum(row.cachedTotal, 0)} | ` +
+      `out ${formatNum(row.outputTotal, 0)} | think ${formatNum(row.thinkingTotal, 0)}`;
     rowEl.appendChild(values);
 
     rowEl.addEventListener("click", () => openRunModal(row.run));
