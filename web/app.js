@@ -2561,6 +2561,33 @@ function getConcatenatedModelLabel(runs) {
   return models.join(" + ");
 }
 
+function getTopRunForMetric(runs, metricKey) {
+  if (!Array.isArray(runs) || !runs.length) {
+    return null;
+  }
+  const rankedRuns = [...runs].sort((a, b) => {
+    const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
+    if (diff !== 0) {
+      return diff;
+    }
+    return parseRunTimestampMs(b) - parseRunTimestampMs(a);
+  });
+  return rankedRuns[0] || null;
+}
+
+function getTaskGroupedTopRunLabel(runs, metricKey) {
+  const topRun = getTopRunForMetric(runs, metricKey);
+  if (!topRun) {
+    return "";
+  }
+  const metricValue = getMetricValueForRun(topRun, metricKey);
+  if (metricValue === null || metricValue === undefined || Number.isNaN(metricValue)) {
+    return "";
+  }
+  const metricLabel = (METRIC_LABELS[metricKey] || metricKey).toLowerCase();
+  return `top: ${getRunModelDisplayName(topRun)} (${metricLabel}: ${formatMetric(metricKey, metricValue)})`;
+}
+
 function shouldShowLeaderboardContextLabels() {
   return state.leaderboardChartGroupBy === "task" ? state.selectedModels.length !== 1 : state.selectedTasks.length !== 1;
 }
@@ -2636,6 +2663,7 @@ function renderLeaderboardChart(container, runs) {
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const source = runs.filter((run) => getMetricValueForRun(run, metricKey) !== null);
   const metricIsLowerBetter = isLowerBetterMetric(metricKey);
+  const suppressTopMarkers = state.leaderboardChartGroupBy === "task";
   const showApproximateCi = supportsApproximateCi(metricKey);
   const showSelectedTagBadges = hasMultipleSelectedTags();
   const selectedTagColorMap = buildSelectedTagColorMap();
@@ -2743,13 +2771,15 @@ function renderLeaderboardChart(container, runs) {
     }
     return parseRunTimestampMs(b) - parseRunTimestampMs(a);
   });
-  const topRunPath = rankedRuns.length ? rankedRuns[0].filePath : null;
+  const topRunPath = !suppressTopMarkers && rankedRuns.length ? rankedRuns[0].filePath : null;
 
   if (groupedEntries.length) {
     const groupedSummary = document.createElement("p");
     groupedSummary.className = "leaderboard-ci-note muted";
     groupedSummary.textContent =
-      groupedEntries.length > 1
+      groupBy === "task"
+        ? `Grouped task rows show average ${metricLabel.toLowerCase()} with run distribution overlays and the top model label.`
+        : groupedEntries.length > 1
         ? "TOP is based on the best individual run; if hidden in a collapsed group, the marker appears on the group summary."
         : `Grouped rows include run distribution overlays${showApproximateCi ? " with CI" : ""}.`;
     container.appendChild(groupedSummary);
@@ -2780,7 +2810,7 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(entry.run),
           entry.ci,
-          grouping.getSingleRowContextLabel(entry.run),
+          groupBy === "task" ? getTaskGroupedTopRunLabel([entry.run], metricKey) : grouping.getSingleRowContextLabel(entry.run),
           { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap }
         )
       );
@@ -2823,10 +2853,10 @@ function renderLeaderboardChart(container, runs) {
         null,
         null,
         entry.ci,
-        grouping.getGroupContextLabel(entry.runs),
+        groupBy === "task" ? getTaskGroupedTopRunLabel(entry.runs, metricKey) : grouping.getGroupContextLabel(entry.runs),
         {
-          badges,
-          rowClass,
+          badges: suppressTopMarkers ? [] : badges,
+          rowClass: suppressTopMarkers ? "" : rowClass,
           trackBadges: groupTrackBadges,
           trackBadgeColorMap: selectedTagColorMap,
           distribution: distributionValues.length ? { values: distributionValues } : null,
@@ -2860,8 +2890,8 @@ function renderLeaderboardChart(container, runs) {
           runCi,
           grouping.getGroupedRunContextLabel(run),
           {
-            badges: runBadges,
-            rowClass: runRowClass,
+            badges: suppressTopMarkers ? [] : runBadges,
+            rowClass: suppressTopMarkers ? "" : runRowClass,
             trackBadges: runTrackBadges,
             trackBadgeColorMap: selectedTagColorMap,
           }
