@@ -1,5 +1,6 @@
 .env
 config_models.js
+/verification_tmp/*
 /data/analysis/*
 /data/logs/*
 !/data/logs/.gitkeep

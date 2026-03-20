@@ -4198,6 +4198,27 @@ def read_truth_labels_from_output(path: str) -> Tuple[Dict[str, Optional[str]], 
     return labels, has_truth_column
 
 
+def collect_unclassified_output_state(output_path: str) -> Tuple[set[str], bool]:
+    """Return remaining unclassified IDs and whether all of them match truth='unclassified'."""
+    _, predictions, _, _, _ = load_existing_output_predictions(output_path)
+    unclassified_ids = {
+        example_id
+        for example_id, prediction in predictions.items()
+        if is_unclassified_prediction_label(prediction.label)
+    }
+    if not unclassified_ids:
+        return set(), False
+
+    truth_by_id, has_truth_column = read_truth_labels_from_output(output_path)
+    if not has_truth_column:
+        return unclassified_ids, False
+
+    return unclassified_ids, all(
+        is_unclassified_prediction_label(truth_by_id.get(example_id))
+        for example_id in unclassified_ids
+    )
+
+
 def read_label_file(path: str) -> Dict[str, str]:
     """Load labels from a semicolon-delimited CSV file keyed by ID."""
     labels: Dict[str, str] = {}
@@ -7816,11 +7837,12 @@ def process_dataset(
             total_token_usage,
         )
 
-    log_unclassified_resume_hint(
-        output_path=output_path,
-        predictions=predictions,
-        reprompt_unclassified=reprompt_unclassified,
-    )
+    if not bool(getattr(args, "_suppress_unclassified_resume_hint", False)):
+        log_unclassified_resume_hint(
+            output_path=output_path,
+            predictions=predictions,
+            reprompt_unclassified=reprompt_unclassified,
+        )
 
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
 
@@ -7924,14 +7946,20 @@ def process_metrics_only_output(
     recovered_run_config = extract_run_config_from_log_records(log_records)
     if not recovered_run_config and existing_metrics_payload is not None:
         recovered_run_config = normalize_resume_run_config(existing_metrics_payload.get("run_config"))
-    run_model_details = extract_model_details_from_log_records(log_records) or build_run_model_details(
-        provider=getattr(args, "provider", "openai"),
-        requested_model=str(getattr(args, "model", "") or ""),
-        api_base_url=None,
-        api_key_var=getattr(args, "api_key_var", None),
-        api_base_var=getattr(args, "api_base_var", None),
-        gemini_cached_content=None,
-    )
+    run_model_details = extract_model_details_from_log_records(log_records)
+    if not run_model_details and existing_metrics_payload is not None:
+        existing_model_details = existing_metrics_payload.get("model_details")
+        if isinstance(existing_model_details, dict):
+            run_model_details = copy.deepcopy(existing_model_details)
+    if not run_model_details:
+        run_model_details = build_run_model_details(
+            provider=getattr(args, "provider", "openai"),
+            requested_model=str(getattr(args, "model", "") or ""),
+            api_base_url=None,
+            api_key_var=getattr(args, "api_key_var", None),
+            api_base_var=getattr(args, "api_base_var", None),
+            gemini_cached_content=None,
+        )
     cache_padding_summary = {
         "enabled": False,
         "target_shared_prefix_tokens": 0,
@@ -7942,6 +7970,9 @@ def process_metrics_only_output(
         "applied_padding_tokens_estimate": 0,
         "examples_with_padding_applied": 0,
     }
+    existing_cache_padding = (existing_metrics_payload or {}).get("cache_padding")
+    if isinstance(existing_cache_padding, dict):
+        cache_padding_summary.update(copy.deepcopy(existing_cache_padding))
 
     metrics_output = build_artifact_path(resolved_output, "_metrics.json", DEFAULT_METRICS_DIR)
     recovered_input_paths = normalize_resume_value(
@@ -7949,6 +7980,26 @@ def process_metrics_only_output(
         (recovered_run_config or {}).get("input"),
     )
     recovered_input_path = recovered_input_paths[0] if recovered_input_paths else ""
+    existing_task_name = str((existing_metrics_payload or {}).get("task_name") or "").strip()
+    existing_prompt_layout = str((existing_metrics_payload or {}).get("prompt_layout") or "").strip()
+    existing_task_description = str((existing_metrics_payload or {}).get("task_description") or "").strip()
+    existing_tags = normalize_metrics_tags_value((existing_metrics_payload or {}).get("tags"))
+    recovered_task_name = str((recovered_run_config or {}).get("task_name") or "").strip()
+    recovered_prompt_layout = str((recovered_run_config or {}).get("prompt_layout") or "").strip()
+    recovered_task_description = str((recovered_run_config or {}).get("task_description") or "").strip()
+    recovered_tags = normalize_metrics_tags_value((recovered_run_config or {}).get("tags"))
+    task_name_value = str(getattr(args, "task_name", "") or "").strip() or existing_task_name or recovered_task_name
+    prompt_layout_value = existing_prompt_layout or recovered_prompt_layout or None
+    task_description_value = (
+        str(getattr(args, "task_description", "") or "").strip()
+        or existing_task_description
+        or recovered_task_description
+    )
+    tags_value = (
+        normalize_metrics_tags_value(getattr(args, "tags", ""))
+        or existing_tags
+        or recovered_tags
+    )
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
         "run_config": copy.deepcopy(recovered_run_config) if recovered_run_config else {},
@@ -7963,10 +8014,10 @@ def process_metrics_only_output(
             or (recovered_run_config or {}).get("labels")
             or ""
         ).strip(),
-        "task_name": str(getattr(args, "task_name", "") or "").strip(),
-        "prompt_layout": None,
-        "task_description": str(getattr(args, "task_description", "") or "").strip(),
-        "tags": normalize_metrics_tags_value(getattr(args, "tags", "")),
+        "task_name": task_name_value,
+        "prompt_layout": prompt_layout_value,
+        "task_description": task_description_value,
+        "tags": tags_value,
         "cache_padding": cache_padding_summary,
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
@@ -8032,6 +8083,129 @@ def process_metrics_only_output(
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
 
+def process_dataset_with_unclassified_retries(
+    *,
+    connector: OpenAIConnector,
+    input_path: str,
+    output_path: str,
+    args: argparse.Namespace,
+    include_explanation: bool,
+    calibration_enabled: bool,
+    label_map: Optional[Dict[str, str]],
+    resolved_api_base_url: Optional[str],
+    validator_client: Optional[ValidatorClient],
+    before_example_hook: Optional[Callable[[], None]],
+    run_command: Optional[str] = None,
+    run_command_argv: Optional[List[str]] = None,
+) -> Tuple[int, int, int, bool]:
+    """Run one dataset, optionally auto-retrying remaining unclassified rows."""
+    auto_repeat_unclassified = bool(getattr(args, "repeat_unclassified", False))
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_reported_tokens = 0
+    previous_unclassified_ids: Optional[set[str]] = None
+    pass_index = 1
+
+    current_run_command = run_command
+    current_run_command_argv = copy.deepcopy(run_command_argv)
+    current_args = copy.deepcopy(args)
+
+    while True:
+        current_args._suppress_unclassified_resume_hint = auto_repeat_unclassified
+        current_args._run_config_snapshot = build_run_config_snapshot(current_args)
+
+        if auto_repeat_unclassified and pass_index > 1:
+            logging.info(
+                "Auto-repeat-unclassified pass %d: resuming %s with --unclassified.",
+                pass_index,
+                output_path,
+            )
+
+        (
+            prompt_tokens,
+            completion_tokens,
+            reported_tokens,
+            halted_by_quota,
+        ) = process_dataset(
+            connector=connector,
+            input_path=input_path,
+            output_path=output_path,
+            args=current_args,
+            include_explanation=include_explanation,
+            calibration_enabled=calibration_enabled,
+            label_map=label_map,
+            resolved_api_base_url=resolved_api_base_url,
+            validator_client=validator_client,
+            before_example_hook=before_example_hook,
+            run_command=current_run_command,
+            run_command_argv=current_run_command_argv,
+        )
+        total_prompt_tokens += prompt_tokens
+        total_completion_tokens += completion_tokens
+        total_reported_tokens += reported_tokens
+
+        if halted_by_quota or not auto_repeat_unclassified:
+            return (
+                total_prompt_tokens,
+                total_completion_tokens,
+                total_reported_tokens,
+                halted_by_quota,
+            )
+
+        remaining_unclassified_ids, all_truths_unclassified = collect_unclassified_output_state(
+            output_path
+        )
+        remaining_count = len(remaining_unclassified_ids)
+        if remaining_count <= 0:
+            if pass_index > 1:
+                logging.info(
+                    "Auto-repeat-unclassified resolved all remaining unclassified predictions after %d pass(es).",
+                    pass_index,
+                )
+            return total_prompt_tokens, total_completion_tokens, total_reported_tokens, False
+
+        if all_truths_unclassified:
+            logging.info(
+                "Auto-repeat-unclassified stopping after pass %d: %d remaining prediction(s) already have truth='unclassified'.",
+                pass_index,
+                remaining_count,
+            )
+            return total_prompt_tokens, total_completion_tokens, total_reported_tokens, False
+
+        if (
+            previous_unclassified_ids is not None
+            and remaining_unclassified_ids == previous_unclassified_ids
+        ):
+            logging.info(
+                "Auto-repeat-unclassified stopping after pass %d: repeated run ended with the same %d unclassified ID(s) as the previous pass.",
+                pass_index,
+                remaining_count,
+            )
+            return total_prompt_tokens, total_completion_tokens, total_reported_tokens, False
+
+        logging.info(
+            "Auto-repeat-unclassified continuing after pass %d: %d prediction(s) remain unclassified; launching an internal --resume --unclassified pass.",
+            pass_index,
+            remaining_count,
+        )
+        previous_unclassified_ids = set(remaining_unclassified_ids)
+        pass_index += 1
+
+        current_args = copy.deepcopy(args)
+        current_args.resume = True
+        current_args.reprompt_unclassified = True
+        current_run_command_argv = [
+            "python",
+            "benchmark_agent.py",
+            "--resume",
+            "--output",
+            output_path,
+            "--unclassified",
+            "--repeat_unclassified",
+        ]
+        current_run_command = render_cli_command(current_run_command_argv)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark an OpenAI model on a linguistic classification dataset."
@@ -8089,6 +8263,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Resume helper: with --resume, remove rows whose prediction is "
             "'unclassified' from the existing output and re-prompt only those IDs. "
             "Alias --unlcassified is accepted for compatibility."
+        ),
+    )
+    parser.add_argument(
+        "--repeat_unclassified",
+        "--repeat-unclassified",
+        dest="repeat_unclassified",
+        action="store_true",
+        help=(
+            "After each pass, automatically rerun the remaining 'unclassified' rows in "
+            "--resume --unclassified mode until none remain, the same IDs remain "
+            "unclassified twice in a row, or every remaining unclassified row also has "
+            "truth='unclassified'."
         ),
     )
     parser.add_argument("--model", help="Model name (e.g., gpt-4-turbo).")
@@ -8660,6 +8846,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         if args.reprompt_unclassified:
             logging.warning("--unclassified is ignored in --metrics_only mode.")
+        if args.repeat_unclassified:
+            logging.warning("--repeat_unclassified is ignored in --metrics_only mode.")
         if args.create_gemini_cache:
             logging.warning("--create_gemini_cache is ignored in --metrics_only mode.")
 
@@ -8845,6 +9033,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         if args.reprompt_unclassified:
             logging.warning("--unclassified is ignored in --timeout_probe mode.")
+        if args.repeat_unclassified:
+            logging.warning("--repeat_unclassified is ignored in --timeout_probe mode.")
         if args.calibration:
             logging.warning("--calibration is ignored in --timeout_probe mode.")
         if args.validator_cmd:
@@ -9137,7 +9327,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 timestamp_tag,
                 multiple_inputs,
             )
-            prompt_tokens, completion_tokens, reported_tokens, halted_by_quota = process_dataset(
+            (
+                prompt_tokens,
+                completion_tokens,
+                reported_tokens,
+                halted_by_quota,
+            ) = process_dataset_with_unclassified_retries(
                 connector=connector,
                 input_path=resolved_input,
                 output_path=output_path,

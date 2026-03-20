@@ -251,6 +251,111 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertEqual(payload.get("task_description"), "Custom task description")
                 self.assertEqual(payload.get("tags"), "alpha;beta")
 
+    def test_metrics_only_preserves_existing_metadata_while_backfilling_token_totals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
+                log_path = ba.resolve_prompt_log_path_for_output(output_csv)
+                _write_output_csv(
+                    output_csv,
+                    [
+                        {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                    ],
+                )
+
+                with open(metrics_json, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "task_name": "Existing Task",
+                            "prompt_layout": "standard",
+                            "task_description": "Existing description",
+                            "tags": "alpha;beta",
+                            "cache_padding": {
+                                "enabled": True,
+                                "target_shared_prefix_tokens": 1200,
+                                "calibration_shared_prefix_tokens": 1100,
+                                "target_prompt_tokens": 1200,
+                                "calibration_prompt_tokens": 1100,
+                                "calibration_example_id": "ex-1",
+                                "applied_padding_tokens_estimate": 100,
+                                "examples_with_padding_applied": 3,
+                            },
+                            "model_details": {
+                                "provider": "openai",
+                                "model_requested": "gpt-5-mini",
+                                "model_for_requests": "gpt-5-mini",
+                                "api_base_url": "",
+                                "chat_completions_endpoint": "",
+                            },
+                        },
+                        handle,
+                        indent=2,
+                    )
+
+                with open(log_path, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "record_type": "example_result",
+                                "example_id": "1",
+                                "attempts": [
+                                    {
+                                        "attempt": 1,
+                                        "status": "success",
+                                        "response": {
+                                            "usage_metadata": {
+                                                "usage": {
+                                                    "prompt_tokens": 10,
+                                                    "completion_tokens": 6,
+                                                    "total_tokens": 16,
+                                                    "prompt_tokens_details": {"cached_tokens": 2},
+                                                    "completion_tokens_details": {"reasoning_tokens": 4},
+                                                }
+                                            }
+                                        },
+                                    }
+                                ],
+                            }
+                        )
+                    )
+                    handle.write("\n")
+
+                with patch.object(ba, "generate_confusion_heatmap", return_value=None):
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                        ]
+                    )
+
+                self.assertEqual(exit_code, 0)
+                with open(metrics_json, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                self.assertEqual(payload.get("task_name"), "Existing Task")
+                self.assertEqual(payload.get("prompt_layout"), "standard")
+                self.assertEqual(payload.get("task_description"), "Existing description")
+                self.assertEqual(payload.get("tags"), "alpha;beta")
+                self.assertEqual(payload.get("cache_padding", {}).get("target_shared_prefix_tokens"), 1200)
+                self.assertEqual(payload.get("model_details", {}).get("model_requested"), "gpt-5-mini")
+                self.assertEqual(
+                    payload.get("token_usage_totals"),
+                    {
+                        "attempts_total": 1,
+                        "attempts_with_token_usage": 1,
+                        "attempts_with_output_tokens": 1,
+                        "attempts_with_cached_input_tokens": 1,
+                        "attempts_with_thinking_tokens": 1,
+                        "input_tokens_total": 10,
+                        "cached_input_tokens_total": 2,
+                        "non_cached_input_tokens_total": 8,
+                        "output_tokens_total": 6,
+                        "thinking_tokens_total": 4,
+                        "output_tokens_definition": "total_tokens - prompt_tokens (or completion_tokens + thinking_tokens fallback)",
+                    },
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

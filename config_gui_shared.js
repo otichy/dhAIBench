@@ -87,6 +87,7 @@
     validator_debug: false,
     metrics_only: false,
     reprompt_unclassified: false,
+    repeat_unclassified: false,
     calibration: true,
     confusion_heatmap: true,
     task_name: "",
@@ -194,6 +195,8 @@
       "Optional output CSV file path, or output directory when running multiple inputs. Resume mode requires an existing output CSV here.",
     reprompt_unclassified:
       "When checked, emits --unclassified so --resume re-prompts only rows currently labeled unclassified.",
+    repeat_unclassified:
+      "When checked, emits --repeat_unclassified so the run keeps retrying remaining unclassified rows until they are resolved, stabilize across two passes, or all match truth='unclassified'.",
     api_key_var: "Environment variable that stores the API key or access token used for this run.",
     api_base_var: "Environment variable containing the provider base URL.",
     calibration: "Generate a calibration plot from model confidence scores.",
@@ -1395,6 +1398,9 @@
     if (data.get("reprompt_unclassified")) {
       command.pushFlag("--unclassified");
     }
+    if (data.get("repeat_unclassified")) {
+      command.pushFlag("--repeat_unclassified");
+    }
 
     const taskName = data.get("task_name")?.toString().trim() ?? "";
     if (taskName) {
@@ -1627,6 +1633,9 @@
       if (data.get("reprompt_unclassified")) {
         command.pushFlag("--unclassified");
       }
+      if (data.get("repeat_unclassified")) {
+        command.pushFlag("--repeat_unclassified");
+      }
     } else {
       const inputRaw = (data.get("input_path") ?? "").toString();
       const inputPaths = inputRaw
@@ -1646,6 +1655,9 @@
         command.pushFlag("--model", shellQuote(modelValue));
         if (outputValue) {
           command.pushFlag("--output", shellQuote(outputValue));
+        }
+        if (data.get("repeat_unclassified")) {
+          command.pushFlag("--repeat_unclassified");
         }
       }
 

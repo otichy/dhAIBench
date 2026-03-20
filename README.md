@@ -73,6 +73,7 @@ On POSIX shells replace the PowerShell line-continuation (`^`) with `\`.
 When `--output` is omitted, each input file produces `data/output/<input_basename>__<provider>__<model>__<timestamp>.csv`. Metrics JSON and chart artifacts are written to `data/metrics`, and prompt/session logs are written to `data/logs`. Set `DHAIBENCH_DATA_ROOT` to override the root directory (for example `/data` in containers).
 When `--output` points to an existing CSV file, the run resumes: rows whose `ID` is already present in that file are skipped, and processing continues from the first missing `ID` in input order.
 Use `--unclassified` (alias `--unlcassified`) together with resume mode to automatically remove existing rows whose `prediction` is `unclassified` and re-prompt only those IDs.
+Use `--repeat_unclassified` to keep chaining those internal `--resume --unclassified` passes until no unclassified predictions remain, the same IDs stay unclassified twice in a row, or all remaining unclassified predictions already have `truth=unclassified`.
 When `--threads` is greater than `1`, classification requests run concurrently but output rows are still written in input order, so resume behavior remains unchanged.
 
 ### Metrics-Only Recompute (No API Calls)
@@ -287,6 +288,7 @@ python benchmark_agent.py ^
 - `--task_description`: optional free-text task description stored in metrics metadata.
 - `--tags`: optional metrics tags (semicolon-delimited string recommended) stored in metrics metadata.
 - `--unclassified` (alias `--unlcassified`): in resume mode, automatically re-prompt IDs currently labeled `unclassified`.
+- `--repeat_unclassified`: automatically keep retrying remaining `unclassified` predictions across internal resume passes until they are resolved or stop changing.
 - `--validator_cmd`: enable validation and retries driven by the validator.
 - `--validator_args`: extra validator args as a single quoted string (supports quoting).
 - `--validator_timeout`: per-request validator timeout (seconds).

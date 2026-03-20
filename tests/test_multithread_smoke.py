@@ -63,6 +63,7 @@ def _build_args(threads: int) -> argparse.Namespace:
         threads=threads,
         resume=False,
         reprompt_unclassified=False,
+        repeat_unclassified=False,
     )
 
 
@@ -450,6 +451,203 @@ class MultithreadSmokeTests(unittest.TestCase):
                 self.assertIn("1/2 prediction(s) labeled 'unclassified'", combined_logs)
                 self.assertIn("--resume --output", combined_logs)
                 self.assertIn("--unclassified", combined_logs)
+
+    def test_auto_repeat_unclassified_retries_until_resolved(self) -> None:
+        ids = ["id1", "id2"]
+        args = _build_args(threads=1)
+        args.repeat_unclassified = True
+        call_ids: List[str] = []
+        attempts_by_id: Dict[str, int] = {}
+
+        def stub_auto_resolve(*_args: Any, **kwargs: Any):
+            example = kwargs["example"]
+            call_ids.append(example.example_id)
+            attempt_number = attempts_by_id.get(example.example_id, 0) + 1
+            attempts_by_id[example.example_id] = attempt_number
+            label = "fixed_label"
+            if example.example_id == "id2" and attempt_number == 1:
+                label = "unclassified"
+            prediction = ba.Prediction(
+                label=label,
+                explanation="explanation",
+                confidence=0.75,
+                raw_response="{}",
+                prompt_tokens=9,
+                completion_tokens=3,
+                total_tokens=12,
+                node_echo=example.node,
+                span_source=ba.SPAN_SOURCE_NODE,
+                shared_prefix_tokens_estimate=1200,
+                variable_prompt_tokens_estimate=40,
+            )
+            attempt_logs = [
+                {
+                    "attempt": 1,
+                    "timestamp": ba.utc_timestamp(),
+                    "status": "success",
+                    "response": {"usage_metadata": {}},
+                }
+            ]
+            return prediction, attempt_logs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                _write_input_csv(input_path, ids)
+
+                with patch.object(ba, "classify_example", side_effect=stub_auto_resolve):
+                    _, _, _, halted = ba.process_dataset_with_unclassified_retries(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --repeat_unclassified",
+                        run_command_argv=["benchmark_agent.py", "--repeat_unclassified"],
+                    )
+
+                self.assertFalse(halted)
+                self.assertEqual(call_ids, ["id1", "id2", "id2"])
+
+                with open(output_path, "r", encoding="utf-8-sig", newline="") as handle:
+                    rows = list(csv.DictReader(handle, delimiter=";"))
+                self.assertEqual(len(rows), 2)
+                id2_rows = [row for row in rows if row.get("ID") == "id2"]
+                self.assertEqual(len(id2_rows), 1)
+                self.assertEqual(id2_rows[0].get("prediction"), "fixed_label")
+
+    def test_auto_repeat_unclassified_stops_when_same_ids_remain(self) -> None:
+        ids = ["id1", "id2"]
+        args = _build_args(threads=1)
+        args.repeat_unclassified = True
+        call_ids: List[str] = []
+
+        def stub_same_unclassified(*_args: Any, **kwargs: Any):
+            example = kwargs["example"]
+            call_ids.append(example.example_id)
+            label = "unclassified" if example.example_id == "id2" else "fixed_label"
+            prediction = ba.Prediction(
+                label=label,
+                explanation="explanation",
+                confidence=0.75,
+                raw_response="{}",
+                prompt_tokens=9,
+                completion_tokens=3,
+                total_tokens=12,
+                node_echo=example.node,
+                span_source=ba.SPAN_SOURCE_NODE,
+                shared_prefix_tokens_estimate=1200,
+                variable_prompt_tokens_estimate=40,
+            )
+            attempt_logs = [
+                {
+                    "attempt": 1,
+                    "timestamp": ba.utc_timestamp(),
+                    "status": "success",
+                    "response": {"usage_metadata": {}},
+                }
+            ]
+            return prediction, attempt_logs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                _write_input_csv(input_path, ids)
+
+                with (
+                    patch.object(ba, "classify_example", side_effect=stub_same_unclassified),
+                    self.assertLogs(level="INFO") as captured_logs,
+                ):
+                    _, _, _, halted = ba.process_dataset_with_unclassified_retries(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map=None,
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --repeat_unclassified",
+                        run_command_argv=["benchmark_agent.py", "--repeat_unclassified"],
+                    )
+
+                self.assertFalse(halted)
+                self.assertEqual(call_ids, ["id1", "id2", "id2"])
+                combined_logs = "\n".join(captured_logs.output)
+                self.assertIn("same 1 unclassified ID(s) as the previous pass", combined_logs)
+
+    def test_auto_repeat_unclassified_stops_when_truth_is_unclassified(self) -> None:
+        ids = ["id1", "id2"]
+        args = _build_args(threads=1)
+        args.repeat_unclassified = True
+        call_ids: List[str] = []
+
+        def stub_truth_unclassified(*_args: Any, **kwargs: Any):
+            example = kwargs["example"]
+            call_ids.append(example.example_id)
+            label = "unclassified" if example.example_id == "id2" else "fixed_label"
+            prediction = ba.Prediction(
+                label=label,
+                explanation="explanation",
+                confidence=0.75,
+                raw_response="{}",
+                prompt_tokens=9,
+                completion_tokens=3,
+                total_tokens=12,
+                node_echo=example.node,
+                span_source=ba.SPAN_SOURCE_NODE,
+                shared_prefix_tokens_estimate=1200,
+                variable_prompt_tokens_estimate=40,
+            )
+            attempt_logs = [
+                {
+                    "attempt": 1,
+                    "timestamp": ba.utc_timestamp(),
+                    "status": "success",
+                    "response": {"usage_metadata": {}},
+                }
+            ]
+            return prediction, attempt_logs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                input_path = os.path.join(tmpdir, "input.csv")
+                output_path = os.path.join(tmpdir, "output.csv")
+                _write_input_csv(input_path, ids)
+
+                with (
+                    patch.object(ba, "classify_example", side_effect=stub_truth_unclassified),
+                    patch.object(ba, "generate_confusion_heatmap", return_value=None),
+                    self.assertLogs(level="INFO") as captured_logs,
+                ):
+                    _, _, _, halted = ba.process_dataset_with_unclassified_retries(
+                        connector=_DummyConnector(),
+                        input_path=input_path,
+                        output_path=output_path,
+                        args=args,
+                        include_explanation=True,
+                        calibration_enabled=False,
+                        label_map={"id1": "fixed_label", "id2": "unclassified"},
+                        resolved_api_base_url=None,
+                        validator_client=None,
+                        before_example_hook=None,
+                        run_command="python benchmark_agent.py --repeat_unclassified",
+                        run_command_argv=["benchmark_agent.py", "--repeat_unclassified"],
+                    )
+
+                self.assertFalse(halted)
+                self.assertEqual(call_ids, ["id1", "id2"])
+                combined_logs = "\n".join(captured_logs.output)
+                self.assertIn("already have truth='unclassified'", combined_logs)
 
 
 if __name__ == "__main__":

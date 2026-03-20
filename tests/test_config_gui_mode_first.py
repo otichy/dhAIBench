@@ -70,6 +70,16 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         )
         self.assertIn('<div data-mode-visible="resume">', html)
 
+    def test_repeat_unclassified_switch_is_available_in_run_and_resume(self) -> None:
+        html = _load_main_gui_html()
+        self.assertEqual(
+            html.count(
+                "Auto-repeat remaining <code>unclassified</code> rows until resolved or stable"
+            ),
+            1,
+        )
+        self.assertIn('<div data-mode-visible="run resume">', html)
+
     def test_model_provider_layout_matches_provider_first_refresh_right(self) -> None:
         html = _load_main_gui_html()
         self.assertIn('class="model-provider-layout"', html)
