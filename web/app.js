@@ -4039,6 +4039,14 @@ function normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode) {
   return linearRatio;
 }
 
+function buildRadarSeriesTitle(row, tasks, metricKey) {
+  const lines = [`Model: ${row.model}`, `Avg: ${formatMetric(metricKey, row.mean)}`];
+  tasks.forEach((task, index) => {
+    lines.push(`${task}: ${formatMetric(metricKey, row.values[index])}`);
+  });
+  return lines.join("\n");
+}
+
 function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = seriesRows.length) {
   const ns = "http://www.w3.org/2000/svg";
   const size = 360;
@@ -4115,6 +4123,10 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = ser
     polygon.setAttribute("points", points);
     polygon.setAttribute("fill", color);
     polygon.setAttribute("stroke", color);
+    polygon.setAttribute("aria-label", buildRadarSeriesTitle(row, tasks, metricKey));
+    const title = document.createElementNS(ns, "title");
+    title.textContent = buildRadarSeriesTitle(row, tasks, metricKey);
+    polygon.appendChild(title);
     svg.appendChild(polygon);
   });
 
