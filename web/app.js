@@ -1578,18 +1578,27 @@ function resetTimeSeriesZoom() {
   renderLeaderboard(state.filtered);
 }
 
-function syncTaskSelectValue() {
-  const selected = new Set(state.selectedTasks);
-  Array.from(els.taskSelect.options).forEach((option) => {
-    option.selected = selected.has(option.value);
+function syncMultiSelectValue(selectElement, selectedValues) {
+  if (!selectElement) {
+    return;
+  }
+
+  const selected = new Set(Array.isArray(selectedValues) ? selectedValues : []);
+  const allSelected = selected.size === 0;
+  Array.from(selectElement.options).forEach((option) => {
+    const isSelected = allSelected ? option.value === "ALL" : selected.has(option.value);
+    option.selected = isSelected;
+    option.classList.toggle("is-selected", isSelected);
   });
+  selectElement.classList.toggle("has-active-selection", !allSelected);
+}
+
+function syncTaskSelectValue() {
+  syncMultiSelectValue(els.taskSelect, state.selectedTasks);
 }
 
 function syncModelSelectValue() {
-  const selected = new Set(state.selectedModels);
-  Array.from(els.modelSelect.options).forEach((option) => {
-    option.selected = selected.has(option.value);
-  });
+  syncMultiSelectValue(els.modelSelect, state.selectedModels);
 }
 
 function getSelectValues(selectElement) {
@@ -2280,14 +2289,7 @@ function renderTaskControls() {
   syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task));
 
   state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
-  if (isAllSelected(state.selectedTasks)) {
-    const first = els.taskSelect.querySelector('option[value="ALL"]');
-    if (first) {
-      first.selected = true;
-    }
-  } else {
-    syncTaskSelectValue();
-  }
+  syncTaskSelectValue();
 
   renderChoiceChipList(els.taskChipList, state.tasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
 }
@@ -2297,14 +2299,7 @@ function renderModelControls() {
   syncSelectOptions(els.modelSelect, models, (model) => (model === "ALL" ? "All Models" : model));
 
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
-  if (isAllSelected(state.selectedModels)) {
-    const first = els.modelSelect.querySelector('option[value="ALL"]');
-    if (first) {
-      first.selected = true;
-    }
-  } else {
-    syncModelSelectValue();
-  }
+  syncModelSelectValue();
 
   renderChoiceChipList(els.modelChipList, state.models, state.selectedModels, "All Models", toggleModelSelection);
 }
@@ -2537,6 +2532,10 @@ function getConcatenatedTaskLabel(runs) {
   return tasks.join(" + ");
 }
 
+function shouldShowLeaderboardTaskLabels() {
+  return state.selectedTasks.length !== 1;
+}
+
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
@@ -2586,7 +2585,7 @@ function renderLeaderboardChart(container, runs) {
     directionNote.textContent = `${metricLabel} is lower-is-better.`;
     container.appendChild(directionNote);
   }
-  const hasMultipleTasks = new Set(runs.map((run) => asTrimmedString(run.task)).filter(Boolean)).size > 1;
+  const showTaskLabels = shouldShowLeaderboardTaskLabels();
 
   const groups = new Map();
   source.forEach((run) => {
@@ -2686,7 +2685,7 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(entry.run),
           entry.ci,
-          hasMultipleTasks || showSelectedTagBadges ? entry.run.task : "",
+          showTaskLabels ? entry.run.task : "",
           { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap }
         )
       );
@@ -2729,7 +2728,7 @@ function renderLeaderboardChart(container, runs) {
         null,
         null,
         entry.ci,
-        hasMultipleTasks || showSelectedTagBadges ? getConcatenatedTaskLabel(entry.runs) : "",
+        showTaskLabels ? getConcatenatedTaskLabel(entry.runs) : "",
         {
           badges,
           rowClass,
@@ -2764,7 +2763,7 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(run),
           runCi,
-          hasMultipleTasks || showSelectedTagBadges ? run.task : "",
+          showTaskLabels ? run.task : "",
           {
             badges: runBadges,
             rowClass: runRowClass,

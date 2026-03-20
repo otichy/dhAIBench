@@ -466,6 +466,24 @@ select[multiple] {
   padding: 0.35rem;
 }
 
+select[multiple]:not(:focus).has-active-selection {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+select[multiple] option {
+  border-radius: 9px;
+  margin: 0.08rem 0;
+  padding: 0.42rem 0.58rem;
+}
+
+select[multiple] option:checked,
+select[multiple] option.is-selected {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-hover));
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .btn {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--paper-strong) 94%, white 6%), color-mix(in srgb, var(--surface-soft) 92%, black 8%));
