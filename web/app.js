@@ -29,6 +29,7 @@ const state = {
   leaderboardTableSortKey: null,
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
+  leaderboardChartGroupBy: "model",
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
   radarAxis: "task",
@@ -43,7 +44,7 @@ const state = {
   warnings: [],
   activeDirectoryHandle: null,
   activeFiles: [],
-  expandedLeaderboardModels: new Set(),
+  expandedLeaderboardGroups: new Set(),
   mobileSidebarOpen: false,
   desktopSidebarCollapsed: false,
   activeTimeRangeEditor: null,
@@ -97,6 +98,7 @@ const els = {
   kpiBestAccuracy: document.querySelector("#kpiBestAccuracy"),
   kpiRequests: document.querySelector("#kpiRequests"),
   leaderboardTabs: document.querySelector("#leaderboardTabs"),
+  leaderboardGroupSwitch: document.querySelector("#leaderboardGroupSwitch"),
   leaderboardChart: document.querySelector("#leaderboardChart"),
   tokenChart: document.querySelector("#tokenChart"),
   runsTableBody: document.querySelector("#runsTableBody"),
@@ -122,6 +124,7 @@ const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "time_series", "table", "best_by_task", "radar"]);
+const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["model", "task"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
   "macro_f1",
@@ -149,6 +152,11 @@ const RADAR_AXIS_LABELS = {
 const RADAR_SCALE_LABELS = {
   linear: "Linear",
   contrast: "Contrast",
+};
+
+const LEADERBOARD_CHART_GROUP_BY_LABELS = {
+  model: "Model",
+  task: "Task",
 };
 
 function supportsDirectoryPicker() {
@@ -1190,6 +1198,7 @@ function persistUiState() {
     leaderboardTableSortKey: state.leaderboardTableSortKey,
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
+    leaderboardChartGroupBy: state.leaderboardChartGroupBy,
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
     radarAxis: state.radarAxis,
@@ -1249,6 +1258,12 @@ function restoreUiState() {
       if (typeof payload.leaderboardTab === "string" && LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
         state.leaderboardTab = payload.leaderboardTab;
       }
+      if (
+        typeof payload.leaderboardChartGroupBy === "string" &&
+        LEADERBOARD_CHART_GROUP_BY_KEYS.has(payload.leaderboardChartGroupBy)
+      ) {
+        state.leaderboardChartGroupBy = payload.leaderboardChartGroupBy;
+      }
       if (typeof payload.timeSeriesShowLabels === "boolean") {
         state.timeSeriesShowLabels = payload.timeSeriesShowLabels;
       }
@@ -1281,6 +1296,7 @@ function applyUiStateToControls() {
   els.sortSelect.value = state.sortBy;
   els.hideNoAccuracy.checked = state.hideNoAccuracy;
   els.themeToggle.checked = state.theme === "dark";
+  renderLeaderboardGroupSwitch();
 }
 
 function applyTheme() {
@@ -2538,14 +2554,64 @@ function getConcatenatedTaskLabel(runs) {
   return tasks.join(" + ");
 }
 
-function shouldShowLeaderboardTaskLabels() {
-  return state.selectedTasks.length !== 1;
+function getConcatenatedModelLabel(runs) {
+  const models = [...new Set((runs || []).map((run) => getRunModelDisplayName(run)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  return models.join(" + ");
+}
+
+function shouldShowLeaderboardContextLabels() {
+  return state.leaderboardChartGroupBy === "task" ? state.selectedModels.length !== 1 : state.selectedTasks.length !== 1;
+}
+
+function setLeaderboardChartGroupBy(groupBy) {
+  if (!LEADERBOARD_CHART_GROUP_BY_KEYS.has(groupBy) || state.leaderboardChartGroupBy === groupBy) {
+    return;
+  }
+  state.leaderboardChartGroupBy = groupBy;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function renderLeaderboardGroupSwitch() {
+  if (!els.leaderboardGroupSwitch) {
+    return;
+  }
+  els.leaderboardGroupSwitch.hidden = state.leaderboardTab !== "chart";
+  els.leaderboardGroupSwitch.innerHTML = "";
+  if (state.leaderboardTab !== "chart") {
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = "leaderboard-group-switch-label";
+  label.textContent = "Group Chart By";
+  els.leaderboardGroupSwitch.appendChild(label);
+
+  const toggle = document.createElement("div");
+  toggle.className = "leaderboard-group-toggle";
+  toggle.setAttribute("role", "group");
+  toggle.setAttribute("aria-label", "Leaderboard chart grouping");
+
+  Object.entries(LEADERBOARD_CHART_GROUP_BY_LABELS).forEach(([key, text]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `leaderboard-group-btn${state.leaderboardChartGroupBy === key ? " active" : ""}`;
+    button.textContent = text;
+    button.setAttribute("aria-pressed", state.leaderboardChartGroupBy === key ? "true" : "false");
+    button.addEventListener("click", () => setLeaderboardChartGroupBy(key));
+    toggle.appendChild(button);
+  });
+
+  els.leaderboardGroupSwitch.appendChild(toggle);
 }
 
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
   }
+  renderLeaderboardGroupSwitch();
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
@@ -2573,6 +2639,33 @@ function renderLeaderboardChart(container, runs) {
   const showApproximateCi = supportsApproximateCi(metricKey);
   const showSelectedTagBadges = hasMultipleSelectedTags();
   const selectedTagColorMap = buildSelectedTagColorMap();
+  const groupBy = state.leaderboardChartGroupBy;
+  const showContextLabels = shouldShowLeaderboardContextLabels();
+  const grouping =
+    groupBy === "task"
+      ? {
+          key: "task",
+          getGroupValue: (run) => asTrimmedString(run.task) || "Unknown task",
+          getGroupLabel: (run) => asTrimmedString(run.task) || "Unknown task",
+          getSingleRowLabel: (run) => asTrimmedString(run.task) || "Unknown task",
+          getSingleRowContextLabel: (run) => (showContextLabels ? getRunModelDisplayName(run) : ""),
+          getGroupedRunLabel: (run) => getRunModelDisplayName(run),
+          getGroupedRunContextLabel: () => "",
+          getGroupContextLabel: (groupRuns) => (showContextLabels ? getConcatenatedModelLabel(groupRuns) : ""),
+        }
+      : {
+          key: "model",
+          getGroupValue: (run) => run.model,
+          getGroupLabel: (run, groupRuns) => {
+            const sharedSuffix = getSharedRunEffortSuffix(groupRuns);
+            return sharedSuffix ? `${run.model} ${sharedSuffix}` : run.model;
+          },
+          getSingleRowLabel: (run) => getRunModelDisplayName(run),
+          getSingleRowContextLabel: (run) => (showContextLabels ? run.task : ""),
+          getGroupedRunLabel: (run) => getRunModelDisplayName(run),
+          getGroupedRunContextLabel: (run) => (showContextLabels ? run.task : ""),
+          getGroupContextLabel: (groupRuns) => (showContextLabels ? getConcatenatedTaskLabel(groupRuns) : ""),
+        };
 
   if (!source.length) {
     container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
@@ -2591,19 +2684,17 @@ function renderLeaderboardChart(container, runs) {
     directionNote.textContent = `${metricLabel} is lower-is-better.`;
     container.appendChild(directionNote);
   }
-  const showTaskLabels = shouldShowLeaderboardTaskLabels();
-
   const groups = new Map();
   source.forEach((run) => {
-    const key = run.model;
+    const key = grouping.getGroupValue(run);
     if (!groups.has(key)) {
       groups.set(key, []);
     }
     groups.get(key).push(run);
   });
 
-  const entries = Array.from(groups.entries()).map(([model, modelRuns]) => {
-    const runsSorted = [...modelRuns].sort((a, b) => {
+  const entries = Array.from(groups.entries()).map(([groupValue, groupRuns]) => {
+    const runsSorted = [...groupRuns].sort((a, b) => {
       const diff = compareMetricNumbers(getMetricValueForRun(a, metricKey), getMetricValueForRun(b, metricKey), metricKey);
       if (diff !== 0) {
         return diff;
@@ -2616,7 +2707,7 @@ function renderLeaderboardChart(container, runs) {
       return {
         type: "run",
         key: run.filePath,
-        label: getRunModelDisplayName(run),
+        label: grouping.getSingleRowLabel(run),
         metricValue: typeof metricValue === "number" && Number.isFinite(metricValue) ? metricValue : 0,
         ci: showApproximateCi ? getRunMetricConfidence(run, metricKey) : null,
         run,
@@ -2625,12 +2716,10 @@ function renderLeaderboardChart(container, runs) {
 
     const avgMetric =
       runsSorted.reduce((sum, run) => sum + (getMetricValueForRun(run, metricKey) ?? 0), 0) / runsSorted.length;
-    const sharedSuffix = getSharedRunEffortSuffix(runsSorted);
-    const groupLabel = sharedSuffix ? `${model} ${sharedSuffix}` : model;
     return {
       type: "group",
-      key: model,
-      label: groupLabel,
+      key: `${grouping.key}:${groupValue}`,
+      label: grouping.getGroupLabel(runsSorted[0], runsSorted),
       metricValue: avgMetric,
       avgMetric,
       ci: showApproximateCi ? getMeanMetricConfidence(runsSorted, metricKey, avgMetric) : null,
@@ -2691,7 +2780,7 @@ function renderLeaderboardChart(container, runs) {
           null,
           () => openRunModal(entry.run),
           entry.ci,
-          showTaskLabels ? entry.run.task : "",
+          grouping.getSingleRowContextLabel(entry.run),
           { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap }
         )
       );
@@ -2700,13 +2789,13 @@ function renderLeaderboardChart(container, runs) {
 
     const details = document.createElement("details");
     details.className = "leaderboard-group";
-    details.dataset.modelKey = entry.key;
-    details.open = state.expandedLeaderboardModels.has(entry.key);
+    details.dataset.groupKey = entry.key;
+    details.open = state.expandedLeaderboardGroups.has(entry.key);
     details.addEventListener("toggle", () => {
       if (details.open) {
-        state.expandedLeaderboardModels.add(entry.key);
+        state.expandedLeaderboardGroups.add(entry.key);
       } else {
-        state.expandedLeaderboardModels.delete(entry.key);
+        state.expandedLeaderboardGroups.delete(entry.key);
       }
     });
 
@@ -2734,7 +2823,7 @@ function renderLeaderboardChart(container, runs) {
         null,
         null,
         entry.ci,
-        showTaskLabels ? getConcatenatedTaskLabel(entry.runs) : "",
+        grouping.getGroupContextLabel(entry.runs),
         {
           badges,
           rowClass,
@@ -2762,14 +2851,14 @@ function renderLeaderboardChart(container, runs) {
       }
       runsWrap.appendChild(
         createBarRow(
-          getRunModelDisplayName(run),
+          grouping.getGroupedRunLabel(run),
           getMetricValueForRun(run, metricKey) ?? 0,
           maxScore,
           (value, ci) => `${formatMetric(metricKey, value)}${formatCiRange(ci)}`,
           null,
           () => openRunModal(run),
           runCi,
-          showTaskLabels ? run.task : "",
+          grouping.getGroupedRunContextLabel(run),
           {
             badges: runBadges,
             rowClass: runRowClass,
@@ -4689,7 +4778,7 @@ function applyLoadedResult(result) {
   state.sourceMode = result.mode;
   state.sourceFileCount = result.fileCount;
   state.warnings = result.warnings;
-  state.expandedLeaderboardModels = new Set();
+  state.expandedLeaderboardGroups = new Set();
   state.tokenSignalsVisibleCount = TOKEN_SIGNAL_PAGE_SIZE;
   state.bestByTaskVisibleCount = BEST_BY_TASK_PAGE_SIZE;
   state.radarVisibleSeriesCount = RADAR_MODEL_PAGE_SIZE;

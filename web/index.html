@@ -193,16 +193,19 @@
         <article class="card card-wide">
           <div class="leaderboard-head">
             <h3>Leaderboard</h3>
-            <label class="field leaderboard-metric-field">
-              <span>Main Metric</span>
-              <select id="sortSelect">
-                <option value="accuracy">Accuracy</option>
-                <option value="macro_f1">Macro F1</option>
-                <option value="macro_precision">Macro Precision</option>
-                <option value="macro_recall">Macro Recall</option>
-                <option value="calibration_ece">Calibration ECE</option>
-              </select>
-            </label>
+            <div class="leaderboard-controls">
+              <label class="field leaderboard-metric-field">
+                <span>Main Metric</span>
+                <select id="sortSelect">
+                  <option value="accuracy">Accuracy</option>
+                  <option value="macro_f1">Macro F1</option>
+                  <option value="macro_precision">Macro Precision</option>
+                  <option value="macro_recall">Macro Recall</option>
+                  <option value="calibration_ece">Calibration ECE</option>
+                </select>
+              </label>
+              <div id="leaderboardGroupSwitch" class="leaderboard-group-switch"></div>
+            </div>
           </div>
           <div id="leaderboardTabs" class="leaderboard-tabs"></div>
           <div id="leaderboardChart" class="chart"></div>
