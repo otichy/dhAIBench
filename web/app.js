@@ -6,6 +6,9 @@ const DESKTOP_LAYOUT_BREAKPOINT = 1100;
 const MOBILE_LAYOUT_BREAKPOINT = 900;
 const DESKTOP_SIDEBAR_EXPANDED_WIDTH = 420;
 const DESKTOP_SIDEBAR_COLLAPSED_WIDTH = 78;
+const TOKEN_SIGNAL_PAGE_SIZE = 60;
+const BEST_BY_TASK_PAGE_SIZE = 16;
+const RADAR_MODEL_PAGE_SIZE = 8;
 const mobileLayoutQuery =
   typeof window.matchMedia === "function"
     ? window.matchMedia(`(max-width: ${MOBILE_LAYOUT_BREAKPOINT}px)`)
@@ -30,6 +33,9 @@ const state = {
   timeSeriesViewport: null,
   radarAxis: "task",
   radarScale: "linear",
+  tokenSignalsVisibleCount: TOKEN_SIGNAL_PAGE_SIZE,
+  bestByTaskVisibleCount: BEST_BY_TASK_PAGE_SIZE,
+  radarVisibleSeriesCount: RADAR_MODEL_PAGE_SIZE,
   hideNoAccuracy: false,
   theme: "dark",
   sourceMode: "none",
@@ -3720,8 +3726,7 @@ function renderBestByTask(container, runs) {
   });
 
   const items = Object.values(bestByTask)
-    .sort((a, b) => compareMetricNumbers(a.metricValue, b.metricValue, metricKey))
-    .slice(0, 16);
+    .sort((a, b) => compareMetricNumbers(a.metricValue, b.metricValue, metricKey));
 
   if (!items.length) {
     container.innerHTML = `<p class="muted">No task-level ${metricLabel.toLowerCase()} data found.</p>`;
@@ -3739,7 +3744,8 @@ function renderBestByTask(container, runs) {
     metricKey,
     items.map((item) => item.metricValue)
   );
-  items.forEach(({ run, metricValue }) => {
+  const visibleCount = getVisibleItemCount("bestByTaskVisibleCount", BEST_BY_TASK_PAGE_SIZE, items.length);
+  items.slice(0, visibleCount).forEach(({ run, metricValue }) => {
     container.appendChild(
       createBarRow(
         `${run.task} / ${getRunModelDisplayName(run)}`,
@@ -3754,6 +3760,25 @@ function renderBestByTask(container, runs) {
       )
     );
   });
+
+  if (items.length > visibleCount) {
+    container.appendChild(
+      createMetricRevealControls({
+        shownCount: visibleCount,
+        totalCount: items.length,
+        pageSize: BEST_BY_TASK_PAGE_SIZE,
+        itemLabel: "task-leading runs",
+        onShowMore: () => {
+          state.bestByTaskVisibleCount = Math.min(items.length, visibleCount + BEST_BY_TASK_PAGE_SIZE);
+          renderLeaderboard(state.filtered);
+        },
+        onShowAll: () => {
+          state.bestByTaskVisibleCount = items.length;
+          renderLeaderboard(state.filtered);
+        },
+      })
+    );
+  }
 }
 
 function getPromptCountForRun(run) {
@@ -3791,6 +3816,67 @@ function toNonNegativeNumber(value) {
 
 function averageOrZero(total, denominator) {
   return denominator > 0 ? total / denominator : 0;
+}
+
+function getVisibleItemCount(stateKey, defaultCount, totalCount) {
+  if (!Number.isFinite(totalCount) || totalCount <= 0) {
+    return 0;
+  }
+  const rawValue = Number(state[stateKey]);
+  const fallback = Number.isFinite(defaultCount) && defaultCount > 0 ? Math.floor(defaultCount) : totalCount;
+  const normalized = Number.isFinite(rawValue) && rawValue > 0 ? Math.floor(rawValue) : fallback;
+  return Math.max(1, Math.min(totalCount, normalized));
+}
+
+function createMetricRevealControls({
+  shownCount,
+  totalCount,
+  pageSize,
+  itemLabel = "items",
+  summaryText = "",
+  onShowMore,
+  onShowAll,
+}) {
+  if (!Number.isFinite(totalCount) || totalCount <= shownCount) {
+    return null;
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "metric-reveal-controls";
+
+  const note = document.createElement("p");
+  note.className = "muted";
+  note.textContent =
+    summaryText || `Showing ${formatNum(shownCount, 0)} of ${formatNum(totalCount, 0)} ${itemLabel}.`;
+  controls.appendChild(note);
+
+  const actions = document.createElement("div");
+  actions.className = "metric-reveal-actions";
+
+  const remaining = totalCount - shownCount;
+  if (typeof onShowMore === "function" && remaining > 0) {
+    const loadMoreBtn = document.createElement("button");
+    loadMoreBtn.type = "button";
+    loadMoreBtn.className = "btn metric-reveal-btn";
+    loadMoreBtn.textContent = `Load ${formatNum(Math.min(pageSize, remaining), 0)} more`;
+    loadMoreBtn.addEventListener("click", onShowMore);
+    actions.appendChild(loadMoreBtn);
+  }
+
+  if (typeof onShowAll === "function") {
+    const showAllBtn = document.createElement("button");
+    showAllBtn.type = "button";
+    showAllBtn.className = "btn metric-reveal-btn";
+    showAllBtn.textContent = "Show all";
+    showAllBtn.addEventListener("click", onShowAll);
+    actions.appendChild(showAllBtn);
+  }
+
+  if (actions.childElementCount) {
+    controls.appendChild(actions);
+  }
+
+  return controls;
 }
 
 function computeRunSignalRows(runs) {
@@ -3859,6 +3945,14 @@ function truncateAxisLabel(label, maxChars = 14) {
   return `${text.slice(0, maxChars - 1)}...`;
 }
 
+function getRadarSeriesColor(index, totalCount) {
+  if (totalCount <= RADAR_COLORS.length) {
+    return RADAR_COLORS[index % RADAR_COLORS.length];
+  }
+  const hue = Math.round((210 + (index * 360) / totalCount) % 360);
+  return `hsl(${hue}, 76%, 60%)`;
+}
+
 function buildRadarAxisDataset(runs, metricKey, axisMode) {
   const axesCandidates = (
     axisMode === "tag"
@@ -3909,21 +4003,24 @@ function buildRadarAxisDataset(runs, metricKey, axisMode) {
     row.values.some((value) => typeof value === "number" && Number.isFinite(value))
   );
 
-  const useAutoTopModels = state.selectedModels.length === 0 && populatedSeries.length > 8;
-  const visibleSeries = useAutoTopModels
-    ? [...populatedSeries]
-        .sort((a, b) => {
-          const diff = compareMetricNumbers(a.mean, b.mean, metricKey);
-          if (diff !== 0) return diff;
-          return a.model.localeCompare(b.model);
-        })
-        .slice(0, 8)
+  const usesAutoRanking = state.selectedModels.length === 0;
+  const orderedSeries = usesAutoRanking
+    ? [...populatedSeries].sort((a, b) => {
+        const diff = compareMetricNumbers(a.mean, b.mean, metricKey);
+        if (diff !== 0) return diff;
+        return a.model.localeCompare(b.model);
+      })
     : populatedSeries;
+  const visibleCount = usesAutoRanking
+    ? getVisibleItemCount("radarVisibleSeriesCount", RADAR_MODEL_PAGE_SIZE, orderedSeries.length)
+    : orderedSeries.length;
+  const visibleSeries = orderedSeries.slice(0, visibleCount);
 
   return {
     axes: axesCandidates,
     series: visibleSeries,
-    hiddenModelCount: Math.max(0, populatedSeries.length - visibleSeries.length),
+    hiddenModelCount: Math.max(0, orderedSeries.length - visibleSeries.length),
+    totalSeriesCount: orderedSeries.length,
   };
 }
 
@@ -3942,7 +4039,7 @@ function normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode) {
   return linearRatio;
 }
 
-function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode) {
+function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = seriesRows.length) {
   const ns = "http://www.w3.org/2000/svg";
   const size = 360;
   const center = size / 2;
@@ -4003,7 +4100,7 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode) {
   });
 
   seriesRows.forEach((row, idx) => {
-    const color = RADAR_COLORS[idx % RADAR_COLORS.length];
+    const color = getRadarSeriesColor(idx, colorCount);
     const points = tasks
       .map((_, axisIndex) => {
         const rawValue = row.values[axisIndex];
@@ -4107,7 +4204,7 @@ function renderRadarPanel(panel, runs) {
 
   const wrap = document.createElement("div");
   wrap.className = "radar-wrap";
-  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey, scaleMode));
+  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey, scaleMode, dataset.totalSeriesCount));
 
   const legend = document.createElement("div");
   legend.className = "radar-legend";
@@ -4116,7 +4213,7 @@ function renderRadarPanel(panel, runs) {
     entry.className = "radar-legend-row";
     const line = document.createElement("span");
     line.className = "radar-legend-line";
-    line.style.background = RADAR_COLORS[idx % RADAR_COLORS.length];
+    line.style.background = getRadarSeriesColor(idx, dataset.totalSeriesCount);
     const text = document.createElement("span");
     text.className = "mono";
     text.textContent = `${row.model} | avg ${row.mean == null ? "N/A" : formatMetric(metricKey, row.mean)}`;
@@ -4127,10 +4224,26 @@ function renderRadarPanel(panel, runs) {
   wrap.appendChild(legend);
 
   if (dataset.hiddenModelCount > 0) {
-    const note = document.createElement("p");
-    note.className = "muted";
-    note.textContent = `Radar shows best ${dataset.series.length} models by average ${metricLabel.toLowerCase()}.`;
-    wrap.appendChild(note);
+    wrap.appendChild(
+      createMetricRevealControls({
+        shownCount: dataset.series.length,
+        totalCount: dataset.totalSeriesCount,
+        pageSize: RADAR_MODEL_PAGE_SIZE,
+        itemLabel: "models",
+        summaryText: `Showing ${formatNum(dataset.series.length, 0)} of ${formatNum(dataset.totalSeriesCount, 0)} models ranked by average ${metricLabel.toLowerCase()}.`,
+        onShowMore: () => {
+          state.radarVisibleSeriesCount = Math.min(
+            dataset.totalSeriesCount,
+            dataset.series.length + RADAR_MODEL_PAGE_SIZE
+          );
+          renderLeaderboard(state.filtered);
+        },
+        onShowAll: () => {
+          state.radarVisibleSeriesCount = dataset.totalSeriesCount;
+          renderLeaderboard(state.filtered);
+        },
+      })
+    );
   }
 
   panel.appendChild(wrap);
@@ -4154,8 +4267,8 @@ function renderTokenSignals(runs) {
 
   const rowsWrap = document.createElement("div");
   rowsWrap.className = "token-rows";
-  const rowLimit = 60;
-  runRows.slice(0, rowLimit).forEach((row) => {
+  const visibleCount = getVisibleItemCount("tokenSignalsVisibleCount", TOKEN_SIGNAL_PAGE_SIZE, runRows.length);
+  runRows.slice(0, visibleCount).forEach((row) => {
     const rowEl = document.createElement("div");
     rowEl.className = "token-row";
     rowEl.style.cursor = "pointer";
@@ -4202,11 +4315,23 @@ function renderTokenSignals(runs) {
   });
   stackPanel.appendChild(rowsWrap);
 
-  if (runRows.length > rowLimit) {
-    const note = document.createElement("p");
-    note.className = "muted";
-    note.textContent = `Showing ${rowLimit} of ${runRows.length} runs. Narrow filters to focus.`;
-    stackPanel.appendChild(note);
+  if (runRows.length > visibleCount) {
+    stackPanel.appendChild(
+      createMetricRevealControls({
+        shownCount: visibleCount,
+        totalCount: runRows.length,
+        pageSize: TOKEN_SIGNAL_PAGE_SIZE,
+        itemLabel: "runs",
+        onShowMore: () => {
+          state.tokenSignalsVisibleCount = Math.min(runRows.length, visibleCount + TOKEN_SIGNAL_PAGE_SIZE);
+          renderTokenSignals(state.filtered);
+        },
+        onShowAll: () => {
+          state.tokenSignalsVisibleCount = runRows.length;
+          renderTokenSignals(state.filtered);
+        },
+      })
+    );
   }
   els.tokenChart.appendChild(stackPanel);
 }
@@ -4542,6 +4667,9 @@ function applyLoadedResult(result) {
   state.sourceFileCount = result.fileCount;
   state.warnings = result.warnings;
   state.expandedLeaderboardModels = new Set();
+  state.tokenSignalsVisibleCount = TOKEN_SIGNAL_PAGE_SIZE;
+  state.bestByTaskVisibleCount = BEST_BY_TASK_PAGE_SIZE;
+  state.radarVisibleSeriesCount = RADAR_MODEL_PAGE_SIZE;
 
   state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);

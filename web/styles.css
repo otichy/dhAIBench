@@ -1785,6 +1785,28 @@ html[data-theme="light"] .bar-track-label {
   color: var(--muted);
 }
 
+.metric-reveal-controls {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.metric-reveal-controls p {
+  margin: 0;
+}
+
+.metric-reveal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.metric-reveal-btn {
+  padding: 0.38rem 0.74rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+}
+
 .radar-wrap {
   display: grid;
   gap: 0.45rem;
