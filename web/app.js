@@ -4047,6 +4047,15 @@ function buildRadarSeriesTitle(row, tasks, metricKey) {
   return lines.join("\n");
 }
 
+function setActiveRadarSeries(svg, activePolygon) {
+  const polygons = svg.querySelectorAll(".radar-series");
+  const hasActive = Boolean(activePolygon);
+  svg.classList.toggle("radar-hover-active", hasActive);
+  polygons.forEach((polygon) => {
+    polygon.classList.toggle("radar-series-active", polygon === activePolygon);
+  });
+}
+
 function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = seriesRows.length) {
   const ns = "http://www.w3.org/2000/svg";
   const size = 360;
@@ -4127,6 +4136,8 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = ser
     const title = document.createElementNS(ns, "title");
     title.textContent = buildRadarSeriesTitle(row, tasks, metricKey);
     polygon.appendChild(title);
+    polygon.addEventListener("mouseenter", () => setActiveRadarSeries(svg, polygon));
+    polygon.addEventListener("mouseleave", () => setActiveRadarSeries(svg, null));
     svg.appendChild(polygon);
   });
 

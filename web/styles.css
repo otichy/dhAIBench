@@ -1885,12 +1885,12 @@ html[data-theme="light"] .bar-track-label {
   cursor: pointer;
 }
 
-.radar-svg:hover .radar-series {
+.radar-svg.radar-hover-active .radar-series {
   fill-opacity: 0.025;
   stroke-opacity: 0.18;
 }
 
-.radar-series:hover {
+.radar-svg.radar-hover-active .radar-series.radar-series-active {
   fill-opacity: 0.34;
   stroke-opacity: 1;
   stroke-width: 4;
