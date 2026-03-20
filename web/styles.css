@@ -1880,20 +1880,20 @@ html[data-theme="light"] .bar-track-label {
 .radar-series {
   fill-opacity: 0.12;
   stroke-width: 2;
-  stroke-opacity: 0.72;
+  stroke-opacity: 0.68;
   transition: fill-opacity 140ms ease, stroke-opacity 140ms ease, stroke-width 140ms ease;
   cursor: pointer;
 }
 
 .radar-svg:hover .radar-series {
-  fill-opacity: 0.06;
-  stroke-opacity: 0.38;
+  fill-opacity: 0.025;
+  stroke-opacity: 0.18;
 }
 
 .radar-series:hover {
-  fill-opacity: 0.2;
+  fill-opacity: 0.34;
   stroke-opacity: 1;
-  stroke-width: 3.5;
+  stroke-width: 4;
 }
 
 .radar-legend {
