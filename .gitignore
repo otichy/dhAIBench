@@ -13,3 +13,5 @@ config_models.js
 /data/backup
 __pycache__/
 *.py[cod]
+/.ipynb_checkpoints
+/web/.ipynb_checkpoints
