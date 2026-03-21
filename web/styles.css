@@ -1185,7 +1185,7 @@ select[multiple] option.is-selected {
   flex-wrap: wrap;
   gap: 0.4rem 0.9rem;
   align-items: baseline;
-  justify-content: flex-start;
+  justify-content: flex-end;
   margin-bottom: 0.55rem;
 }
 
