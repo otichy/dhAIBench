@@ -13,6 +13,10 @@ const mobileLayoutQuery =
   typeof window.matchMedia === "function"
     ? window.matchMedia(`(max-width: ${MOBILE_LAYOUT_BREAKPOINT}px)`)
     : null;
+const pricingApi =
+  window.DHAIBenchPricing && typeof window.DHAIBenchPricing.estimateRunCost === "function"
+    ? window.DHAIBenchPricing
+    : null;
 
 const state = {
   runs: [],
@@ -729,6 +733,7 @@ function normalizeRun(filePath, payload) {
   const runStem = metricFileToRunStem(fileName);
   const nameParts = parseRunName(fileName);
   const modelDetails = payload.model_details || {};
+  const runConfig = payload.run_config && typeof payload.run_config === "object" ? payload.run_config : {};
   const usage = payload.usage_metadata_summary || {};
   const tokenTotals = payload.token_usage_totals || {};
   const controls = payload.request_control_summary || {};
@@ -755,11 +760,11 @@ function normalizeRun(filePath, payload) {
   const calibrationEce = toPct(safeNum(calibrationMetrics.ece));
   const calibrationMce = toPct(safeNum(calibrationMetrics.mce));
   const calibrationBrierScore = safeNum(calibrationMetrics.brier_score);
-
-  return {
+  const normalizedRun = {
     filePath: normalizedFilePath,
     fileName,
     runStem,
+    fileModelSlug: nameParts.model || "",
     task: taskNameFromMetrics || nameParts.task,
     taskDescription,
     tags,
@@ -800,6 +805,7 @@ function normalizeRun(filePath, payload) {
     overallTimeHuman: payload.overall_time_human || null,
     firstPromptTimestamp: payload.first_prompt_timestamp || null,
     lastPromptTimestamp: payload.last_prompt_timestamp || null,
+    serviceTier: asTrimmedString(runConfig.service_tier) || "standard",
     truthLabelCount: safeNum(payload.truth_label_count),
     labelMetricsAvailable:
       payload.label_metrics_available !== false &&
@@ -811,11 +817,19 @@ function normalizeRun(filePath, payload) {
       ),
     labelMetricsReason: payload.label_metrics_reason || null,
     modelDetails,
+    runConfig,
     usageSummary: usage,
     tokenUsageTotals: tokenTotals,
     controlSummary: controls,
     rawMetrics: payload,
   };
+
+  const pricing = pricingApi ? pricingApi.estimateRunCost(window.MODEL_PRICING_CATALOG, normalizedRun) : null;
+  normalizedRun.pricing = pricing;
+  normalizedRun.estimatedCostUsd = pricing && safeNum(pricing.estimatedCostUsd) !== null ? pricing.estimatedCostUsd : null;
+  normalizedRun.pricingStatus = pricing ? pricing.statusLabel : "catalog unavailable";
+
+  return normalizedRun;
 }
 
 function parseMetricText(filePath, rawText, warnings) {
@@ -2176,6 +2190,22 @@ function formatNum(value, digits = 2) {
     maximumFractionDigits: digits,
     minimumFractionDigits: 0,
   });
+}
+
+function formatUsd(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "N/A";
+  }
+  const numeric = Number(value);
+  const digits =
+    numeric >= 100 ? 2 :
+    numeric >= 1 ? 3 :
+    numeric >= 0.01 ? 4 :
+    6;
+  return `$${numeric.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  })}`;
 }
 
 function formatTs(ts) {
@@ -4010,6 +4040,7 @@ function computeRunSignalRows(runs) {
       const avgCached = averageOrZero(cachedTotal, prompts);
       const avgOutput = averageOrZero(outputTotal, prompts);
       const avgThinking = averageOrZero(thinkingTotal, prompts);
+      const estimatedCostUsd = safeNum(run.estimatedCostUsd);
       return {
         run,
         model: run.model || "unknown",
@@ -4025,6 +4056,7 @@ function computeRunSignalRows(runs) {
         avgOutput,
         avgThinking,
         totalAvg: avgInput + avgCached + avgOutput + avgThinking,
+        estimatedCostUsd,
       };
     })
     .sort((a, b) => {
@@ -4423,7 +4455,9 @@ function renderTokenSignals(runs) {
     modelLabel.title = row.modelDisplay;
     const meta = document.createElement("span");
     meta.className = "mono";
-    meta.textContent = `${row.task} | avg/prompt ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)}`;
+    meta.textContent =
+      `${row.task} | avg/prompt ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)} | ` +
+      `est. ${formatUsd(row.estimatedCostUsd)}`;
     head.appendChild(modelLabel);
     head.appendChild(meta);
     rowEl.appendChild(head);
@@ -4672,6 +4706,9 @@ function fillRunDetailsContent(run) {
     ["Non-Cached Input Tokens", formatNum(run.nonCachedInputTokensTotal, 0)],
     ["Output Tokens (total)", formatNum(run.outputTokensTotal, 0)],
     ["Thinking Tokens (total)", formatNum(run.thinkingTokensTotal, 0)],
+    ["Estimated Cost", formatUsd(run.estimatedCostUsd)],
+    ["Pricing Tier", run.serviceTier || "standard"],
+    ["Pricing Status", run.pricingStatus || "N/A"],
     ["Runtime (seconds)", formatNum(run.overallTimeSeconds, 2)],
     ["Runtime (human)", run.overallTimeHuman],
     ["First Prompt", formatTs(run.firstPromptTimestamp)],
