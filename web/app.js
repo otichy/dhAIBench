@@ -744,7 +744,7 @@ function normalizeRun(filePath, payload) {
       ? payload.calibration_metrics
       : {};
   const ts = payload.first_prompt_timestamp || nameParts.timestamp;
-  const taskNameFromMetrics = asTrimmedString(payload.task_name);
+  const taskNameFromMetrics = asTrimmedString(runConfig.task_name) || asTrimmedString(payload.task_name);
   const providerFromMetrics =
     asTrimmedString(modelDetails.provider) || asTrimmedString(payload.provider);
   const modelFromMetrics =
@@ -752,8 +752,11 @@ function normalizeRun(filePath, payload) {
     asTrimmedString(modelDetails.model_for_requests) ||
     asTrimmedString(payload.model_requested) ||
     asTrimmedString(payload.model);
-  const taskDescription = asTrimmedString(payload.task_description);
-  const tags = parseSemicolonTags(payload.tags);
+  const taskDescription =
+    asTrimmedString(runConfig.task_description) || asTrimmedString(payload.task_description);
+  const tags = parseSemicolonTags(runConfig.tags).length
+    ? parseSemicolonTags(runConfig.tags)
+    : parseSemicolonTags(payload.tags);
 
   const accuracy = toPct(safeNum(payload.accuracy));
   const macroPrecision = toPct(safeNum(payload.macro_precision));

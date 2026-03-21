@@ -61,6 +61,27 @@ def _write_labels_csv(path: str, rows: list[dict[str, str]]) -> None:
             writer.writerow(row)
 
 
+def _assert_metrics_metadata(
+    testcase: unittest.TestCase,
+    payload: dict[str, object],
+    *,
+    task_name: str,
+    task_description: str,
+    tags: str,
+    prompt_layout: str | None = None,
+) -> None:
+    run_config = payload.get("run_config")
+    testcase.assertIsInstance(run_config, dict)
+    testcase.assertEqual(run_config.get("task_name"), task_name)
+    testcase.assertEqual(run_config.get("task_description"), task_description)
+    testcase.assertEqual(run_config.get("tags"), tags)
+    testcase.assertEqual(run_config.get("prompt_layout"), prompt_layout)
+    testcase.assertNotIn("task_name", payload)
+    testcase.assertNotIn("task_description", payload)
+    testcase.assertNotIn("tags", payload)
+    testcase.assertNotIn("prompt_layout", payload)
+
+
 class MetricsOnlyTests(unittest.TestCase):
     def test_metrics_only_honors_no_confusion_heatmap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -121,9 +142,14 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertNotIn("accuracy", payload)
                 self.assertEqual(payload.get("prediction_count"), 2)
                 self.assertEqual(payload.get("truth_label_count"), 0)
-                self.assertEqual(payload.get("task_name"), "existing_output")
-                self.assertEqual(payload.get("task_description"), "")
-                self.assertEqual(payload.get("tags"), "")
+                _assert_metrics_metadata(
+                    self,
+                    payload,
+                    task_name="existing_output",
+                    prompt_layout=None,
+                    task_description="",
+                    tags="",
+                )
                 calibration = payload.get("calibration_metrics")
                 self.assertIsInstance(calibration, dict)
                 self.assertFalse(calibration.get("available"))
@@ -247,9 +273,14 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertEqual(exit_code, 0)
                 with open(metrics_json, "r", encoding="utf-8") as handle:
                     payload = json.load(handle)
-                self.assertEqual(payload.get("task_name"), "Custom Task")
-                self.assertEqual(payload.get("task_description"), "Custom task description")
-                self.assertEqual(payload.get("tags"), "alpha;beta")
+                _assert_metrics_metadata(
+                    self,
+                    payload,
+                    task_name="Custom Task",
+                    prompt_layout=None,
+                    task_description="Custom task description",
+                    tags="alpha;beta",
+                )
 
     def test_metrics_only_preserves_existing_metadata_while_backfilling_token_totals(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -333,10 +364,14 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertEqual(exit_code, 0)
                 with open(metrics_json, "r", encoding="utf-8") as handle:
                     payload = json.load(handle)
-                self.assertEqual(payload.get("task_name"), "Existing Task")
-                self.assertEqual(payload.get("prompt_layout"), "standard")
-                self.assertEqual(payload.get("task_description"), "Existing description")
-                self.assertEqual(payload.get("tags"), "alpha;beta")
+                _assert_metrics_metadata(
+                    self,
+                    payload,
+                    task_name="Existing Task",
+                    prompt_layout="standard",
+                    task_description="Existing description",
+                    tags="alpha;beta",
+                )
                 self.assertEqual(payload.get("cache_padding", {}).get("target_shared_prefix_tokens"), 1200)
                 self.assertEqual(payload.get("model_details", {}).get("model_requested"), "gpt-5-mini")
                 self.assertEqual(
@@ -354,6 +389,57 @@ class MetricsOnlyTests(unittest.TestCase):
                         "thinking_tokens_total": 4,
                         "output_tokens_definition": "total_tokens - prompt_tokens (or completion_tokens + thinking_tokens fallback)",
                     },
+                )
+
+    def test_metrics_only_backfills_run_config_from_longer_legacy_top_level_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
+                _write_output_csv(
+                    output_csv,
+                    [
+                        {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                    ],
+                )
+
+                with open(metrics_json, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "run_config": {
+                                "task_name": "Task",
+                                "prompt_layout": "compact",
+                                "task_description": "Short desc",
+                                "tags": "alpha",
+                            },
+                            "task_name": "Existing Output Task",
+                            "prompt_layout": "standard",
+                            "task_description": "Existing description carried over from legacy metadata.",
+                            "tags": "alpha;beta",
+                        },
+                        handle,
+                        indent=2,
+                    )
+
+                with patch.object(ba, "generate_confusion_heatmap", return_value=None):
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                        ]
+                    )
+
+                self.assertEqual(exit_code, 0)
+                with open(metrics_json, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                _assert_metrics_metadata(
+                    self,
+                    payload,
+                    task_name="Existing Output Task",
+                    prompt_layout="standard",
+                    task_description="Existing description carried over from legacy metadata.",
+                    tags="alpha;beta",
                 )
 
 

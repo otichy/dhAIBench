@@ -163,6 +163,12 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "validator_debug",
     "log_level",
 )
+METRICS_RUN_CONFIG_METADATA_FIELDS: Tuple[str, ...] = (
+    "task_name",
+    "prompt_layout",
+    "task_description",
+    "tags",
+)
 
 
 def ensure_data_layout() -> None:
@@ -2355,22 +2361,92 @@ def normalize_metrics_tags_value(raw_tags: Any) -> str:
     return ""
 
 
+def normalize_metrics_metadata_value(field_name: str, raw_value: Any) -> Optional[str]:
+    """Normalize a single metrics metadata field for storage in run_config."""
+    if field_name == "tags":
+        normalized_tags = normalize_metrics_tags_value(raw_value)
+        return normalized_tags or ""
+    if raw_value is None:
+        return None if field_name == "prompt_layout" else ""
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+    else:
+        cleaned = str(raw_value).strip()
+    if field_name == "prompt_layout":
+        return cleaned or None
+    return cleaned
+
+
+def select_metrics_metadata_value(
+    field_name: str,
+    run_config_value: Any,
+    legacy_top_level_value: Any,
+) -> Optional[str]:
+    """Choose the canonical metadata value when legacy top-level fields still exist."""
+    normalized_run_config = normalize_metrics_metadata_value(field_name, run_config_value)
+    normalized_legacy = normalize_metrics_metadata_value(field_name, legacy_top_level_value)
+
+    if is_missing_resume_value(normalized_legacy):
+        return normalized_run_config
+    if is_missing_resume_value(normalized_run_config):
+        return normalized_legacy
+    if normalized_run_config == normalized_legacy:
+        return normalized_run_config
+    if len(str(normalized_run_config)) > len(str(normalized_legacy)):
+        return normalized_run_config
+    return normalized_legacy
+
+
 def ensure_metrics_metadata_fields(metrics: Dict[str, Any], metrics_output_path: str) -> Dict[str, Any]:
-    """Ensure metadata/editable fields exist in a metrics payload."""
+    """Store editable metrics metadata in run_config and drop legacy top-level duplicates."""
     payload = dict(metrics)
     task_name_from_file, provider_from_file, model_from_file = parse_run_metadata_from_metrics_path(
         metrics_output_path
     )
 
-    existing_task_name = payload.get("task_name")
-    if isinstance(existing_task_name, str) and existing_task_name.strip():
-        payload["task_name"] = existing_task_name.strip()
-    else:
-        payload["task_name"] = task_name_from_file
+    run_config_raw = payload.get("run_config")
+    run_config = copy.deepcopy(run_config_raw) if isinstance(run_config_raw, dict) else {}
 
-    task_description = payload.get("task_description")
-    payload["task_description"] = task_description.strip() if isinstance(task_description, str) else ""
-    payload["tags"] = normalize_metrics_tags_value(payload.get("tags"))
+    source_input_csv = str(payload.get("source_input_csv") or "").strip()
+    if source_input_csv and is_missing_resume_value(normalize_resume_value("input", run_config.get("input"))):
+        run_config["input"] = [source_input_csv]
+    source_labels_csv = str(payload.get("source_labels_csv") or "").strip()
+    if source_labels_csv and is_missing_resume_value(run_config.get("labels")):
+        run_config["labels"] = source_labels_csv
+
+    task_name_value = select_metrics_metadata_value(
+        "task_name",
+        run_config.get("task_name"),
+        payload.get("task_name"),
+    )
+    if is_missing_resume_value(task_name_value):
+        task_name_value = task_name_from_file
+    run_config["task_name"] = task_name_value
+
+    run_config["prompt_layout"] = select_metrics_metadata_value(
+        "prompt_layout",
+        run_config.get("prompt_layout"),
+        payload.get("prompt_layout"),
+    )
+    run_config["task_description"] = (
+        select_metrics_metadata_value(
+            "task_description",
+            run_config.get("task_description"),
+            payload.get("task_description"),
+        )
+        or ""
+    )
+    run_config["tags"] = (
+        select_metrics_metadata_value(
+            "tags",
+            run_config.get("tags"),
+            payload.get("tags"),
+        )
+        or ""
+    )
+    payload["run_config"] = run_config
+    for field_name in METRICS_RUN_CONFIG_METADATA_FIELDS:
+        payload.pop(field_name, None)
 
     model_details_raw = payload.get("model_details")
     model_details = dict(model_details_raw) if isinstance(model_details_raw, dict) else {}
@@ -3274,35 +3350,31 @@ def extract_resume_defaults_from_metrics_payload(payload: Any) -> Dict[str, Any]
     """Derive best-effort resume defaults from a metrics artifact payload."""
     if not isinstance(payload, dict):
         return {}
-    recovered = normalize_resume_run_config(payload.get("run_config"))
-    if recovered:
-        return recovered
-
-    derived: Dict[str, Any] = {}
+    derived = normalize_resume_run_config(payload.get("run_config"))
     source_input_csv = str(payload.get("source_input_csv") or "").strip()
     if source_input_csv:
-        derived["input"] = [source_input_csv]
+        merge_resume_defaults(derived, {"input": [source_input_csv]})
     source_labels_csv = str(payload.get("source_labels_csv") or "").strip()
     if source_labels_csv:
-        derived["labels"] = source_labels_csv
-    task_name = str(payload.get("task_name") or "").strip()
+        merge_resume_defaults(derived, {"labels": source_labels_csv})
+    task_name = normalize_metrics_metadata_value("task_name", payload.get("task_name")) or ""
     if task_name:
-        derived["task_name"] = task_name
-    prompt_layout = str(payload.get("prompt_layout") or "").strip()
+        merge_resume_defaults(derived, {"task_name": task_name})
+    prompt_layout = normalize_metrics_metadata_value("prompt_layout", payload.get("prompt_layout"))
     if prompt_layout:
-        derived["prompt_layout"] = prompt_layout
-    task_description = str(payload.get("task_description") or "").strip()
+        merge_resume_defaults(derived, {"prompt_layout": prompt_layout})
+    task_description = normalize_metrics_metadata_value("task_description", payload.get("task_description")) or ""
     if task_description:
-        derived["task_description"] = task_description
+        merge_resume_defaults(derived, {"task_description": task_description})
     tags = normalize_metrics_tags_value(payload.get("tags"))
     if tags:
-        derived["tags"] = tags
+        merge_resume_defaults(derived, {"tags": tags})
 
     cache_padding = payload.get("cache_padding")
     if isinstance(cache_padding, dict):
         target_tokens = cache_padding.get("target_shared_prefix_tokens")
         if isinstance(target_tokens, (int, float)):
-            derived["cache_pad_target_tokens"] = int(target_tokens)
+            merge_resume_defaults(derived, {"cache_pad_target_tokens": int(target_tokens)})
 
     request_control_summary = payload.get("request_control_summary")
     if isinstance(request_control_summary, dict):
@@ -3319,7 +3391,7 @@ def extract_resume_defaults_from_metrics_payload(payload: Any) -> Dict[str, Any]
             ):
                 control_value = configured.get(control_name)
                 if control_value is not None:
-                    derived[control_name] = control_value
+                    merge_resume_defaults(derived, {control_name: control_value})
 
     return merge_resume_defaults(derived, extract_resume_defaults_from_model_details(payload.get("model_details")))
 
