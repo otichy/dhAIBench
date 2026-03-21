@@ -217,6 +217,136 @@
       : {};
   }
 
+  function getWindowPricingCatalog() {
+    return window.MODEL_PRICING_CATALOG && typeof window.MODEL_PRICING_CATALOG === "object"
+      ? window.MODEL_PRICING_CATALOG
+      : {};
+  }
+
+  function normalizePricingProviderKey(provider) {
+    const normalized = (provider || "").toString().trim().toLowerCase();
+    if (normalized === "einfra") {
+      return "e-infra";
+    }
+    return normalized;
+  }
+
+  function getSelectedServiceTier(ctx) {
+    const raw = ctx.serviceTierInput?.value || defaultValues.service_tier;
+    return ["standard", "flex", "priority", "batch"].includes(raw) ? raw : "standard";
+  }
+
+  function formatPriceAmount(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return "N/A";
+    }
+    return `$${value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  function resolvePricingCatalogEntry(ctx, provider, modelId) {
+    const catalog = ctx.priceCatalog;
+    const normalizedProvider = normalizePricingProviderKey(provider);
+    if (
+      !catalog ||
+      typeof catalog !== "object" ||
+      !catalog.providers ||
+      typeof catalog.providers !== "object" ||
+      !catalog.providers[normalizedProvider] ||
+      !catalog.providers[normalizedProvider].models ||
+      typeof catalog.providers[normalizedProvider].models !== "object"
+    ) {
+      return null;
+    }
+    const providerModels = catalog.providers[normalizedProvider].models;
+    let currentKey = modelId;
+    let safety = 0;
+    while (currentKey && providerModels[currentKey] && safety < 12) {
+      const entry = providerModels[currentKey];
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      if (entry.status !== "alias") {
+        return { entry, resolvedKey: currentKey };
+      }
+      currentKey = typeof entry.pricing_ref === "string" ? entry.pricing_ref.trim() : "";
+      safety += 1;
+    }
+    return null;
+  }
+
+  function summarizeModelPricing(ctx, provider, modelId) {
+    const resolved = resolvePricingCatalogEntry(ctx, provider, modelId);
+    if (!resolved) {
+      return "";
+    }
+    const { entry } = resolved;
+    if (entry.status === "unpriced") {
+      return "manual pricing needed";
+    }
+    if (entry.status === "unsupported") {
+      return "no compatible token pricing";
+    }
+    if (entry.status !== "priced") {
+      return "";
+    }
+
+    const requestedTier = getSelectedServiceTier(ctx);
+    const serviceTiers =
+      entry.service_tiers && typeof entry.service_tiers === "object" ? entry.service_tiers : {};
+    const preferredTier =
+      serviceTiers[requestedTier] && typeof serviceTiers[requestedTier] === "object"
+        ? serviceTiers[requestedTier]
+        : null;
+    const standardTier =
+      serviceTiers.standard && typeof serviceTiers.standard === "object" ? serviceTiers.standard : null;
+    const tier = preferredTier || standardTier;
+    if (!tier) {
+      return `${requestedTier} unavailable`;
+    }
+    const tierPrefix = preferredTier ? requestedTier : `${requestedTier} unavailable; standard`;
+    return `${tierPrefix} ~ in ${formatPriceAmount(tier.input_usd_per_mtokens)} | cache ${formatPriceAmount(
+      tier.cached_input_usd_per_mtokens
+    )} | out ${formatPriceAmount(tier.output_usd_per_mtokens)} / 1M`;
+  }
+
+  function getProviderCatalogModels(ctx, provider) {
+    const entry = ctx.modelCatalog && typeof ctx.modelCatalog === "object" ? ctx.modelCatalog[provider] : null;
+    return entry && Array.isArray(entry.models) ? entry.models.filter((value) => typeof value === "string") : [];
+  }
+
+  function updateModelCatalogMeta(ctx, provider, models = getProviderCatalogModels(ctx, provider)) {
+    if (!ctx.modelCatalogMeta) {
+      return;
+    }
+    const entry = ctx.modelCatalog && typeof ctx.modelCatalog === "object" ? ctx.modelCatalog[provider] : null;
+    let note = "";
+    if (models.length) {
+      note = `Loaded ${models.length} cached model${models.length === 1 ? "" : "s"} for "${provider}".`;
+      if (entry && typeof entry.timestamp === "string") {
+        note += ` Updated ${entry.timestamp}.`;
+      }
+      if (entry && entry.error) {
+        note += ` Last fetch issue: ${entry.error}.`;
+      }
+      note += ` Prices shown for ${getSelectedServiceTier(ctx)} tier when available.`;
+    } else {
+      note = `No cached models for "${provider}". Run python benchmark_agent.py --update-models to refresh.`;
+    }
+
+    const selectedModel = ctx.modelInput && typeof ctx.modelInput.value === "string" ? ctx.modelInput.value.trim() : "";
+    if (selectedModel) {
+      const selectedSummary = summarizeModelPricing(ctx, provider, selectedModel);
+      if (selectedSummary) {
+        note += ` Selected: ${selectedModel} | ${selectedSummary}.`;
+      }
+    }
+
+    ctx.modelCatalogMeta.textContent = note;
+  }
+
   function normalizeMode(rawMode) {
     const normalized = (rawMode || "").toString().trim().toLowerCase();
     return PREVIEW_MODES.includes(normalized) ? normalized : "run";
@@ -925,30 +1055,20 @@
     }
     ctx.modelList.innerHTML = "";
     const entry = ctx.modelCatalog[provider];
-    const models =
-      entry && Array.isArray(entry.models) ? entry.models.filter((value) => typeof value === "string") : [];
+    const models = getProviderCatalogModels(ctx, provider);
     if (models.length) {
       models.forEach((modelId) => {
         const option = document.createElement("option");
         option.value = modelId;
+        const pricingSummary = summarizeModelPricing(ctx, provider, modelId);
+        if (pricingSummary) {
+          option.label = `${modelId} | ${pricingSummary}`;
+          option.textContent = option.label;
+        }
         ctx.modelList.appendChild(option);
       });
     }
-    if (ctx.modelCatalogMeta) {
-      let note = "";
-      if (models.length) {
-        note = `Loaded ${models.length} cached model${models.length === 1 ? "" : "s"} for "${provider}".`;
-        if (entry && typeof entry.timestamp === "string") {
-          note += ` Updated ${entry.timestamp}.`;
-        }
-        if (entry && entry.error) {
-          note += ` Last fetch issue: ${entry.error}.`;
-        }
-      } else {
-        note = `No cached models for "${provider}". Run python benchmark_agent.py --update-models to refresh.`;
-      }
-      ctx.modelCatalogMeta.textContent = note;
-    }
+    updateModelCatalogMeta(ctx, provider, models);
   }
 
   function syncProvidersFromCatalog(ctx) {
@@ -1018,31 +1138,56 @@
     });
   }
 
+  function loadPricingCatalogScript() {
+    const cacheBustedSrc = `config_prices.js?ts=${Date.now()}`;
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = cacheBustedSrc;
+      script.async = true;
+      script.onload = () => {
+        script.remove();
+        resolve();
+      };
+      script.onerror = () => {
+        script.remove();
+        reject(new Error(`Unable to load ${cacheBustedSrc}`));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
   async function refreshModelCatalogFromScript(ctx) {
     if (ctx.refreshModelsButton) {
       ctx.refreshModelsButton.disabled = true;
       ctx.refreshModelsButton.textContent = "Refreshing...";
     }
-    setRefreshStatus(ctx, "Refreshing provider and model list from config_models.js...");
+    setRefreshStatus(ctx, "Refreshing provider, model, and pricing data from config_models.js/config_prices.js...");
     try {
       await loadModelCatalogScript();
       ctx.modelCatalog = getWindowModelCatalog();
+      try {
+        await loadPricingCatalogScript();
+      } catch (pricingError) {
+        console.warn(pricingError);
+      }
+      ctx.priceCatalog = getWindowPricingCatalog();
       syncProvidersFromCatalog(ctx);
       updatePlaceholdersForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
       updateModelOptionsForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
       updateContextualVisibility(ctx);
       handleFormChange(ctx);
-      setRefreshStatus(ctx, "Provider and model list refreshed.");
+      setRefreshStatus(ctx, "Provider, model, and pricing data refreshed.");
     } catch (error) {
       console.warn(error);
       ctx.modelCatalog = getWindowModelCatalog();
+      ctx.priceCatalog = getWindowPricingCatalog();
       syncProvidersFromCatalog(ctx);
       updatePlaceholdersForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
       updateModelOptionsForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
       updateContextualVisibility(ctx);
       setRefreshStatus(
         ctx,
-        "Could not reload config_models.js; showing the currently loaded catalog.",
+        "Could not reload config_models.js/config_prices.js; showing the currently loaded catalog.",
         true
       );
     } finally {
@@ -1084,7 +1229,7 @@
     });
     if (ctx.refreshModelsButton) {
       ctx.refreshModelsButton.title =
-        "Reload providers and model lists directly from config_models.js without reloading the page.";
+        "Reload providers, model lists, and pricing directly from config_models.js/config_prices.js without reloading the page.";
     }
     if (ctx.copyButton) {
       ctx.copyButton.title = "Copy the currently generated command line to clipboard.";
@@ -2007,6 +2152,13 @@
         handleFormChange(ctx);
       });
     }
+    if (ctx.serviceTierInput) {
+      ctx.serviceTierInput.addEventListener("change", () => {
+        updateModelOptionsForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
+        updateContextualVisibility(ctx);
+        handleFormChange(ctx);
+      });
+    }
     if (ctx.modelClearButton) {
       ctx.modelClearButton.addEventListener("click", () => {
         if (ctx.modelInput) {
@@ -2018,7 +2170,10 @@
       });
     }
     if (ctx.modelInput) {
-      ctx.modelInput.addEventListener("input", () => updateContextualVisibility(ctx));
+      ctx.modelInput.addEventListener("input", () => {
+        updateModelCatalogMeta(ctx, ctx.providerSelect?.value || defaultValues.provider);
+        updateContextualVisibility(ctx);
+      });
     }
     if (ctx.createGeminiCacheCheckbox) {
       ctx.createGeminiCacheCheckbox.addEventListener("change", () => {
@@ -2056,6 +2211,7 @@
       latestCommandText: DEFAULT_CLASSIC_COMMAND,
       latestCommandMeta: null,
       modelCatalog: getWindowModelCatalog(),
+      priceCatalog: getWindowPricingCatalog(),
       sampledEstimateRows: null,
       sampledEstimateSource: "",
       isInitializing: true,
@@ -2081,6 +2237,7 @@
       apiBaseVarInput: document.getElementById("api_base_var"),
       refreshModelsButton: document.getElementById("refresh-models-button"),
       refreshModelsStatus: document.getElementById("refresh-models-status"),
+      serviceTierInput: document.getElementById("service_tier"),
       modelInput: document.getElementById("model"),
       modelClearButton: document.getElementById("model-clear-button"),
       modelList: document.getElementById("model-options"),

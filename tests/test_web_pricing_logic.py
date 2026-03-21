@@ -188,6 +188,50 @@ class WebPricingLogicTests(unittest.TestCase):
         self.assertEqual(result["providerKey"], "requesty")
         self.assertEqual(result["resolvedKey"], "anthropic/claude-sonnet-4-6")
 
+    def test_requesty_bare_model_defaults_to_primary_direct_route(self) -> None:
+        catalog = {
+            "providers": {
+                "requesty": {
+                    "models": {
+                        "anthropic/claude-sonnet-4-6": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 3.0,
+                                    "cached_input_usd_per_mtokens": 0.3,
+                                    "output_usd_per_mtokens": 15.0,
+                                }
+                            },
+                        },
+                        "bedrock/claude-sonnet-4-6": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 3.4,
+                                    "cached_input_usd_per_mtokens": 0.3,
+                                    "output_usd_per_mtokens": 16.0,
+                                }
+                            },
+                        },
+                    }
+                }
+            }
+        }
+        run = {
+            "provider": "requesty",
+            "model": "claude-sonnet-4-6",
+            "modelDetails": {"provider": "requesty", "model_requested": "claude-sonnet-4-6"},
+            "rawMetrics": {"run_config": {}},
+            "inputTokensTotal": 1200,
+            "cachedInputTokensTotal": 300,
+            "nonCachedInputTokensTotal": 900,
+            "outputTokensTotal": 200,
+        }
+        result = _run_node_pricing(catalog, run)
+        self.assertEqual(result["status"], "priced")
+        self.assertEqual(result["providerKey"], "requesty")
+        self.assertEqual(result["resolvedKey"], "anthropic/claude-sonnet-4-6")
+
     def test_requesty_does_not_fall_back_to_other_provider_on_miss(self) -> None:
         catalog = {
             "providers": {
@@ -217,6 +261,95 @@ class WebPricingLogicTests(unittest.TestCase):
         result = _run_node_pricing(catalog, run)
         self.assertEqual(result["status"], "model_missing")
         self.assertEqual(result["providerKey"], "")
+
+    def test_google_bare_model_uses_models_prefix_and_ignores_stale_slug_for_global_fallback(self) -> None:
+        catalog = {
+            "providers": {
+                "google": {
+                    "models": {
+                        "models/gemini-3.1-pro-preview": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 2.0,
+                                    "cached_input_usd_per_mtokens": 0.2,
+                                    "output_usd_per_mtokens": 12.0,
+                                }
+                            },
+                        }
+                    }
+                },
+                "vertex": {
+                    "models": {
+                        "gemini3flashpreview": {
+                            "status": "alias",
+                            "pricing_ref": "gemini-3-flash-preview",
+                            "alias_kind": "legacy_slug",
+                        },
+                        "gemini-3-flash-preview": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 0.3,
+                                    "cached_input_usd_per_mtokens": 0.03,
+                                    "output_usd_per_mtokens": 2.5,
+                                }
+                            },
+                        },
+                    }
+                },
+            }
+        }
+        run = {
+            "provider": "google",
+            "model": "gemini-3.1-pro-preview",
+            "fileModelSlug": "gemini3flashpreview",
+            "modelDetails": {"provider": "google", "model_requested": "gemini-3.1-pro-preview"},
+            "rawMetrics": {"run_config": {}},
+            "inputTokensTotal": 1000,
+            "cachedInputTokensTotal": 0,
+            "nonCachedInputTokensTotal": 1000,
+            "outputTokensTotal": 100,
+        }
+        result = _run_node_pricing(catalog, run)
+        self.assertEqual(result["status"], "priced")
+        self.assertEqual(result["providerKey"], "google")
+        self.assertEqual(result["resolvedKey"], "models/gemini-3.1-pro-preview")
+
+    def test_unpriced_entry_returns_manual_pricing_status(self) -> None:
+        catalog = {
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-6-preview": {
+                            "status": "unpriced",
+                            "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
+                            "needs_manual_update": True,
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": None,
+                                    "cached_input_usd_per_mtokens": None,
+                                    "output_usd_per_mtokens": None,
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        run = {
+            "provider": "openai",
+            "model": "gpt-6-preview",
+            "modelDetails": {"provider": "openai", "model_requested": "gpt-6-preview"},
+            "rawMetrics": {"run_config": {"service_tier": "standard"}},
+            "inputTokensTotal": 1000,
+            "cachedInputTokensTotal": 0,
+            "nonCachedInputTokensTotal": 1000,
+            "outputTokensTotal": 100,
+        }
+        result = _run_node_pricing(catalog, run)
+        self.assertEqual(result["status"], "unpriced")
+        self.assertEqual(result["statusLabel"], "manual pricing needed")
 
     def test_unsupported_einfra_run_returns_unsupported_status(self) -> None:
         catalog = {

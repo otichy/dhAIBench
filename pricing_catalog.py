@@ -48,6 +48,15 @@ def load_model_catalog_js(path: str) -> Dict[str, Any]:
     return json.loads(match.group(1))
 
 
+def load_pricing_catalog_js(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    match = re.search(r"window\.MODEL_PRICING_CATALOG\s*=\s*(\{.*\})\s*;\s*$", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"Could not extract MODEL_PRICING_CATALOG from {path}")
+    return json.loads(match.group(1))
+
+
 def write_pricing_catalog_js(catalog: Dict[str, Any], output_path: str) -> None:
     parent = os.path.dirname(os.path.abspath(output_path))
     if parent:
@@ -173,6 +182,17 @@ def unsupported_entry(reason: str, sources: Optional[Iterable[Dict[str, str]]] =
     if deduped:
         entry["sources"] = deduped
     return entry
+
+
+def unpriced_entry(reason: str) -> Dict[str, Any]:
+    return {
+        "status": "unpriced",
+        "reason": reason,
+        "needs_manual_update": True,
+        "service_tiers": {
+            "standard": service_tier_entry(None, None, None),
+        },
+    }
 
 
 def merge_priced_entries(*entries: Dict[str, Any]) -> Dict[str, Any]:
@@ -627,7 +647,7 @@ def parse_vertex_tier_model_block(block: str, mode: str) -> Tuple[Optional[Dict[
         flags=re.IGNORECASE,
     )
     output_match = re.search(
-        r"Text output .*?(\$[0-9.]+)\s+(\$[0-9.]+)\s+(?:N/A|-|\u2014)\s+(?:N/A|-|\u2014)",
+        r"Text output .*?(\$[0-9.]+)\s+(\$[0-9.]+)(?:\s+(?:\$[0-9.]+|N/A|-|\u2014)){0,2}",
         block,
         flags=re.IGNORECASE,
     )
@@ -925,6 +945,61 @@ def update_model_prices(
     )
     write_pricing_catalog_js(pricing_catalog, output_path)
     return pricing_catalog
+
+
+def sync_pricing_catalog_with_model_catalog(
+    model_catalog: Dict[str, Any],
+    pricing_catalog: Optional[Dict[str, Any]] = None,
+    selected_providers: Optional[Iterable[str]] = None,
+) -> Tuple[Dict[str, Any], List[Tuple[str, str]]]:
+    selected = (
+        {normalize_provider_key(item) for item in selected_providers}
+        if selected_providers
+        else {normalize_provider_key(item) for item in model_catalog.keys()}
+    )
+    base_catalog = pricing_catalog if isinstance(pricing_catalog, dict) else {}
+    providers_out = json.loads(json.dumps(base_catalog.get("providers") or {}))
+    added_models: List[Tuple[str, str]] = []
+
+    for provider_key in model_catalog.keys():
+        normalized_provider = normalize_provider_key(provider_key)
+        if normalized_provider not in selected:
+            continue
+        provider_entry = providers_out.setdefault(provider_key, {})
+        models_map = provider_entry.setdefault("models", {})
+        config_models = sorted(set((model_catalog.get(provider_key) or {}).get("models") or []))
+        for model in config_models:
+            if model in models_map:
+                continue
+            models_map[model] = unpriced_entry(
+                "Added by --update-models; fill in pricing manually in config_prices.js."
+            )
+            added_models.append((provider_key, model))
+        add_legacy_slug_aliases(models_map)
+
+    return {
+        "updated_at": utc_timestamp(),
+        "providers": providers_out,
+    }, added_models
+
+
+def sync_missing_price_entries(
+    models_path: str,
+    prices_path: str,
+    providers: Optional[Iterable[str]] = None,
+) -> Tuple[Dict[str, Any], List[Tuple[str, str]]]:
+    model_catalog = load_model_catalog_js(models_path)
+    existing_catalog: Optional[Dict[str, Any]] = None
+    if os.path.exists(prices_path):
+        existing_catalog = load_pricing_catalog_js(prices_path)
+    synced_catalog, added_models = sync_pricing_catalog_with_model_catalog(
+        model_catalog=model_catalog,
+        pricing_catalog=existing_catalog,
+        selected_providers=providers,
+    )
+    if added_models or not os.path.exists(prices_path):
+        write_pricing_catalog_js(synced_catalog, prices_path)
+    return synced_catalog, added_models
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

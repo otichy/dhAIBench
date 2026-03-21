@@ -3483,6 +3483,11 @@ window.MODEL_PRICING_CATALOG = {
         "gemini-3.1-flash-lite-preview": {
           "status": "priced",
           "service_tiers": {
+            "standard": {
+              "input_usd_per_mtokens": 0.25,
+              "cached_input_usd_per_mtokens": 0.03,
+              "output_usd_per_mtokens": 1.5
+            },
             "priority": {
               "input_usd_per_mtokens": 0.45,
               "cached_input_usd_per_mtokens": 0.05,
@@ -3508,6 +3513,11 @@ window.MODEL_PRICING_CATALOG = {
           "long_context": {
             "threshold_input_tokens": 200000,
             "service_tiers": {
+              "standard": {
+                "input_usd_per_mtokens": 0.25,
+                "cached_input_usd_per_mtokens": 0.03,
+                "output_usd_per_mtokens": 1.5
+              },
               "priority": {
                 "input_usd_per_mtokens": 0.45,
                 "cached_input_usd_per_mtokens": 0.05,

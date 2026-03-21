@@ -36,6 +36,7 @@ const state = {
   leaderboardChartGroupBy: "model",
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
+  priceScatterViewport: null,
   radarAxis: "task",
   radarScale: "linear",
   tokenSignalsVisibleCount: TOKEN_SIGNAL_PAGE_SIZE,
@@ -127,8 +128,8 @@ const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision"
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
-const LEADERBOARD_TAB_KEYS = new Set(["chart", "time_series", "table", "best_by_task", "radar"]);
-const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["model", "task"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "price_scatter", "time_series", "table", "best_by_task", "radar"]);
+const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
   "macro_f1",
@@ -159,6 +160,7 @@ const RADAR_SCALE_LABELS = {
 };
 
 const LEADERBOARD_CHART_GROUP_BY_LABELS = {
+  none: "No Group",
   model: "Model",
   task: "Task",
 };
@@ -1215,6 +1217,7 @@ function persistUiState() {
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
+    priceScatterViewport: state.priceScatterViewport,
     radarAxis: state.radarAxis,
     radarScale: state.radarScale,
     hideNoAccuracy: state.hideNoAccuracy,
@@ -1283,6 +1286,9 @@ function restoreUiState() {
       }
       if (payload.timeSeriesViewport && typeof payload.timeSeriesViewport === "object") {
         state.timeSeriesViewport = payload.timeSeriesViewport;
+      }
+      if (payload.priceScatterViewport && typeof payload.priceScatterViewport === "object") {
+        state.priceScatterViewport = payload.priceScatterViewport;
       }
       if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
         state.radarAxis = payload.radarAxis;
@@ -1610,6 +1616,21 @@ function resetTimeSeriesZoom() {
     return;
   }
   state.timeSeriesViewport = null;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setPriceScatterViewport(nextViewport) {
+  state.priceScatterViewport = normalizeTimeSeriesViewport(nextViewport);
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function resetPriceScatterZoom() {
+  if (!state.priceScatterViewport) {
+    return;
+  }
+  state.priceScatterViewport = null;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -2196,15 +2217,9 @@ function formatUsd(value) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "N/A";
   }
-  const numeric = Number(value);
-  const digits =
-    numeric >= 100 ? 2 :
-    numeric >= 1 ? 3 :
-    numeric >= 0.01 ? 4 :
-    6;
-  return `$${numeric.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: digits,
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })}`;
 }
 
@@ -2619,7 +2634,13 @@ function getTaskGroupedTopRunLabel(runs, metricKey) {
 }
 
 function shouldShowLeaderboardContextLabels() {
-  return state.leaderboardChartGroupBy === "task" ? state.selectedModels.length !== 1 : state.selectedTasks.length !== 1;
+  if (state.leaderboardChartGroupBy === "task") {
+    return state.selectedModels.length !== 1;
+  }
+  if (state.leaderboardChartGroupBy === "model") {
+    return state.selectedTasks.length !== 1;
+  }
+  return true;
 }
 
 function setLeaderboardChartGroupBy(groupBy) {
@@ -2635,9 +2656,10 @@ function renderLeaderboardGroupSwitch() {
   if (!els.leaderboardGroupSwitch) {
     return;
   }
-  els.leaderboardGroupSwitch.hidden = state.leaderboardTab !== "chart";
+  const supportsGrouping = state.leaderboardTab === "chart" || state.leaderboardTab === "price_scatter";
+  els.leaderboardGroupSwitch.hidden = !supportsGrouping;
   els.leaderboardGroupSwitch.innerHTML = "";
-  if (state.leaderboardTab !== "chart") {
+  if (!supportsGrouping) {
     return;
   }
 
@@ -2672,6 +2694,7 @@ function renderLeaderboardTabControls() {
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
+    { key: "price_scatter", label: "Price Scatter" },
     { key: "time_series", label: "Time Series" },
     { key: "table", label: "Metrics Table" },
     { key: "best_by_task", label: "Best Run Per Task" },
@@ -2698,9 +2721,21 @@ function renderLeaderboardChart(container, runs) {
   const showSelectedTagBadges = hasMultipleSelectedTags();
   const selectedTagColorMap = buildSelectedTagColorMap();
   const groupBy = state.leaderboardChartGroupBy;
+  const noGrouping = groupBy === "none";
   const showContextLabels = shouldShowLeaderboardContextLabels();
   const grouping =
-    groupBy === "task"
+    noGrouping
+      ? {
+          key: "run",
+          getGroupValue: (run) => run.filePath,
+          getGroupLabel: () => "",
+          getSingleRowLabel: (run) => `${run.task} / ${getRunModelDisplayName(run)}`,
+          getSingleRowContextLabel: (run) => formatTs(run.timestamp),
+          getGroupedRunLabel: (run) => `${run.task} / ${getRunModelDisplayName(run)}`,
+          getGroupedRunContextLabel: (run) => formatTs(run.timestamp),
+          getGroupContextLabel: () => "",
+        }
+      : groupBy === "task"
       ? {
           key: "task",
           getGroupValue: (run) => asTrimmedString(run.task) || "Unknown task",
@@ -2807,7 +2842,9 @@ function renderLeaderboardChart(container, runs) {
     const groupedSummary = document.createElement("p");
     groupedSummary.className = "leaderboard-ci-note muted";
     groupedSummary.textContent =
-      groupBy === "task"
+      noGrouping
+        ? "Rows are shown per run without aggregation."
+        : groupBy === "task"
         ? `Grouped task rows show average ${metricLabel.toLowerCase()} with run distribution overlays and the top model label.`
         : groupedEntries.length > 1
         ? "TOP is based on the best individual run; if hidden in a collapsed group, the marker appears on the group summary."
@@ -3023,6 +3060,68 @@ function buildTimeSeriesShape(shape, cx, cy, size, fill, stroke = "currentColor"
   });
 }
 
+function appendTimeSeriesPointGlyph(parent, options) {
+  const {
+    shape,
+    cx,
+    cy,
+    size,
+    fillColor = "var(--paper-strong)",
+    fillOpacity = 0.78,
+    outlineColor,
+    strokeWidth = 1.5,
+    innerDotColor = "",
+    innerDotRadius = null,
+    isSelected = false,
+  } = options || {};
+
+  if (!parent) {
+    return null;
+  }
+
+  if (isSelected) {
+    const halo = buildTimeSeriesShape(
+      shape || TIME_SERIES_MODEL_SHAPES[0],
+      cx,
+      cy,
+      size + 5,
+      "none",
+      "var(--accent)",
+      Math.max(strokeWidth + 1.8, 3)
+    );
+    halo.setAttribute("class", "time-series-point-halo");
+    parent.appendChild(halo);
+  }
+
+  const point = buildTimeSeriesShape(
+    shape || TIME_SERIES_MODEL_SHAPES[0],
+    cx,
+    cy,
+    size,
+    fillColor,
+    outlineColor || "var(--ink)",
+    strokeWidth
+  );
+  point.setAttribute("fill-opacity", String(fillOpacity));
+  parent.appendChild(point);
+
+  const dotColor = asTrimmedString(innerDotColor);
+  if (dotColor) {
+    const dot = createSvgNode("circle", {
+      cx,
+      cy,
+      r: innerDotRadius != null ? innerDotRadius : Math.max(size * 0.22, 2.4),
+      fill: dotColor,
+      stroke: "var(--paper-strong)",
+      "stroke-width": 0.8,
+      class: "time-series-point-core",
+    });
+    parent.appendChild(dot);
+  }
+
+  return point;
+}
+
 function buildNumericTicks(minValue, maxValue, count) {
   if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
     return [];
@@ -3031,6 +3130,156 @@ function buildNumericTicks(minValue, maxValue, count) {
     return [minValue];
   }
   return Array.from({ length: count }, (_, index) => minValue + ((maxValue - minValue) * index) / (count - 1));
+}
+
+function quantileSorted(values, quantile) {
+  if (!Array.isArray(values) || !values.length) {
+    return null;
+  }
+  const q = Math.max(0, Math.min(1, Number(quantile)));
+  const position = (values.length - 1) * q;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) {
+    return values[lower];
+  }
+  const weight = position - lower;
+  return values[lower] * (1 - weight) + values[upper] * weight;
+}
+
+function computeSymlogConstant(values) {
+  const positiveValues = (values || [])
+    .filter((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  if (!positiveValues.length) {
+    return 0.1;
+  }
+  const lowerQuartile = quantileSorted(positiveValues, 0.25) || positiveValues[0];
+  return Math.max(0.01, Math.min(0.5, lowerQuartile / 2));
+}
+
+function symlogTransform(value, constant) {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const linearConstant = Math.max(Number(constant) || 0.1, 1e-9);
+  if (numeric === 0) {
+    return 0;
+  }
+  return Math.sign(numeric) * Math.log1p(Math.abs(numeric) / linearConstant);
+}
+
+function symlogInverse(value, constant) {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const linearConstant = Math.max(Number(constant) || 0.1, 1e-9);
+  if (numeric === 0) {
+    return 0;
+  }
+  return Math.sign(numeric) * linearConstant * Math.expm1(Math.abs(numeric));
+}
+
+function dedupeNumericTicks(values) {
+  const unique = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return;
+    }
+    const key = value.toPrecision(12);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    unique.push(value);
+  });
+  return unique.sort((a, b) => a - b);
+}
+
+function buildSymlogPriceTicks(minValue, maxValue, constant, maxTicks = 6) {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return [];
+  }
+  if (minValue === maxValue) {
+    return [minValue];
+  }
+
+  const candidates = [minValue, maxValue];
+  if (minValue <= 0 && maxValue >= 0) {
+    candidates.push(0);
+  }
+
+  for (let exponent = -4; exponent <= 5; exponent += 1) {
+    const base = 10 ** exponent;
+    [1, 2, 5].forEach((multiplier) => {
+      const tick = multiplier * base;
+      if (tick >= minValue && tick <= maxValue) {
+        candidates.push(tick);
+      }
+    });
+  }
+
+  const sorted = dedupeNumericTicks(candidates);
+  if (sorted.length <= maxTicks) {
+    return sorted;
+  }
+
+  const minProjection = symlogTransform(minValue, constant);
+  const maxProjection = symlogTransform(maxValue, constant);
+  const chosen = new Map();
+  sorted.forEach((value) => {
+    const projection = symlogTransform(value, constant);
+    if (value === minValue || value === maxValue || value === 0) {
+      chosen.set(value.toPrecision(12), { value, projection });
+    }
+  });
+
+  for (let index = 0; index < maxTicks; index += 1) {
+    const target = minProjection + ((maxProjection - minProjection) * index) / Math.max(maxTicks - 1, 1);
+    let best = null;
+    sorted.forEach((value) => {
+      const projection = symlogTransform(value, constant);
+      const diff = Math.abs(projection - target);
+      if (!best || diff < best.diff) {
+        best = { value, projection, diff };
+      }
+    });
+    if (best) {
+      chosen.set(best.value.toPrecision(12), { value: best.value, projection: best.projection });
+    }
+  }
+
+  const selected = Array.from(chosen.values())
+    .sort((left, right) => left.value - right.value)
+    .map((entry) => entry.value);
+  if (selected.length <= maxTicks) {
+    return selected;
+  }
+
+  return dedupeNumericTicks(
+    Array.from({ length: maxTicks }, (_, index) => {
+      const position = (selected.length - 1) * (index / Math.max(maxTicks - 1, 1));
+      return selected[Math.round(position)];
+    })
+  );
+}
+
+function formatUsdAxisTick(value) {
+  const numeric = safeNum(value);
+  if (numeric == null) {
+    return "$0.00";
+  }
+  const absolute = Math.abs(numeric);
+  if (absolute >= 1) {
+    return formatUsd(numeric);
+  }
+  if (absolute >= 0.1) {
+    return `$${formatNum(numeric, 2)}`;
+  }
+  if (absolute >= 0.01) {
+    return `$${formatNum(numeric, 3)}`;
+  }
+  if (absolute >= 0.001) {
+    return `$${formatNum(numeric, 4)}`;
+  }
+  return `$${numeric.toExponential(1)}`;
 }
 
 function formatTimeSeriesTick(ms, spanMs) {
@@ -3062,7 +3311,18 @@ function createTimeSeriesLegend(title, rows) {
       const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       icon.setAttribute("viewBox", "0 0 16 16");
       icon.setAttribute("class", "time-series-shape-icon");
-      icon.appendChild(buildTimeSeriesShape(row.shape, 8, 8, 9, "currentColor", "currentColor", 1.2));
+      appendTimeSeriesPointGlyph(icon, {
+        shape: row.shape,
+        cx: 8,
+        cy: 8,
+        size: 9,
+        fillColor: row.fillColor || "var(--paper-strong)",
+        fillOpacity: row.fillOpacity != null ? row.fillOpacity : 0.72,
+        outlineColor: row.strokeColor || row.color || "var(--ink)",
+        strokeWidth: 1.4,
+        innerDotColor: row.innerDotColor || "",
+        innerDotRadius: 2.2,
+      });
       entry.appendChild(icon);
     }
 
@@ -3188,18 +3448,23 @@ function createTimeSeriesTagBadgeGroup(tags, tagColorMap, x, y, bounds = {}) {
   return group;
 }
 
-function clampTimeSeriesViewport(viewport, fullDomain) {
+function clampTimeSeriesViewport(viewport, fullDomain, minimumSpan = {}) {
   const normalized = normalizeTimeSeriesViewport(viewport);
   if (!normalized || !fullDomain) {
     return null;
   }
+
+  const minXSpan =
+    typeof minimumSpan.x === "number" && Number.isFinite(minimumSpan.x) ? minimumSpan.x : 1;
+  const minYSpan =
+    typeof minimumSpan.y === "number" && Number.isFinite(minimumSpan.y) ? minimumSpan.y : 1e-9;
 
   const xMin = Math.max(fullDomain.xMin, Math.min(normalized.xMin, fullDomain.xMax));
   const xMax = Math.max(fullDomain.xMin, Math.min(normalized.xMax, fullDomain.xMax));
   const yMin = Math.max(fullDomain.yMin, Math.min(normalized.yMin, fullDomain.yMax));
   const yMax = Math.max(fullDomain.yMin, Math.min(normalized.yMax, fullDomain.yMax));
 
-  if (xMax - xMin <= 1 || yMax - yMin <= 1e-9) {
+  if (xMax - xMin <= minXSpan || yMax - yMin <= minYSpan) {
     return null;
   }
 
@@ -3245,10 +3510,9 @@ function renderLeaderboardTimeSeries(container, runs) {
   const models = [...new Set(source.map((entry) => asTrimmedString(entry.run.model)).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b)
   );
-  const taskColorByName = new Map(tasks.map((task, index) => [task, TIME_SERIES_TASK_COLORS[index % TIME_SERIES_TASK_COLORS.length]]));
-  const modelShapeByName = new Map(
-    models.map((model, index) => [model, TIME_SERIES_MODEL_SHAPES[index % TIME_SERIES_MODEL_SHAPES.length]])
-  );
+  const taskColorByName = new Map(tasks.map((task) => [task, getTaskSeriesColor(task)]));
+  const modelColorByName = new Map(models.map((model) => [model, getModelSeriesColor(model)]));
+  const modelShapeByName = new Map(models.map((model) => [model, getModelSeriesShape(model)]));
 
   const header = document.createElement("div");
   header.className = "time-series-head";
@@ -3469,25 +3733,27 @@ function renderLeaderboardTimeSeries(container, runs) {
       role: "button",
       "aria-label": `${entry.run.task}, ${getRunModelDisplayName(entry.run)}, ${formatTs(entry.run.timestamp)}, ${formatMetric(metricKey, entry.metricValue)}`,
     });
-    pointGroup.style.color = entry.run.filePath === state.selectedRunPath ? "var(--accent)" : "var(--ink)";
     const pointX = xToPx(entry.timestampMs);
     const pointY = yToPx(entry.metricValue);
-    const point = buildTimeSeriesShape(
-      modelShapeByName.get(entry.run.model) || TIME_SERIES_MODEL_SHAPES[0],
-      pointX,
-      pointY,
-      10,
-      taskColorByName.get(entry.run.task) || TIME_SERIES_TASK_COLORS[0],
-      "currentColor",
-      entry.run.filePath === state.selectedRunPath ? 2.2 : 1.4
-    );
+    appendTimeSeriesPointGlyph(pointGroup, {
+      shape: modelShapeByName.get(entry.run.model) || TIME_SERIES_MODEL_SHAPES[0],
+      cx: pointX,
+      cy: pointY,
+      size: 8.8,
+      fillColor: "var(--paper-strong)",
+      fillOpacity: 0.72,
+      outlineColor: modelColorByName.get(entry.run.model) || getModelSeriesColor(entry.run.model),
+      strokeWidth: 1.45,
+      innerDotColor: taskColorByName.get(entry.run.task) || TIME_SERIES_TASK_COLORS[0],
+      innerDotRadius: 2.3,
+      isSelected: entry.run.filePath === state.selectedRunPath,
+    });
     const title = createSvgNode("title");
     title.textContent = `${entry.run.task} | ${getRunModelDisplayName(entry.run)} | ${formatTs(entry.run.timestamp)} | ${formatMetric(
       metricKey,
       entry.metricValue
     )}`;
     pointGroup.appendChild(title);
-    pointGroup.appendChild(point);
     pointGroup.addEventListener("click", () => openRunModal(entry.run));
     pointGroup.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -3629,7 +3895,7 @@ function renderLeaderboardTimeSeries(container, runs) {
   const legends = document.createElement("div");
   legends.className = "time-series-legends";
   legends.appendChild(
-    createTimeSeriesLegend(
+      createTimeSeriesLegend(
       "Tasks (color)",
       tasks.map((task) => ({
         type: "task",
@@ -3639,15 +3905,663 @@ function renderLeaderboardTimeSeries(container, runs) {
     )
   );
   legends.appendChild(
-    createTimeSeriesLegend(
-      "Models (shape)",
+      createTimeSeriesLegend(
+      "Models (shape + outline)",
       models.map((model) => ({
         type: "model",
         shape: modelShapeByName.get(model),
+        fillOpacity: 0.72,
+        strokeColor: modelColorByName.get(model),
         label: model,
       }))
     )
   );
+  container.appendChild(legends);
+}
+
+function expandNumericDomain(minValue, maxValue, options = {}) {
+  const clampMin = typeof options.clampMin === "number" ? options.clampMin : null;
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return { min: clampMin ?? 0, max: clampMin != null ? clampMin + 1 : 1 };
+  }
+  if (minValue === maxValue) {
+    const center = minValue;
+    const pad = Math.max(Math.abs(center) * 0.15, options.fallbackPad ?? 1);
+    const nextMin = clampMin != null ? Math.max(clampMin, center - pad) : center - pad;
+    const nextMax = center + pad;
+    if (nextMin === nextMax) {
+      return { min: nextMin, max: nextMax + 1 };
+    }
+    return { min: nextMin, max: nextMax };
+  }
+  const pad = (maxValue - minValue) * 0.08;
+  const nextMin = clampMin != null ? Math.max(clampMin, minValue - pad) : minValue - pad;
+  const nextMax = maxValue + pad;
+  if (nextMin === nextMax) {
+    return { min: nextMin, max: nextMax + 1 };
+  }
+  return { min: nextMin, max: nextMax };
+}
+
+function renderLeaderboardPriceScatter(container, runs) {
+  const metricKey = state.sortBy;
+  const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const entriesWithMetric = runs
+    .map((run) => {
+      const metricValue = getMetricValueForRun(run, metricKey);
+      if (typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
+        return null;
+      }
+      const knownPriceValue = safeNum(run.estimatedCostUsd);
+      const hasKnownPrice = typeof knownPriceValue === "number" && Number.isFinite(knownPriceValue);
+      return {
+        run,
+        metricValue,
+        priceValue: hasKnownPrice ? knownPriceValue : null,
+        hasKnownPrice,
+      };
+    })
+    .filter(Boolean);
+  const unknownPriceRunCount = entriesWithMetric.filter((entry) => !entry.hasKnownPrice).length;
+  const missingMetricCount = runs.length - entriesWithMetric.length;
+
+  if (!entriesWithMetric.length) {
+    container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
+    return;
+  }
+
+  const tasks = [...new Set(entriesWithMetric.map((entry) => asTrimmedString(entry.run.task)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const models = [...new Set(entriesWithMetric.map((entry) => asTrimmedString(entry.run.model)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const groupBy = state.leaderboardChartGroupBy;
+  const noGrouping = groupBy === "none";
+  const taskColorByName = new Map(tasks.map((task) => [task, getTaskSeriesColor(task)]));
+  const modelColorByName = new Map(models.map((model) => [model, getModelSeriesColor(model)]));
+  const modelShapeByName = new Map(models.map((model) => [model, getModelSeriesShape(model)]));
+  const groups = new Map();
+  entriesWithMetric.forEach((entry) => {
+    const groupKey =
+      noGrouping
+        ? entry.run.filePath
+        : groupBy === "task"
+        ? asTrimmedString(entry.run.task) || "Unknown task"
+        : asTrimmedString(entry.run.model) || "Unknown model";
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey).push(entry);
+  });
+  const source = Array.from(groups.entries())
+    .map(([groupKey, groupEntries]) => {
+      const representative = [...groupEntries].sort((a, b) => {
+        const diff = compareMetricNumbers(a.metricValue, b.metricValue, metricKey);
+        if (diff !== 0) {
+          return diff;
+        }
+        return parseRunTimestampMs(b.run) - parseRunTimestampMs(a.run);
+      })[0];
+      const knownPriceEntries = groupEntries.filter((entry) => entry.hasKnownPrice);
+      const averagePrice = knownPriceEntries.length
+        ? knownPriceEntries.reduce((sum, entry) => sum + entry.priceValue, 0) / knownPriceEntries.length
+        : null;
+      const averageMetric =
+        groupEntries.reduce((sum, entry) => sum + entry.metricValue, 0) / Math.max(groupEntries.length, 1);
+      const groupRuns = groupEntries.map((entry) => entry.run);
+      const groupUnknownPriceCount = groupEntries.filter((entry) => !entry.hasKnownPrice).length;
+      const sharedSuffix = groupBy === "model" ? getSharedRunEffortSuffix(groupRuns) : "";
+      const label =
+        noGrouping
+          ? `${representative.run.task} / ${getRunModelDisplayName(representative.run)}`
+          : groupBy === "model"
+          ? `${groupKey}${sharedSuffix ? ` ${sharedSuffix}` : ""}`
+          : groupKey;
+      return {
+        groupKey,
+        label,
+        count: groupEntries.length,
+        priceValue: averagePrice,
+        hasKnownPrice: knownPriceEntries.length > 0,
+        metricValue: averageMetric,
+        unknownPriceCount: groupUnknownPriceCount,
+        representativeRun: representative.run,
+        runs: groupRuns,
+      };
+    })
+    .sort((a, b) => {
+      if (a.hasKnownPrice !== b.hasKnownPrice) {
+        return a.hasKnownPrice ? 1 : -1;
+      }
+      if (a.priceValue !== b.priceValue) {
+        return a.priceValue - b.priceValue;
+      }
+      const diff = compareMetricNumbers(a.metricValue, b.metricValue, metricKey);
+      if (diff !== 0) {
+        return diff;
+      }
+      return a.label.localeCompare(b.label);
+    });
+  const numericSource = source.filter((entry) => entry.hasKnownPrice);
+  const unknownBandSource = source.filter((entry) => !entry.hasKnownPrice);
+  const unknownBandRunCount = unknownBandSource.reduce((sum, entry) => sum + entry.count, 0);
+  const mixedPriceGroupCount = numericSource.filter((entry) => entry.unknownPriceCount > 0).length;
+
+  const header = document.createElement("div");
+  header.className = "time-series-head";
+  const summary = document.createElement("p");
+  summary.className = "muted";
+  const summaryParts = [
+    noGrouping
+      ? `${formatNum(source.length, 0)} plotted run(s)`
+      : `${formatNum(source.length, 0)} ${groupBy} group(s) | ${formatNum(entriesWithMetric.length, 0)} plotted run(s)`,
+  ];
+  if (unknownBandRunCount) {
+    summaryParts.push(`${formatNum(unknownBandRunCount, 0)} run(s) in Unknown Price band`);
+  }
+  if (mixedPriceGroupCount) {
+    summaryParts.push(`${formatNum(mixedPriceGroupCount, 0)} mixed-price point(s)`);
+  }
+  summary.textContent = summaryParts.join(" | ");
+  header.appendChild(summary);
+
+  const controls = document.createElement("div");
+  controls.className = "time-series-controls";
+  const labelsButton = document.createElement("button");
+  labelsButton.type = "button";
+  labelsButton.className = `time-series-control-btn${state.timeSeriesShowLabels ? " active" : ""}`;
+  labelsButton.textContent = state.timeSeriesShowLabels ? "Labels: On" : "Labels: Off";
+  labelsButton.setAttribute("aria-pressed", state.timeSeriesShowLabels ? "true" : "false");
+  labelsButton.addEventListener("click", () => setTimeSeriesShowLabels(!state.timeSeriesShowLabels));
+  controls.appendChild(labelsButton);
+  const zoomResetButton = document.createElement("button");
+  zoomResetButton.type = "button";
+  zoomResetButton.className = "time-series-control-btn";
+  zoomResetButton.textContent = "Reset Zoom";
+  zoomResetButton.disabled = !state.priceScatterViewport || !numericSource.length;
+  zoomResetButton.addEventListener("click", () => resetPriceScatterZoom());
+  controls.appendChild(zoomResetButton);
+  header.appendChild(controls);
+  container.appendChild(header);
+
+  const noteWrap = document.createElement("div");
+  noteWrap.className = "time-series-notes";
+  const groupedNote = document.createElement("p");
+  groupedNote.className = "muted";
+  groupedNote.textContent =
+    noGrouping
+      ? "Points show individual runs. Click a point to open that run."
+      : groupBy === "model"
+      ? "Points show average estimated cost and average metric per model. Click a point to open the best run for that model."
+      : "Points show average estimated cost and average metric per task. Click a point to open the best run for that task.";
+  noteWrap.appendChild(groupedNote);
+  if (unknownPriceRunCount > 0) {
+    const unknownPriceNote = document.createElement("p");
+    unknownPriceNote.className = "muted";
+    unknownPriceNote.textContent =
+      unknownBandRunCount > 0
+        ? `${formatNum(unknownBandRunCount, 0)} of ${formatNum(unknownPriceRunCount, 0)} run(s) with no known price are shown in the Unknown Price band on the left.`
+        : `${formatNum(unknownPriceRunCount, 0)} run(s) have no known price and are folded into mixed points that average only the known-price runs.`;
+    noteWrap.appendChild(unknownPriceNote);
+  }
+  if (mixedPriceGroupCount > 0) {
+    const mixedPriceNote = document.createElement("p");
+    mixedPriceNote.className = "muted";
+    mixedPriceNote.textContent = `${formatNum(mixedPriceGroupCount, 0)} plotted point(s) mix known-price and unknown-price runs; their price averages only the known-price runs.`;
+    noteWrap.appendChild(mixedPriceNote);
+  }
+  if (missingMetricCount > 0) {
+    const omittedNote = document.createElement("p");
+    omittedNote.className = "muted";
+    omittedNote.textContent = `${formatNum(missingMetricCount, 0)} run(s) were omitted because they lack the selected metric.`;
+    noteWrap.appendChild(omittedNote);
+  }
+  if (isLowerBetterMetric(metricKey)) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = `${metricLabel} is lower-is-better.`;
+    noteWrap.appendChild(note);
+  }
+  const scaleNote = document.createElement("p");
+  scaleNote.className = "muted";
+  scaleNote.textContent = "Known-price axis uses a compressed symlog scale so low-cost runs remain readable without hiding expensive outliers.";
+  noteWrap.appendChild(scaleNote);
+  const zoomNote = document.createElement("p");
+  zoomNote.className = "muted";
+  zoomNote.textContent = numericSource.length
+    ? state.priceScatterViewport
+      ? "Drag within the numeric price area to zoom again. Double-click to reset zoom."
+      : "Drag within the numeric price area to zoom into a selected region. Double-click to reset zoom."
+    : "Zoom is unavailable because none of the visible points have a known numeric price.";
+  noteWrap.appendChild(zoomNote);
+  if (noteWrap.childElementCount) {
+    container.appendChild(noteWrap);
+  }
+
+  const chartWrap = document.createElement("div");
+  chartWrap.className = "time-series-wrap";
+  container.appendChild(chartWrap);
+
+  const width = 960;
+  const height = 460;
+  const margin = { top: 18, right: 26, bottom: 58, left: 78 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const svg = createSvgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "time-series-svg",
+    "aria-label": `Price versus ${metricLabel} scatterplot`,
+  });
+  chartWrap.appendChild(svg);
+
+  const hasNumericAxis = numericSource.length > 0;
+  const unknownBandWidth = unknownBandSource.length ? 88 : 0;
+  const unknownBandGap = unknownBandSource.length && hasNumericAxis ? 14 : 0;
+  const plotLeft = margin.left + unknownBandWidth + unknownBandGap;
+  const numericInnerWidth = width - margin.right - plotLeft;
+  const priceValues = numericSource.map((entry) => entry.priceValue);
+  const metricValues = source.map((entry) => entry.metricValue);
+  const fullXDomain = hasNumericAxis
+    ? expandNumericDomain(Math.min(...priceValues), Math.max(...priceValues), {
+        clampMin: 0,
+        fallbackPad: 0.01,
+      })
+    : { min: 0, max: 1 };
+  const fullYDomain = expandNumericDomain(Math.min(...metricValues), Math.max(...metricValues), {
+    fallbackPad: isPercentMetric(metricKey) ? 1 : 0.5,
+  });
+  const symlogConstant = hasNumericAxis ? computeSymlogConstant(priceValues) : 1;
+  const clampedViewport = hasNumericAxis
+    ? clampTimeSeriesViewport(
+        state.priceScatterViewport,
+        {
+          xMin: fullXDomain.min,
+          xMax: fullXDomain.max,
+          yMin: fullYDomain.min,
+          yMax: fullYDomain.max,
+        },
+        {
+          x: 1e-9,
+          y: 1e-9,
+        }
+      )
+    : null;
+  const xDomain = clampedViewport
+    ? { min: clampedViewport.xMin, max: clampedViewport.xMax }
+    : fullXDomain;
+  const yDomain = clampedViewport
+    ? { min: clampedViewport.yMin, max: clampedViewport.yMax }
+    : fullYDomain;
+  const xDomainProjectedMin = symlogTransform(xDomain.min, symlogConstant);
+  const xDomainProjectedMax = symlogTransform(xDomain.max, symlogConstant);
+  const xProjectedSpan = Math.max(xDomainProjectedMax - xDomainProjectedMin, 1e-9);
+  const xToPx = (value) =>
+    plotLeft + ((symlogTransform(value, symlogConstant) - xDomainProjectedMin) / xProjectedSpan) * numericInnerWidth;
+  const yToPx = (value) => margin.top + innerHeight - ((value - yDomain.min) / (yDomain.max - yDomain.min)) * innerHeight;
+  const pxToX = (px) =>
+    symlogInverse(xDomainProjectedMin + ((px - plotLeft) / Math.max(numericInnerWidth, 1)) * xProjectedSpan, symlogConstant);
+  const pxToY = (px) => yDomain.min + ((margin.top + innerHeight - px) / innerHeight) * (yDomain.max - yDomain.min);
+  const unknownBandCenterX = margin.left + unknownBandWidth / 2;
+  const unknownBandJitter = Math.min(unknownBandWidth * 0.23, 18);
+
+  const yTicks = buildNumericTicks(yDomain.min, yDomain.max, 5);
+  const xTicks = hasNumericAxis ? buildSymlogPriceTicks(xDomain.min, xDomain.max, symlogConstant, 6) : [];
+
+  yTicks.forEach((tickValue) => {
+    const y = yToPx(tickValue);
+    svg.appendChild(createSvgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, class: "time-series-grid-line" }));
+    const label = createSvgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "time-series-tick" });
+    label.textContent = isPercentMetric(metricKey) ? `${formatNum(tickValue, 0)}%` : formatNum(tickValue, 2);
+    svg.appendChild(label);
+  });
+
+  if (unknownBandSource.length) {
+    svg.appendChild(
+      createSvgNode("rect", {
+        x: margin.left,
+        y: margin.top,
+        width: unknownBandWidth,
+        height: innerHeight,
+        class: "time-series-unknown-band",
+      })
+    );
+    const unknownBandLabel = createSvgNode("text", {
+      x: unknownBandCenterX,
+      y: margin.top + 14,
+      "text-anchor": "middle",
+      class: "time-series-unknown-band-label",
+    });
+    unknownBandLabel.textContent = "Unknown Price";
+    svg.appendChild(unknownBandLabel);
+    const unknownBandTick = createSvgNode("text", {
+      x: unknownBandCenterX,
+      y: height - margin.bottom + 20,
+      "text-anchor": "middle",
+      class: "time-series-tick",
+    });
+    unknownBandTick.textContent = "Unknown";
+    svg.appendChild(unknownBandTick);
+  }
+
+  xTicks.forEach((tickValue) => {
+    const x = xToPx(tickValue);
+    svg.appendChild(createSvgNode("line", { x1: x, x2: x, y1: margin.top, y2: height - margin.bottom, class: "time-series-grid-line" }));
+    const label = createSvgNode("text", {
+      x,
+      y: height - margin.bottom + 20,
+      "text-anchor": "middle",
+      class: "time-series-tick",
+    });
+    label.textContent = formatUsdAxisTick(tickValue);
+    svg.appendChild(label);
+  });
+
+  svg.appendChild(
+    createSvgNode("line", {
+      x1: margin.left,
+      x2: width - margin.right,
+      y1: height - margin.bottom,
+      y2: height - margin.bottom,
+      class: "time-series-axis",
+    })
+  );
+  svg.appendChild(
+    createSvgNode("line", {
+      x1: margin.left,
+      x2: margin.left,
+      y1: margin.top,
+      y2: height - margin.bottom,
+      class: "time-series-axis",
+    })
+  );
+
+  const xAxisLabel = createSvgNode("text", {
+    x: hasNumericAxis
+      ? plotLeft + numericInnerWidth / 2
+      : margin.left + (unknownBandWidth ? unknownBandWidth / 2 : innerWidth / 2),
+    y: height - 14,
+    "text-anchor": "middle",
+    class: "time-series-axis-label",
+  });
+  xAxisLabel.textContent = "Estimated Cost (USD)";
+  svg.appendChild(xAxisLabel);
+
+  const yAxisLabel = createSvgNode("text", {
+    x: 18,
+    y: margin.top + innerHeight / 2,
+    transform: `rotate(-90 18 ${margin.top + innerHeight / 2})`,
+    "text-anchor": "middle",
+    class: "time-series-axis-label",
+  });
+  yAxisLabel.textContent = metricLabel;
+  svg.appendChild(yAxisLabel);
+
+  const selectionOverlay = createSvgNode("rect", {
+    x: plotLeft,
+    y: margin.top,
+    width: hasNumericAxis ? numericInnerWidth : 0,
+    height: innerHeight,
+    class: "time-series-selection-overlay",
+  });
+  svg.appendChild(selectionOverlay);
+
+  const getUnknownBandX = (entry) => {
+    const jitterSeed = hashOrdinalKey(`${entry.groupKey}|${entry.label}|${entry.count}`);
+    const jitterRatio = (jitterSeed % 1000) / 999;
+    return unknownBandCenterX + (jitterRatio - 0.5) * 2 * unknownBandJitter;
+  };
+
+  source.forEach((entry) => {
+    const isSelected = entry.runs.some((run) => run.filePath === state.selectedRunPath);
+    const priceLabelText = entry.hasKnownPrice ? formatUsd(entry.priceValue) : "Unknown price";
+    const priceDetailText = entry.hasKnownPrice
+      ? entry.unknownPriceCount
+        ? `${formatNum(entry.unknownPriceCount, 0)} unknown-price run(s) omitted from average price`
+        : ""
+      : "Shown in Unknown Price band";
+    const pointGroup = createSvgNode("g", {
+      class: `time-series-point${isSelected ? " is-selected" : ""}`,
+      tabindex: "0",
+      role: "button",
+      "aria-label": [
+        entry.label,
+        priceLabelText,
+        formatMetric(metricKey, entry.metricValue),
+        `${formatNum(entry.count, 0)} run(s)`,
+        priceDetailText,
+      ]
+        .filter(Boolean)
+        .join(", "),
+    });
+    const pointX = entry.hasKnownPrice ? xToPx(entry.priceValue) : getUnknownBandX(entry);
+    const pointY = yToPx(entry.metricValue);
+    const fillColor =
+      noGrouping
+        ? "var(--paper-strong)"
+        : groupBy === "task"
+        ? taskColorByName.get(entry.groupKey) || TIME_SERIES_TASK_COLORS[0]
+        : "var(--paper-strong)";
+    const outlineColor =
+      noGrouping
+        ? modelColorByName.get(entry.representativeRun.model) || getModelSeriesColor(entry.representativeRun.model)
+        : groupBy === "model"
+        ? modelColorByName.get(entry.groupKey) || getModelSeriesColor(entry.groupKey)
+        : "var(--ink)";
+    const shape =
+      noGrouping
+        ? modelShapeByName.get(entry.representativeRun.model) || TIME_SERIES_MODEL_SHAPES[0]
+        : groupBy === "model"
+        ? modelShapeByName.get(entry.groupKey) || TIME_SERIES_MODEL_SHAPES[0]
+        : "circle";
+    appendTimeSeriesPointGlyph(pointGroup, {
+      shape,
+      cx: pointX,
+      cy: pointY,
+      size: entry.count > 1 ? 10.5 : 8.6,
+      fillColor,
+      fillOpacity: groupBy === "task" ? 0.88 : 0.74,
+      outlineColor,
+      strokeWidth: groupBy === "task" ? 1.35 : 1.55,
+      innerDotColor:
+        noGrouping
+          ? taskColorByName.get(asTrimmedString(entry.representativeRun.task)) || TIME_SERIES_TASK_COLORS[0]
+          : "",
+      innerDotRadius: noGrouping ? 2.2 : null,
+      isSelected,
+    });
+    const title = createSvgNode("title");
+    title.textContent = [
+      entry.label,
+      entry.count > 1 ? `avg ${priceLabelText}` : priceLabelText,
+      entry.count > 1 ? `avg ${formatMetric(metricKey, entry.metricValue)}` : formatMetric(metricKey, entry.metricValue),
+      `${entry.count} run(s)`,
+      priceDetailText,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    pointGroup.appendChild(title);
+    pointGroup.addEventListener("click", () => openRunModal(entry.representativeRun));
+    pointGroup.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openRunModal(entry.representativeRun);
+      }
+    });
+    svg.appendChild(pointGroup);
+
+    if (state.timeSeriesShowLabels) {
+      const label = createSvgNode("text", {
+        x: pointX + 7,
+        y: pointY - 8,
+        class: "time-series-point-label",
+      });
+      label.textContent = truncateTimeSeriesLabel(
+        `${entry.label}${entry.count > 1 ? ` (${entry.count})` : ""} | ${priceLabelText}`,
+        30
+      );
+      svg.appendChild(label);
+    }
+  });
+
+  const selectionRect = createSvgNode("rect", {
+    class: "time-series-selection-box",
+    visibility: "hidden",
+  });
+  svg.appendChild(selectionRect);
+
+  const pointerState = {
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+  };
+
+  const svgPointForEvent = (event) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / Math.max(rect.width, 1);
+    const scaleY = height / Math.max(rect.height, 1);
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+    };
+  };
+
+  const clampPlotPoint = (point) => ({
+    x: Math.max(plotLeft, Math.min(width - margin.right, point.x)),
+    y: Math.max(margin.top, Math.min(height - margin.bottom, point.y)),
+  });
+
+  const updateSelectionBox = () => {
+    const left = Math.min(pointerState.startX, pointerState.currentX);
+    const top = Math.min(pointerState.startY, pointerState.currentY);
+    const boxWidth = Math.abs(pointerState.currentX - pointerState.startX);
+    const boxHeight = Math.abs(pointerState.currentY - pointerState.startY);
+    selectionRect.setAttribute("x", String(left));
+    selectionRect.setAttribute("y", String(top));
+    selectionRect.setAttribute("width", String(boxWidth));
+    selectionRect.setAttribute("height", String(boxHeight));
+    selectionRect.setAttribute("visibility", boxWidth > 0 && boxHeight > 0 ? "visible" : "hidden");
+  };
+
+  const stopDragging = () => {
+    pointerState.dragging = false;
+    selectionRect.setAttribute("visibility", "hidden");
+    svg.classList.remove("is-brushing");
+  };
+
+  const handleWindowMouseUp = (event) => {
+    if (!pointerState.dragging) {
+      window.removeEventListener("mouseup", handleWindowMouseUp);
+      return;
+    }
+    const point = clampPlotPoint(svgPointForEvent(event));
+    pointerState.currentX = point.x;
+    pointerState.currentY = point.y;
+    const dx = Math.abs(pointerState.currentX - pointerState.startX);
+    const dy = Math.abs(pointerState.currentY - pointerState.startY);
+    stopDragging();
+    window.removeEventListener("mouseup", handleWindowMouseUp);
+
+    if (dx < 12 || dy < 12) {
+      return;
+    }
+
+    const left = Math.min(pointerState.startX, pointerState.currentX);
+    const right = Math.max(pointerState.startX, pointerState.currentX);
+    const top = Math.min(pointerState.startY, pointerState.currentY);
+    const bottom = Math.max(pointerState.startY, pointerState.currentY);
+    setPriceScatterViewport({
+      xMin: pxToX(left),
+      xMax: pxToX(right),
+      yMin: pxToY(bottom),
+      yMax: pxToY(top),
+    });
+  };
+
+  if (hasNumericAxis) {
+    selectionOverlay.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const point = clampPlotPoint(svgPointForEvent(event));
+      pointerState.dragging = true;
+      pointerState.startX = point.x;
+      pointerState.startY = point.y;
+      pointerState.currentX = point.x;
+      pointerState.currentY = point.y;
+      svg.classList.add("is-brushing");
+      updateSelectionBox();
+      window.addEventListener("mouseup", handleWindowMouseUp);
+      event.preventDefault();
+    });
+
+    svg.addEventListener("mousemove", (event) => {
+      if (!pointerState.dragging) {
+        return;
+      }
+      const point = clampPlotPoint(svgPointForEvent(event));
+      pointerState.currentX = point.x;
+      pointerState.currentY = point.y;
+      updateSelectionBox();
+    });
+  }
+
+  svg.addEventListener("dblclick", () => {
+    resetPriceScatterZoom();
+  });
+
+  const legends = document.createElement("div");
+  legends.className = "time-series-legends";
+  if (noGrouping) {
+    legends.appendChild(
+      createTimeSeriesLegend(
+        "Tasks (color)",
+        tasks.map((task) => ({
+          type: "task",
+          color: taskColorByName.get(task),
+          label: task,
+        }))
+      )
+    );
+    legends.appendChild(
+      createTimeSeriesLegend(
+        "Models (shape + outline)",
+        models.map((model) => ({
+          type: "model",
+          shape: modelShapeByName.get(model),
+          fillOpacity: 0.72,
+          strokeColor: modelColorByName.get(model),
+          label: model,
+        }))
+      )
+    );
+  } else if (groupBy === "task") {
+    legends.appendChild(
+      createTimeSeriesLegend(
+        "Tasks (color)",
+        tasks.map((task) => ({
+          type: "task",
+          color: taskColorByName.get(task),
+          label: task,
+        }))
+      )
+    );
+  } else {
+    legends.appendChild(
+      createTimeSeriesLegend(
+        "Models (shape + outline)",
+        models.map((model) => ({
+          type: "model",
+          shape: modelShapeByName.get(model),
+          fillOpacity: 0.72,
+          strokeColor: modelColorByName.get(model),
+          label: model,
+        }))
+      )
+    );
+  }
   container.appendChild(legends);
 }
 
@@ -3844,6 +4758,10 @@ function renderLeaderboard(runs) {
     renderLeaderboardTimeSeries(panel, runs);
     return;
   }
+  if (state.leaderboardTab === "price_scatter") {
+    renderLeaderboardPriceScatter(panel, runs);
+    return;
+  }
   if (state.leaderboardTab === "table") {
     renderLeaderboardMetricsTable(panel, runs);
     return;
@@ -3956,8 +4874,89 @@ const TIME_SERIES_TASK_COLORS = [
   "#e879f9",
   "#34d399",
 ];
+const TIME_SERIES_MODEL_OUTLINE_COLORS = [
+  "#93c5fd",
+  "#fca5a5",
+  "#fde047",
+  "#86efac",
+  "#c4b5fd",
+  "#fb7185",
+  "#67e8f9",
+  "#fdba74",
+  "#bef264",
+  "#818cf8",
+  "#f0abfc",
+  "#6ee7b7",
+  "#f87171",
+  "#f59e0b",
+  "#2dd4bf",
+  "#d8b4fe",
+  "#60a5fa",
+  "#fb923c",
+  "#84cc16",
+  "#e879f9",
+  "#38bdf8",
+  "#ef4444",
+  "#facc15",
+  "#22c55e",
+];
 const TIME_SERIES_MODEL_SHAPES = ["circle", "square", "diamond", "triangle", "triangle_down", "hexagon", "pentagon", "octagon"];
 const SELECTED_TAG_BADGE_COLORS = ["#6ea8ff", "#50e3c2", "#ffb36b", "#f472b6", "#facc15", "#22d3ee", "#fb7185", "#4ade80"];
+
+function hashOrdinalKey(value) {
+  const text = String(value || "");
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function getStableOrdinalIndex(value, paletteSize, universe = [], namespace = "") {
+  if (!Number.isFinite(paletteSize) || paletteSize <= 0) {
+    return 0;
+  }
+  const normalized = asTrimmedString(value);
+  if (!normalized) {
+    return 0;
+  }
+  if (Array.isArray(universe) && universe.length) {
+    const universeIndex = universe.findIndex((entry) => asTrimmedString(entry) === normalized);
+    if (universeIndex >= 0) {
+      return universeIndex % paletteSize;
+    }
+  }
+  return hashOrdinalKey(`${namespace}:${normalized}`) % paletteSize;
+}
+
+function getTaskSeriesColor(taskName) {
+  return TIME_SERIES_TASK_COLORS[
+    getStableOrdinalIndex(taskName, TIME_SERIES_TASK_COLORS.length, state.tasks, "task-color")
+  ] || TIME_SERIES_TASK_COLORS[0];
+}
+
+function getModelSeriesStyle(modelName) {
+  const colorCount = TIME_SERIES_MODEL_OUTLINE_COLORS.length;
+  const shapeCount = TIME_SERIES_MODEL_SHAPES.length;
+  const comboCount = colorCount * shapeCount;
+  const comboIndex = getStableOrdinalIndex(modelName, comboCount, state.models, "model-style");
+  const shapeIndex = comboIndex % shapeCount;
+  const shapeCycle = Math.floor(comboIndex / shapeCount);
+  const colorIndex = (shapeCycle * 7 + shapeIndex * 11) % colorCount;
+  return {
+    color: TIME_SERIES_MODEL_OUTLINE_COLORS[colorIndex] || TIME_SERIES_MODEL_OUTLINE_COLORS[0],
+    shape: TIME_SERIES_MODEL_SHAPES[shapeIndex] || TIME_SERIES_MODEL_SHAPES[0],
+  };
+}
+
+function getModelSeriesColor(modelName) {
+  return getModelSeriesStyle(modelName).color;
+}
+
+function getModelSeriesShape(modelName) {
+  return getModelSeriesStyle(modelName).shape;
+}
 
 function toNonNegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -4457,7 +5456,7 @@ function renderTokenSignals(runs) {
     meta.className = "mono";
     meta.textContent =
       `${row.task} | avg/prompt ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)} | ` +
-      `est. ${formatUsd(row.estimatedCostUsd)}`;
+      `~ ${formatUsd(row.estimatedCostUsd)}`;
     head.appendChild(modelLabel);
     head.appendChild(meta);
     rowEl.appendChild(head);

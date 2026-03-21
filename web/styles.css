@@ -1258,6 +1258,19 @@ select[multiple] option.is-selected {
   font-weight: 600;
 }
 
+.time-series-unknown-band {
+  fill: color-mix(in srgb, var(--paper-strong) 84%, transparent);
+  stroke: color-mix(in srgb, var(--line-strong) 64%, transparent);
+  stroke-width: 1;
+}
+
+.time-series-unknown-band-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: "IBM Plex Mono", monospace;
+}
+
 .time-series-ci-line,
 .time-series-ci-cap {
   stroke: color-mix(in srgb, var(--ink) 40%, transparent);
@@ -1288,7 +1301,16 @@ select[multiple] option.is-selected {
 }
 
 .time-series-point.is-selected {
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 44%, transparent));
+  filter: none;
+}
+
+.time-series-point-halo {
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.time-series-point-core {
+  pointer-events: none;
 }
 
 .time-series-point-label {
@@ -1362,12 +1384,14 @@ select[multiple] option.is-selected {
   height: 12px;
   border-radius: 999px;
   flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 .time-series-shape-icon {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
+  overflow: visible;
 }
 
 .metric-best {

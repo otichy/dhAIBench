@@ -81,6 +81,32 @@ class PricingParserTests(unittest.TestCase):
             },
         )
 
+    def test_parse_vertex_standard_block_handles_extra_output_columns(self) -> None:
+        tier, long_context = pc.parse_vertex_tier_model_block(
+            (
+                "Gemini 3.1 Flash-Lite Preview "
+                "Input (text, image, video) $0.25 $0.25 $0.03 $0.03 "
+                "Text output (response and reasoning) $1.50 $1.50 $1.50 $1.50"
+            ),
+            "standard",
+        )
+        self.assertEqual(
+            tier,
+            {
+                "input_usd_per_mtokens": 0.25,
+                "cached_input_usd_per_mtokens": 0.03,
+                "output_usd_per_mtokens": 1.5,
+            },
+        )
+        self.assertEqual(
+            long_context,
+            {
+                "input_usd_per_mtokens": 0.25,
+                "cached_input_usd_per_mtokens": 0.03,
+                "output_usd_per_mtokens": 1.5,
+            },
+        )
+
     def test_parse_inception_pricing_page_extracts_cached_input(self) -> None:
         parsed = pc.build_inception_source_entries(
             _fake_fetcher({pc.INCEPTION_PRICING_URL: _fixture_text("inception_pricing_excerpt.html")})
@@ -200,6 +226,54 @@ class PricingCatalogGenerationTests(unittest.TestCase):
             written = output_path.read_text(encoding="utf-8")
             payload = json.loads(written.split("=", 1)[1].rsplit(";", 1)[0].strip())
             self.assertEqual(set(payload["providers"].keys()), {"openai"})
+
+    def test_sync_pricing_catalog_adds_unpriced_placeholder_for_new_model(self) -> None:
+        model_catalog = {
+            "openai": {
+                "models": ["gpt-5.4-mini", "gpt-6-preview"],
+            }
+        }
+        pricing_catalog = {
+            "updated_at": "2026-03-21T00:00:00Z",
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-5.4-mini": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 0.75,
+                                    "cached_input_usd_per_mtokens": 0.075,
+                                    "output_usd_per_mtokens": 4.5,
+                                }
+                            },
+                        }
+                    }
+                }
+            },
+        }
+
+        synced, added = pc.sync_pricing_catalog_with_model_catalog(model_catalog, pricing_catalog)
+        self.assertEqual(added, [("openai", "gpt-6-preview")])
+        self.assertEqual(
+            synced["providers"]["openai"]["models"]["gpt-6-preview"],
+            {
+                "status": "unpriced",
+                "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
+                "needs_manual_update": True,
+                "service_tiers": {
+                    "standard": {
+                        "input_usd_per_mtokens": None,
+                        "cached_input_usd_per_mtokens": None,
+                        "output_usd_per_mtokens": None,
+                    }
+                },
+            },
+        )
+        self.assertEqual(
+            synced["providers"]["openai"]["models"]["gpt6preview"]["status"],
+            "alias",
+        )
 
 
 if __name__ == "__main__":

@@ -48,14 +48,15 @@
     list.push(normalized);
   }
 
-  function buildLookupCandidates(run) {
+  function buildLookupCandidates(run, options = {}) {
+    const includeFileModelSlug = options.includeFileModelSlug !== false;
     const candidates = [];
     const seen = new Set();
     const values = [
       run && run.modelDetails ? run.modelDetails.model_requested : "",
       run && run.modelDetails ? run.modelDetails.model_for_requests : "",
       run ? run.model : "",
-      run ? run.fileModelSlug : "",
+      includeFileModelSlug && run ? run.fileModelSlug : "",
     ];
 
     values.forEach((value) => {
@@ -82,6 +83,132 @@
     });
 
     return candidates;
+  }
+
+  function getRequestyRoutePriority(modelKey) {
+    const prefix = asTrimmedString(modelKey).split("/", 1)[0].toLowerCase();
+    switch (prefix) {
+      case "policy":
+        return 100;
+      case "bedrock":
+        return 40;
+      case "vertex":
+        return 30;
+      case "openai-responses":
+        return 20;
+      default:
+        return 0;
+    }
+  }
+
+  function deriveRequestyPrimaryRouteCandidates(providerModels, candidate) {
+    const trimmed = asTrimmedString(candidate);
+    if (!trimmed || trimmed.includes("/")) {
+      return [];
+    }
+
+    const matches = Object.keys(providerModels || {})
+      .map((modelKey) => {
+        const normalizedKey = asTrimmedString(modelKey);
+        if (!normalizedKey.includes("/")) {
+          return null;
+        }
+        const tail = normalizedKey.split("/", 2)[1];
+        if (!tail) {
+          return null;
+        }
+        const tailBase = tail.split("@", 1)[0];
+        if (tail !== trimmed && tailBase !== trimmed) {
+          return null;
+        }
+        const resolved = resolveEntryForKey(providerModels, normalizedKey);
+        if (!resolved || !resolved.entry || resolved.entry.status !== "priced") {
+          return null;
+        }
+        return {
+          key: normalizedKey,
+          resolvedKey: resolved.resolvedKey,
+        };
+      })
+      .filter(Boolean);
+
+    if (!matches.length) {
+      return [];
+    }
+
+    matches.sort((left, right) => {
+      const priorityDiff = getRequestyRoutePriority(left.resolvedKey) - getRequestyRoutePriority(right.resolvedKey);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      const leftRegionPenalty = left.resolvedKey.includes("@") ? 1 : 0;
+      const rightRegionPenalty = right.resolvedKey.includes("@") ? 1 : 0;
+      if (leftRegionPenalty !== rightRegionPenalty) {
+        return leftRegionPenalty - rightRegionPenalty;
+      }
+      return left.resolvedKey.localeCompare(right.resolvedKey);
+    });
+
+    const best = matches[0];
+    const bestPriority = getRequestyRoutePriority(best.resolvedKey);
+    const bestRegionPenalty = best.resolvedKey.includes("@") ? 1 : 0;
+    const competingBest = matches.filter((entry) => {
+      return (
+        getRequestyRoutePriority(entry.resolvedKey) === bestPriority &&
+        (entry.resolvedKey.includes("@") ? 1 : 0) === bestRegionPenalty
+      );
+    });
+    if (competingBest.length !== 1) {
+      return [];
+    }
+
+    return [best.key, best.resolvedKey, sanitizeModelIdentifier(best.resolvedKey)];
+  }
+
+  function buildProviderScopedCandidates(providerKey, candidate, providerModels) {
+    const scoped = [];
+    const seen = new Set();
+    const trimmed = asTrimmedString(candidate);
+    if (!trimmed) {
+      return scoped;
+    }
+
+    pushUnique(scoped, seen, trimmed);
+
+    if (normalizeProviderKey(providerKey) === "google" && !trimmed.startsWith("models/")) {
+      const prefixed = `models/${trimmed}`;
+      pushUnique(scoped, seen, prefixed);
+      pushUnique(scoped, seen, sanitizeModelIdentifier(prefixed));
+    }
+
+    if (normalizeProviderKey(providerKey) === "requesty") {
+      deriveRequestyPrimaryRouteCandidates(providerModels, trimmed).forEach((value) => {
+        pushUnique(scoped, seen, value);
+      });
+    }
+
+    return scoped;
+  }
+
+  function resolveProviderMatch(providerKey, providerModels, candidates) {
+    for (const candidate of candidates) {
+      const scopedCandidates = buildProviderScopedCandidates(providerKey, candidate, providerModels);
+      for (const scopedCandidate of scopedCandidates) {
+        if (!Object.prototype.hasOwnProperty.call(providerModels, scopedCandidate)) {
+          continue;
+        }
+        const resolved = resolveEntryForKey(providerModels, scopedCandidate);
+        if (resolved) {
+          return {
+            providerKey,
+            matchedKey: scopedCandidate,
+            resolvedKey: resolved.resolvedKey,
+            entry: resolved.entry,
+          };
+        }
+      }
+    }
+    return null;
   }
 
   function resolveEntryForKey(providerModels, key) {
@@ -139,31 +266,26 @@
     return uniqueResolved.size === 1 ? [...uniqueResolved.values()][0] : null;
   }
 
-  function resolvePricingMatch(catalog, run, candidates) {
+  function resolvePricingMatch(catalog, run, candidates, options = {}) {
     const providers = catalog && catalog.providers && typeof catalog.providers === "object" ? catalog.providers : {};
     const preferredProvider = normalizeProviderKey(
       (run && run.provider) || (run && run.modelDetails ? run.modelDetails.provider : "")
     );
+    const allowUniqueProviderFallback = options.allowUniqueProviderFallback !== false;
 
     if (preferredProvider && providers[preferredProvider]) {
       const providerModels = providers[preferredProvider].models || {};
-      for (const candidate of candidates) {
-        if (!Object.prototype.hasOwnProperty.call(providerModels, candidate)) {
-          continue;
-        }
-        const resolved = resolveEntryForKey(providerModels, candidate);
-        if (resolved) {
-          return {
-            providerKey: preferredProvider,
-            matchedKey: candidate,
-            resolvedKey: resolved.resolvedKey,
-            entry: resolved.entry,
-          };
-        }
+      const preferredMatch = resolveProviderMatch(preferredProvider, providerModels, candidates);
+      if (preferredMatch) {
+        return preferredMatch;
       }
     }
 
     if (preferredProvider === "requesty") {
+      return null;
+    }
+
+    if (!allowUniqueProviderFallback) {
       return null;
     }
 
@@ -176,6 +298,8 @@
         return "priced";
       case "unsupported":
         return "unsupported model";
+      case "unpriced":
+        return "manual pricing needed";
       case "tier_unavailable":
         return "tier unavailable";
       case "rate_missing":
@@ -221,20 +345,29 @@
       };
     }
 
-    const candidates = buildLookupCandidates(run);
-    const match = resolvePricingMatch(catalog, run, candidates);
+    const strongCandidates = buildLookupCandidates(run, { includeFileModelSlug: false });
+    let match = resolvePricingMatch(catalog, run, strongCandidates);
+    if (!match) {
+      const allCandidates = buildLookupCandidates(run);
+      const hasWeakOnlyCandidates = allCandidates.some((candidate) => !strongCandidates.includes(candidate));
+      if (hasWeakOnlyCandidates) {
+        match = resolvePricingMatch(catalog, run, allCandidates, {
+          allowUniqueProviderFallback: strongCandidates.length === 0,
+        });
+      }
+    }
     if (!match) {
       return baseResult;
     }
 
-    if (!match.entry || match.entry.status === "unsupported") {
+    if (!match.entry || match.entry.status === "unsupported" || match.entry.status === "unpriced") {
       return {
         ...baseResult,
         providerKey: match.providerKey,
         matchedKey: match.matchedKey,
         resolvedKey: match.resolvedKey,
-        status: "unsupported",
-        statusLabel: statusLabel("unsupported"),
+        status: match.entry && match.entry.status === "unpriced" ? "unpriced" : "unsupported",
+        statusLabel: statusLabel(match.entry && match.entry.status === "unpriced" ? "unpriced" : "unsupported"),
       };
     }
 

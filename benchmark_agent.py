@@ -2969,6 +2969,28 @@ def update_model_catalog(
         return 1
 
     write_model_catalog_js(catalog, output_path)
+    prices_path = os.path.join(os.path.dirname(output_path) or ".", "config_prices.js")
+    try:
+        from pricing_catalog import sync_missing_price_entries
+
+        _, added_price_models = sync_missing_price_entries(
+            output_path,
+            prices_path,
+            providers=selected,
+        )
+        if added_price_models:
+            logging.warning(
+                "Added %d new placeholder pricing entr%s to %s. Fill in the prices manually.",
+                len(added_price_models),
+                "y" if len(added_price_models) == 1 else "ies",
+                prices_path,
+            )
+            for provider_slug, model_id in added_price_models[:20]:
+                logging.warning("Manual pricing needed: %s / %s", provider_slug, model_id)
+            if len(added_price_models) > 20:
+                logging.warning("... and %d more model(s).", len(added_price_models) - 20)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Could not sync config_prices.js after model update: %s", exc)
     if errors:
         logging.warning(
             "Model catalog generated with %d provider(s) reporting errors. See log for details.",
