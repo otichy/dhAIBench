@@ -4105,13 +4105,20 @@ def log_unclassified_resume_hint(
         return
 
     resume_command = render_cli_command(
-        ["python", "benchmark_agent.py", "--resume", "--output", output_path, "--unclassified"]
+        [
+            "python",
+            "benchmark_agent.py",
+            "--resume",
+            "--output",
+            output_path,
+            "--repeat_unclassified",
+        ]
     )
     unclassified_share = (float(unclassified_count) / float(total_predictions)) * 100.0
     if reprompt_unclassified:
         logging.warning(
             "Run finished with %d/%d prediction(s) still labeled 'unclassified' (%.1f%%). "
-            "If you want to try those rows again, rerun: %s",
+            "If you want the script to keep retrying those rows automatically, rerun: %s",
             unclassified_count,
             total_predictions,
             unclassified_share,
@@ -4120,7 +4127,7 @@ def log_unclassified_resume_hint(
     else:
         logging.warning(
             "Run finished with %d/%d prediction(s) labeled 'unclassified' (%.1f%%). "
-            "To re-prompt only those rows and potentially improve results, rerun: %s",
+            "To automatically retry those rows until they resolve or stabilize, rerun: %s",
             unclassified_count,
             total_predictions,
             unclassified_share,

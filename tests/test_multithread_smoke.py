@@ -450,7 +450,8 @@ class MultithreadSmokeTests(unittest.TestCase):
                 combined_logs = "\n".join(captured_logs.output)
                 self.assertIn("1/2 prediction(s) labeled 'unclassified'", combined_logs)
                 self.assertIn("--resume --output", combined_logs)
-                self.assertIn("--unclassified", combined_logs)
+                self.assertIn("--repeat_unclassified", combined_logs)
+                self.assertNotIn("--unclassified", combined_logs)
 
     def test_auto_repeat_unclassified_retries_until_resolved(self) -> None:
         ids = ["id1", "id2"]
