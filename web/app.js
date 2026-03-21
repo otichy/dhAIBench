@@ -3305,6 +3305,9 @@ function createTimeSeriesLegend(title, rows) {
   rows.forEach((row) => {
     const entry = document.createElement("div");
     entry.className = "time-series-legend-row";
+    if (row.tooltip) {
+      entry.title = row.tooltip;
+    }
     if (row.type === "task") {
       const swatch = document.createElement("span");
       swatch.className = "time-series-task-swatch";
@@ -3331,11 +3334,75 @@ function createTimeSeriesLegend(title, rows) {
 
     const label = document.createElement("span");
     label.textContent = row.label;
+    if (row.tooltip) {
+      label.title = row.tooltip;
+    }
     entry.appendChild(label);
     grid.appendChild(entry);
   });
   wrap.appendChild(grid);
   return wrap;
+}
+
+function getResolvedPricingCatalogEntry(providerKey, resolvedKey) {
+  const catalog = pricingApi ? pricingApi.getPricingCatalog(window.MODEL_PRICING_CATALOG) : null;
+  if (
+    !catalog ||
+    !catalog.providers ||
+    typeof catalog.providers !== "object" ||
+    !catalog.providers[providerKey] ||
+    !catalog.providers[providerKey].models ||
+    typeof catalog.providers[providerKey].models !== "object"
+  ) {
+    return null;
+  }
+  const providerModels = catalog.providers[providerKey].models;
+  const entry = providerModels[resolvedKey];
+  return entry && typeof entry === "object" ? entry : null;
+}
+
+function formatPricingTierSummary(tierName, tierRates) {
+  if (!tierRates || typeof tierRates !== "object") {
+    return `${tierName} unavailable`;
+  }
+  return `${tierName} ~ in ${formatUsd(tierRates.input_usd_per_mtokens)} | cache ${formatUsd(
+    tierRates.cached_input_usd_per_mtokens
+  )} | out ${formatUsd(tierRates.output_usd_per_mtokens)} / 1M`;
+}
+
+function buildModelLegendPricingTooltip(modelName, runsForModel) {
+  if (!pricingApi || !Array.isArray(runsForModel) || !runsForModel.length) {
+    return "";
+  }
+  const summaries = new Map();
+  runsForModel.forEach((run) => {
+    const pricing = run && run.pricing ? run.pricing : null;
+    const providerKey = asTrimmedString(pricing && pricing.providerKey)
+      || (pricingApi.normalizeProviderKey ? pricingApi.normalizeProviderKey(run && run.provider) : asTrimmedString(run && run.provider));
+    const resolvedKey = asTrimmedString(pricing && pricing.resolvedKey) || asTrimmedString(run && run.model);
+    const tierName = asTrimmedString(pricing && pricing.pricingTier) || "standard";
+    const entry = providerKey && resolvedKey ? getResolvedPricingCatalogEntry(providerKey, resolvedKey) : null;
+    let line = "";
+    if (entry && entry.status === "priced") {
+      const serviceTiers = entry.service_tiers && typeof entry.service_tiers === "object" ? entry.service_tiers : {};
+      const preferredTier = serviceTiers[tierName] && typeof serviceTiers[tierName] === "object" ? serviceTiers[tierName] : null;
+      const standardTier = serviceTiers.standard && typeof serviceTiers.standard === "object" ? serviceTiers.standard : null;
+      const tierSummary = preferredTier
+        ? formatPricingTierSummary(tierName, preferredTier)
+        : standardTier
+        ? `${tierName} unavailable; ${formatPricingTierSummary("standard", standardTier)}`
+        : `${tierName} unavailable`;
+      line = `${providerKey || "unknown"} / ${resolvedKey}: ${tierSummary}`;
+    } else {
+      const statusLabel = asTrimmedString(pricing && pricing.statusLabel) || "no pricing match";
+      line = `${providerKey || "unknown"} / ${resolvedKey || modelName}: ${statusLabel}`;
+    }
+    summaries.set(line, line);
+  });
+  if (!summaries.size) {
+    return "";
+  }
+  return [`Pricing for ${modelName}`, ...summaries.keys()].join("\n");
 }
 
 function truncateTimeSeriesLabel(label, maxLength = 18) {
@@ -3519,10 +3586,6 @@ function renderLeaderboardTimeSeries(container, runs) {
 
   const header = document.createElement("div");
   header.className = "time-series-head";
-  const summary = document.createElement("p");
-  summary.className = "muted";
-  summary.textContent = `${formatNum(source.length, 0)} runs | ${formatNum(tasks.length, 0)} task(s) | ${formatNum(models.length, 0)} model(s)`;
-  header.appendChild(summary);
 
   const controls = document.createElement("div");
   controls.className = "time-series-controls";
@@ -3548,12 +3611,6 @@ function renderLeaderboardTimeSeries(container, runs) {
 
   const noteWrap = document.createElement("div");
   noteWrap.className = "time-series-notes";
-  if (showApproximateCi) {
-    const ciNote = document.createElement("p");
-    ciNote.className = "muted";
-    ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
-    noteWrap.appendChild(ciNote);
-  }
   if (isLowerBetterMetric(metricKey)) {
     const note = document.createElement("p");
     note.className = "muted";
@@ -3965,9 +4022,6 @@ function renderLeaderboardPriceScatter(container, runs) {
       };
     })
     .filter(Boolean);
-  const unknownPriceRunCount = entriesWithMetric.filter((entry) => !entry.hasKnownPrice).length;
-  const missingMetricCount = runs.length - entriesWithMetric.length;
-
   if (!entriesWithMetric.length) {
     container.innerHTML = `<p class="muted">No runs with ${metricLabel.toLowerCase()} in current filter.</p>`;
     return;
@@ -3979,6 +4033,17 @@ function renderLeaderboardPriceScatter(container, runs) {
   const models = [...new Set(entriesWithMetric.map((entry) => asTrimmedString(entry.run.model)).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b)
   );
+  const modelRunsByName = new Map();
+  entriesWithMetric.forEach((entry) => {
+    const modelName = asTrimmedString(entry.run.model);
+    if (!modelName) {
+      return;
+    }
+    if (!modelRunsByName.has(modelName)) {
+      modelRunsByName.set(modelName, []);
+    }
+    modelRunsByName.get(modelName).push(entry.run);
+  });
   const groupBy = state.leaderboardChartGroupBy;
   const noGrouping = groupBy === "none";
   const taskColorByName = new Map(tasks.map((task) => [task, getTaskSeriesColor(task)]));
@@ -4048,27 +4113,9 @@ function renderLeaderboardPriceScatter(container, runs) {
     });
   const numericSource = source.filter((entry) => entry.hasKnownPrice);
   const unknownBandSource = source.filter((entry) => !entry.hasKnownPrice);
-  const unknownBandRunCount = unknownBandSource.reduce((sum, entry) => sum + entry.count, 0);
-  const mixedPriceGroupCount = numericSource.filter((entry) => entry.unknownPriceCount > 0).length;
 
   const header = document.createElement("div");
   header.className = "time-series-head";
-  const summary = document.createElement("p");
-  summary.className = "muted";
-  const summaryParts = [
-    noGrouping
-      ? `${formatNum(source.length, 0)} plotted run(s)`
-      : `${formatNum(source.length, 0)} ${groupBy} group(s) | ${formatNum(entriesWithMetric.length, 0)} plotted run(s)`,
-  ];
-  if (unknownBandRunCount) {
-    summaryParts.push(`${formatNum(unknownBandRunCount, 0)} run(s) in Unknown Price band`);
-  }
-  if (mixedPriceGroupCount) {
-    summaryParts.push(`${formatNum(mixedPriceGroupCount, 0)} mixed-price point(s)`);
-  }
-  summary.textContent = summaryParts.join(" | ");
-  header.appendChild(summary);
-
   const controls = document.createElement("div");
   controls.className = "time-series-controls";
   const labelsButton = document.createElement("button");
@@ -4090,46 +4137,6 @@ function renderLeaderboardPriceScatter(container, runs) {
 
   const noteWrap = document.createElement("div");
   noteWrap.className = "time-series-notes";
-  const groupedNote = document.createElement("p");
-  groupedNote.className = "muted";
-  groupedNote.textContent =
-    noGrouping
-      ? "Points show individual runs. Click a point to open that run."
-      : groupBy === "model"
-      ? "Points show average estimated cost and average metric per model. Click a point to open the best run for that model."
-      : "Points show average estimated cost and average metric per task. Click a point to open the best run for that task.";
-  noteWrap.appendChild(groupedNote);
-  if (unknownPriceRunCount > 0) {
-    const unknownPriceNote = document.createElement("p");
-    unknownPriceNote.className = "muted";
-    unknownPriceNote.textContent =
-      unknownBandRunCount > 0
-        ? `${formatNum(unknownBandRunCount, 0)} of ${formatNum(unknownPriceRunCount, 0)} run(s) with no known price are shown in the Unknown Price band on the left.`
-        : `${formatNum(unknownPriceRunCount, 0)} run(s) have no known price and are folded into mixed points that average only the known-price runs.`;
-    noteWrap.appendChild(unknownPriceNote);
-  }
-  if (mixedPriceGroupCount > 0) {
-    const mixedPriceNote = document.createElement("p");
-    mixedPriceNote.className = "muted";
-    mixedPriceNote.textContent = `${formatNum(mixedPriceGroupCount, 0)} plotted point(s) mix known-price and unknown-price runs; their price averages only the known-price runs.`;
-    noteWrap.appendChild(mixedPriceNote);
-  }
-  if (missingMetricCount > 0) {
-    const omittedNote = document.createElement("p");
-    omittedNote.className = "muted";
-    omittedNote.textContent = `${formatNum(missingMetricCount, 0)} run(s) were omitted because they lack the selected metric.`;
-    noteWrap.appendChild(omittedNote);
-  }
-  if (isLowerBetterMetric(metricKey)) {
-    const note = document.createElement("p");
-    note.className = "muted";
-    note.textContent = `${metricLabel} is lower-is-better.`;
-    noteWrap.appendChild(note);
-  }
-  const scaleNote = document.createElement("p");
-  scaleNote.className = "muted";
-  scaleNote.textContent = "Known-price axis uses a compressed symlog scale so low-cost runs remain readable without hiding expensive outliers.";
-  noteWrap.appendChild(scaleNote);
   const zoomNote = document.createElement("p");
   zoomNote.className = "muted";
   zoomNote.textContent = numericSource.length
@@ -4283,12 +4290,22 @@ function renderLeaderboardPriceScatter(container, runs) {
     x: hasNumericAxis
       ? plotLeft + numericInnerWidth / 2
       : margin.left + (unknownBandWidth ? unknownBandWidth / 2 : innerWidth / 2),
-    y: height - 14,
+    y: height - 18,
     "text-anchor": "middle",
     class: "time-series-axis-label",
   });
   xAxisLabel.textContent = "Estimated Cost (USD)";
   svg.appendChild(xAxisLabel);
+  const xAxisSubLabel = createSvgNode("text", {
+    x: hasNumericAxis
+      ? plotLeft + numericInnerWidth / 2
+      : margin.left + (unknownBandWidth ? unknownBandWidth / 2 : innerWidth / 2),
+    y: height - 4,
+    "text-anchor": "middle",
+    class: "time-series-tick",
+  });
+  xAxisSubLabel.textContent = "(compressed symlog scale)";
+  svg.appendChild(xAxisSubLabel);
 
   const yAxisLabel = createSvgNode("text", {
     x: 18,
@@ -4537,6 +4554,7 @@ function renderLeaderboardPriceScatter(container, runs) {
           fillOpacity: 0.72,
           strokeColor: modelColorByName.get(model),
           label: model,
+          tooltip: buildModelLegendPricingTooltip(model, modelRunsByName.get(model) || []),
         }))
       )
     );
@@ -4561,6 +4579,7 @@ function renderLeaderboardPriceScatter(container, runs) {
           fillOpacity: 0.72,
           strokeColor: modelColorByName.get(model),
           label: model,
+          tooltip: buildModelLegendPricingTooltip(model, modelRunsByName.get(model) || []),
         }))
       )
     );
@@ -4905,6 +4924,8 @@ const TIME_SERIES_MODEL_OUTLINE_COLORS = [
 ];
 const TIME_SERIES_MODEL_SHAPES = ["circle", "square", "diamond", "triangle", "triangle_down", "hexagon", "pentagon", "octagon"];
 const SELECTED_TAG_BADGE_COLORS = ["#6ea8ff", "#50e3c2", "#ffb36b", "#f472b6", "#facc15", "#22d3ee", "#fb7185", "#4ade80"];
+let cachedModelSeriesStyleUniverseKey = "";
+let cachedModelSeriesStyleMap = new Map();
 
 function hashOrdinalKey(value) {
   const text = String(value || "");
@@ -4939,14 +4960,55 @@ function getTaskSeriesColor(taskName) {
   ] || TIME_SERIES_TASK_COLORS[0];
 }
 
+function buildModelSeriesStyleMap(universe = state.models) {
+  const normalizedUniverse = uniqueNonEmptyStrings(universe);
+  const universeKey = normalizedUniverse.join("\u001f");
+  if (cachedModelSeriesStyleUniverseKey === universeKey) {
+    return cachedModelSeriesStyleMap;
+  }
+
+  const shapeBuckets = new Map();
+  normalizedUniverse.forEach((modelName) => {
+    const shapeIndex = getStableOrdinalIndex(modelName, TIME_SERIES_MODEL_SHAPES.length, normalizedUniverse, "model-shape");
+    if (!shapeBuckets.has(shapeIndex)) {
+      shapeBuckets.set(shapeIndex, []);
+    }
+    shapeBuckets.get(shapeIndex).push(modelName);
+  });
+
+  const nextMap = new Map();
+  shapeBuckets.forEach((bucketModels, shapeIndex) => {
+    bucketModels.forEach((modelName, bucketIndex) => {
+      const colorIndex = (shapeIndex * 5 + bucketIndex * 11) % TIME_SERIES_MODEL_OUTLINE_COLORS.length;
+      nextMap.set(modelName, {
+        color: TIME_SERIES_MODEL_OUTLINE_COLORS[colorIndex] || TIME_SERIES_MODEL_OUTLINE_COLORS[0],
+        shape: TIME_SERIES_MODEL_SHAPES[shapeIndex] || TIME_SERIES_MODEL_SHAPES[0],
+      });
+    });
+  });
+
+  cachedModelSeriesStyleUniverseKey = universeKey;
+  cachedModelSeriesStyleMap = nextMap;
+  return cachedModelSeriesStyleMap;
+}
+
 function getModelSeriesStyle(modelName) {
-  const colorCount = TIME_SERIES_MODEL_OUTLINE_COLORS.length;
-  const shapeCount = TIME_SERIES_MODEL_SHAPES.length;
-  const comboCount = colorCount * shapeCount;
-  const comboIndex = getStableOrdinalIndex(modelName, comboCount, state.models, "model-style");
-  const shapeIndex = comboIndex % shapeCount;
-  const shapeCycle = Math.floor(comboIndex / shapeCount);
-  const colorIndex = (shapeCycle * 7 + shapeIndex * 11) % colorCount;
+  const normalized = asTrimmedString(modelName);
+  if (!normalized) {
+    return {
+      color: TIME_SERIES_MODEL_OUTLINE_COLORS[0],
+      shape: TIME_SERIES_MODEL_SHAPES[0],
+    };
+  }
+
+  const styleMap = buildModelSeriesStyleMap(state.models);
+  if (styleMap.has(normalized)) {
+    return styleMap.get(normalized);
+  }
+
+  const shapeIndex = getStableOrdinalIndex(normalized, TIME_SERIES_MODEL_SHAPES.length, [], "model-shape");
+  const colorOffset = getStableOrdinalIndex(normalized, TIME_SERIES_MODEL_OUTLINE_COLORS.length, [], "model-color");
+  const colorIndex = (shapeIndex * 5 + colorOffset * 11) % TIME_SERIES_MODEL_OUTLINE_COLORS.length;
   return {
     color: TIME_SERIES_MODEL_OUTLINE_COLORS[colorIndex] || TIME_SERIES_MODEL_OUTLINE_COLORS[0],
     shape: TIME_SERIES_MODEL_SHAPES[shapeIndex] || TIME_SERIES_MODEL_SHAPES[0],
