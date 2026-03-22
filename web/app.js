@@ -36,6 +36,7 @@ const state = {
   leaderboardChartGroupBy: "model",
   leaderboardChartBestByTask: false,
   leaderboardScatterXAxis: "price",
+  scatterShowCi: true,
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
   priceScatterViewport: null,
@@ -1226,6 +1227,7 @@ function persistUiState() {
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
     leaderboardChartBestByTask: state.leaderboardChartBestByTask,
     leaderboardScatterXAxis: state.leaderboardScatterXAxis,
+    scatterShowCi: state.scatterShowCi,
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
     priceScatterViewport: state.priceScatterViewport,
@@ -1312,6 +1314,9 @@ function restoreUiState() {
         LEADERBOARD_SCATTER_X_AXIS_KEYS.has(payload.leaderboardScatterXAxis)
       ) {
         state.leaderboardScatterXAxis = payload.leaderboardScatterXAxis;
+      }
+      if (typeof payload.scatterShowCi === "boolean") {
+        state.scatterShowCi = payload.scatterShowCi;
       }
       if (typeof payload.timeSeriesShowLabels === "boolean") {
         state.timeSeriesShowLabels = payload.timeSeriesShowLabels;
@@ -1638,6 +1643,16 @@ function setLeaderboardScatterXAxis(nextAxis) {
     return;
   }
   state.leaderboardScatterXAxis = nextAxis;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setScatterShowCi(nextValue) {
+  const normalized = Boolean(nextValue);
+  if (state.scatterShowCi === normalized) {
+    return;
+  }
+  state.scatterShowCi = normalized;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -3658,11 +3673,26 @@ function appendLeaderboardScatterAxisControls(controls) {
   controls.appendChild(timeButton);
 }
 
+function appendScatterCiToggleControl(controls, showControl) {
+  if (!controls || !showControl) {
+    return;
+  }
+
+  const ciButton = document.createElement("button");
+  ciButton.type = "button";
+  ciButton.className = `time-series-control-btn${state.scatterShowCi ? " active" : ""}`;
+  ciButton.textContent = state.scatterShowCi ? "CI: On" : "CI: Off";
+  ciButton.setAttribute("aria-pressed", state.scatterShowCi ? "true" : "false");
+  ciButton.addEventListener("click", () => setScatterShowCi(!state.scatterShowCi));
+  controls.appendChild(ciButton);
+}
+
 function renderLeaderboardTimeSeries(container, runs, options = {}) {
   const { includeScatterAxisSwitch = false } = options;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
-  const showApproximateCi = supportsApproximateCi(metricKey);
+  const supportsCi = supportsApproximateCi(metricKey);
+  const showApproximateCi = supportsCi && state.scatterShowCi;
   const showSelectedTagBadges = hasMultipleSelectedTags();
   const selectedTagColorMap = buildSelectedTagColorMap();
   const source = runs
@@ -3711,6 +3741,7 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
   if (includeScatterAxisSwitch) {
     appendLeaderboardScatterAxisControls(controls);
   }
+  appendScatterCiToggleControl(controls, supportsCi);
 
   const labelsButton = document.createElement("button");
   labelsButton.type = "button";
@@ -3738,6 +3769,12 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
     note.className = "muted";
     note.textContent = `${metricLabel} is lower-is-better.`;
     noteWrap.appendChild(note);
+  }
+  if (supportsCi && showApproximateCi) {
+    const ciNote = document.createElement("p");
+    ciNote.className = "muted";
+    ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
+    noteWrap.appendChild(ciNote);
   }
   const zoomNote = document.createElement("p");
   zoomNote.className = "muted";
@@ -3913,7 +3950,7 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
       class: `time-series-point${entry.run.filePath === state.selectedRunPath ? " is-selected" : ""}`,
       tabindex: "0",
       role: "button",
-      "aria-label": `${entry.run.task}, ${getRunModelDisplayName(entry.run)}, ${formatTs(entry.run.timestamp)}, ${formatMetric(metricKey, entry.metricValue)}`,
+      "aria-label": `${entry.run.task}, ${getRunModelDisplayName(entry.run)}, ${formatTs(entry.run.timestamp)}, ${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`,
     });
     const pointX = xToPx(entry.timestampMs);
     const pointY = yToPx(entry.metricValue);
@@ -3934,7 +3971,7 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
     title.textContent = `${entry.run.task} | ${getRunModelDisplayName(entry.run)} | ${formatTs(entry.run.timestamp)} | ${formatMetric(
       metricKey,
       entry.metricValue
-    )}`;
+    )}${formatCiRange(entry.ci)}`;
     pointGroup.appendChild(title);
     pointGroup.addEventListener("click", () => openRunModal(entry.run));
     pointGroup.addEventListener("keydown", (event) => {
@@ -4153,6 +4190,8 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   const { includeScatterAxisSwitch = false } = options;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const supportsCi = supportsApproximateCi(metricKey);
+  const showApproximateCi = supportsCi && state.scatterShowCi;
   const priceScatterCostMode = state.priceScatterCostMode;
   const priceAxisLabel = getPriceScatterCostModeLabel(priceScatterCostMode);
   const unknownBandLabelText = getPriceScatterUnknownLabel(priceScatterCostMode);
@@ -4245,6 +4284,12 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
         priceValue: averagePrice,
         hasKnownPrice: knownPriceEntries.length > 0,
         metricValue: averageMetric,
+        ci:
+          showApproximateCi && groupEntries.length === 1
+            ? getRunMetricConfidence(representative.run, metricKey)
+            : showApproximateCi
+            ? getMeanMetricConfidence(groupRuns, metricKey, averageMetric)
+            : null,
         unknownPriceCount: groupUnknownPriceCount,
         representativeRun: representative.run,
         runs: groupRuns,
@@ -4273,6 +4318,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   if (includeScatterAxisSwitch) {
     appendLeaderboardScatterAxisControls(controls);
   }
+  appendScatterCiToggleControl(controls, supportsCi);
   const totalCostButton = document.createElement("button");
   totalCostButton.type = "button";
   totalCostButton.className = `time-series-control-btn${priceScatterCostMode === "total" ? " active" : ""}`;
@@ -4306,6 +4352,12 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
 
   const noteWrap = document.createElement("div");
   noteWrap.className = "time-series-notes";
+  if (supportsCi && showApproximateCi) {
+    const ciNote = document.createElement("p");
+    ciNote.className = "muted";
+    ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
+    noteWrap.appendChild(ciNote);
+  }
   const zoomNote = document.createElement("p");
   zoomNote.className = "muted";
   zoomNote.textContent = numericSource.length
@@ -4516,7 +4568,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
       "aria-label": [
         entry.label,
         priceLabelText,
-        formatMetric(metricKey, entry.metricValue),
+        `${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`,
         `${formatNum(entry.count, 0)} run(s)`,
         priceDetailText,
       ]
@@ -4525,6 +4577,37 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     });
     const pointX = entry.hasKnownPrice ? xToPx(entry.priceValue) : getUnknownBandX(entry);
     const pointY = yToPx(entry.metricValue);
+    if (entry.ci && typeof entry.ci.low === "number" && typeof entry.ci.high === "number") {
+      const lowY = yToPx(entry.ci.low);
+      const highY = yToPx(entry.ci.high);
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: pointX,
+          x2: pointX,
+          y1: lowY,
+          y2: highY,
+          class: "time-series-ci-line",
+        })
+      );
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: pointX - 5,
+          x2: pointX + 5,
+          y1: lowY,
+          y2: lowY,
+          class: "time-series-ci-cap",
+        })
+      );
+      svg.appendChild(
+        createSvgNode("line", {
+          x1: pointX - 5,
+          x2: pointX + 5,
+          y1: highY,
+          y2: highY,
+          class: "time-series-ci-cap",
+        })
+      );
+    }
     const fillColor =
       noGrouping
         ? "var(--paper-strong)"
@@ -4563,7 +4646,9 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     title.textContent = [
       entry.label,
       entry.count > 1 ? `avg ${priceLabelText}` : priceLabelText,
-      entry.count > 1 ? `avg ${formatMetric(metricKey, entry.metricValue)}` : formatMetric(metricKey, entry.metricValue),
+      entry.count > 1
+        ? `avg ${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`
+        : `${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`,
       `${entry.count} run(s)`,
       priceDetailText,
     ]

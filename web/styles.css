@@ -911,8 +911,18 @@ select[multiple] option.is-selected {
 
 .leaderboard-tabs {
   display: inline-flex;
-  gap: 0.36rem;
-  margin-bottom: 0.52rem;
+  align-items: flex-end;
+  gap: 0.18rem;
+  margin-bottom: 0.68rem;
+  padding: 0.28rem 0.32rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 8%, var(--paper-strong)),
+      color-mix(in srgb, var(--paper) 96%, transparent)
+    );
+  border-radius: 16px 16px 0 0;
 }
 
 .leaderboard-head {
@@ -1062,19 +1072,64 @@ select[multiple] option.is-selected {
 }
 
 .leaderboard-tab-btn {
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 0.28rem 0.72rem;
-  font-size: 0.74rem;
+  position: relative;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-soft) 90%, var(--paper-strong)),
+      color-mix(in srgb, var(--surface-input) 94%, var(--paper))
+    );
+  color: color-mix(in srgb, var(--ink) 82%, var(--muted));
+  border-radius: 12px 12px 0 0;
+  padding: 0.48rem 0.88rem 0.44rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.leaderboard-tab-btn:hover {
+  transform: translateY(-1px);
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line-strong));
+}
+
+.leaderboard-tab-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .leaderboard-tab-btn.active {
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
-  border-color: transparent;
-  color: #031017;
+  transform: translateY(1px);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--paper-strong) 98%, white 2%),
+      color-mix(in srgb, var(--paper) 96%, var(--surface-input))
+    );
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+  color: var(--ink);
+  box-shadow:
+    0 -1px 0 color-mix(in srgb, white 14%, transparent) inset,
+    0 14px 24px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.leaderboard-tab-btn.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--paper);
 }
 
 .leaderboard-panel {
@@ -2397,6 +2452,10 @@ tbody tr.selected-row {
   .choice-chip,
   .chip {
     padding: 0.44rem 0.78rem;
+  }
+
+  .kpis {
+    display: none;
   }
 }
 
