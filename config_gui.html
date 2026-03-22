@@ -368,6 +368,67 @@
       .cmd-script { color: #7a1f7a; font-weight: 600; }
       .cmd-flag { color: #0050a4; font-weight: 700; }
       .cmd-value { color: #1f7a1f; }
+      .reference-wrap {
+        max-width: 1380px;
+        margin: 1.2rem auto 0;
+      }
+      .cli-reference-card {
+        overflow: hidden;
+      }
+      .cli-reference-group + .cli-reference-group {
+        margin-top: 1rem;
+      }
+      .cli-reference-group h3 {
+        margin: 0 0 0.7rem;
+        color: #18436e;
+        font-size: 1rem;
+      }
+      .cli-reference-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.8rem;
+      }
+      .cli-reference-item {
+        border: 1px solid #d8e4f0;
+        border-radius: 12px;
+        background: #f8fbff;
+        padding: 0.8rem;
+      }
+      .cli-reference-flags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-bottom: 0.45rem;
+      }
+      .cli-reference-flags code {
+        padding: 0.15rem 0.45rem;
+        border-radius: 8px;
+        background: #eaf3fb;
+        color: #18436e;
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+      .cli-reference-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-bottom: 0.45rem;
+      }
+      .cli-reference-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.12rem 0.5rem;
+        border: 1px solid #d5e0ec;
+        border-radius: 999px;
+        background: #f3f7fb;
+        color: #36516c;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+      .cli-reference-item p {
+        margin: 0;
+        color: var(--muted);
+      }
       @media (max-width: 1120px) {
         .page,
         .inspect-grid,
@@ -640,6 +701,16 @@
         <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
       </aside>
     </div>
+
+    <section class="reference-wrap">
+      <details class="section-card cli-reference-card">
+        <summary>CLI Flag Reference</summary>
+        <div class="section-card-body">
+          <p class="section-lead">All CLI flags this GUI can currently emit. Flags not listed here are still available only through the terminal.</p>
+          <div id="cli-flag-reference"></div>
+        </div>
+      </details>
+    </section>
 
     <script src="config_models.js"></script>
     <script src="config_prices.js"></script>

@@ -90,6 +90,18 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn('data-gui-variant="mode-first"', html)
         self.assertNotIn("Mode-First Preview", html)
 
+    def test_cli_flag_reference_includes_current_mode_and_provider_flags(self) -> None:
+        shared_js = _load_file("config_gui_shared.js")
+        self.assertIn('const cliFlagReferenceSections = [', shared_js)
+        self.assertIn('"--system_prompt_b64"', shared_js)
+        self.assertIn('"--resume"', shared_js)
+        self.assertIn('"--metrics_only"', shared_js)
+        self.assertIn('"--no-confusion_heatmap"', shared_js)
+        self.assertIn('"--create_gemini_cache"', shared_js)
+        self.assertIn('"--no-gemini_cache_ttl_autoupdate"', shared_js)
+        self.assertIn('"--validator_exhausted_policy"', shared_js)
+        self.assertIn("renderCliFlagReference(ctx);", shared_js)
+
 
 if __name__ == "__main__":
     unittest.main()

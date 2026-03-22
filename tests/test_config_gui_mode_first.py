@@ -30,7 +30,17 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         self.assertIn("<summary>Evaluation &amp; Metadata</summary>", html)
         self.assertIn("<summary>Logging</summary>", html)
         self.assertIn("<summary>Inspect Prompt &amp; Cache</summary>", html)
+        self.assertIn("<summary>CLI Flag Reference</summary>", html)
         self.assertNotIn('class="section-card" open', html)
+
+    def test_cli_flag_reference_footer_is_present(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn('class="reference-wrap"', html)
+        self.assertIn('id="cli-flag-reference"', html)
+        self.assertIn(
+            "All CLI flags this GUI can currently emit. Flags not listed here are still available only through the terminal.",
+            html,
+        )
 
     def test_main_gui_omits_legacy_mode_checkboxes(self) -> None:
         html = _load_main_gui_html()

@@ -211,6 +211,317 @@
     validator_debug: "Emit verbose validator payload logging (DEBUG mode).",
   };
 
+  const cliFlagReferenceSections = [
+    {
+      title: "Setup & Modes",
+      entries: [
+        {
+          flags: ["--input"],
+          helpId: "input_path",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--model"],
+          helpId: "model",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--output"],
+          helpId: "output_path",
+          modes: ["Run", "Run & Validate", "Resume"],
+        },
+        {
+          flags: ["--resume"],
+          description:
+            "Resume an existing output CSV and recover prior run settings from prompt-log and metrics artifacts when available.",
+          modes: ["Resume"],
+        },
+        {
+          flags: ["--metrics_only"],
+          helpId: "metrics_only",
+          modes: ["Metrics only"],
+        },
+        {
+          flags: ["--labels"],
+          helpId: "labels_path",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--unclassified"],
+          helpId: "reprompt_unclassified",
+          modes: ["Resume"],
+        },
+        {
+          flags: ["--repeat_unclassified"],
+          helpId: "repeat_unclassified",
+          modes: ["Run", "Run & Validate", "Resume"],
+        },
+      ],
+    },
+    {
+      title: "Prompt Strategy",
+      entries: [
+        {
+          flags: ["--system_prompt", "--system_prompt_b64"],
+          description:
+            "Optional system prompt. Single-line text is emitted as --system_prompt; multi-line text is encoded as --system_prompt_b64.",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--enable_cot"],
+          helpId: "enable_cot",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--no_explanation"],
+          helpId: "include_explanations",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--few_shot_examples"],
+          helpId: "few_shot_examples",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--prompt_layout"],
+          helpId: "prompt_layout",
+          modes: ["Run", "Run & Validate"],
+        },
+      ],
+    },
+    {
+      title: "Execution & Logging",
+      entries: [
+        {
+          flags: ["--temperature"],
+          helpId: "temperature",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--top_p"],
+          helpId: "top_p",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--top_k"],
+          helpId: "top_k",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--request_interval_ms"],
+          helpId: "request_interval_ms",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--threads"],
+          helpId: "threads",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--request_timeout_seconds"],
+          helpId: "request_timeout_seconds",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--logprobs"],
+          helpId: "logprobs",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--prompt_log_detail"],
+          helpId: "prompt_log_detail",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--flush_rows"],
+          helpId: "flush_rows",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--flush_seconds"],
+          helpId: "flush_seconds",
+          modes: ["Run", "Run & Validate"],
+        },
+      ],
+    },
+    {
+      title: "Provider Controls",
+      entries: [
+        {
+          flags: ["--provider"],
+          helpId: "provider",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--service_tier"],
+          helpId: "service_tier",
+          modes: ["Run", "Run & Validate"],
+          providers: ["OpenAI"],
+        },
+        {
+          flags: ["--reasoning_effort"],
+          helpId: "reasoning_effort",
+          modes: ["Run", "Run & Validate"],
+          providers: ["OpenAI", "Gemini"],
+        },
+        {
+          flags: ["--verbosity"],
+          helpId: "verbosity",
+          modes: ["Run", "Run & Validate"],
+          providers: ["OpenAI GPT"],
+        },
+        {
+          flags: ["--thinking_level"],
+          helpId: "thinking_level",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+        },
+        {
+          flags: ["--effort"],
+          helpId: "effort",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Claude"],
+        },
+        {
+          flags: ["--strict_control_acceptance"],
+          helpId: "strict_control_acceptance",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--cache_pad_target_tokens"],
+          helpId: "cache_pad_target_tokens",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--prompt_cache_key"],
+          helpId: "prompt_cache_key",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--requesty_auto_cache"],
+          helpId: "requesty_auto_cache",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Requesty"],
+        },
+        {
+          flags: ["--no-vertex_auto_adc_login"],
+          helpId: "vertex_auto_adc_login",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Vertex"],
+          note: "The GUI emits the negative form only when auto-login is turned off.",
+        },
+        {
+          flags: ["--vertex_access_token_refresh_seconds"],
+          helpId: "vertex_access_token_refresh_seconds",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Vertex"],
+        },
+        {
+          flags: ["--gemini_cached_content"],
+          helpId: "gemini_cached_content",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+        },
+        {
+          flags: ["--create_gemini_cache"],
+          helpId: "create_gemini_cache",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+        },
+        {
+          flags: ["--gemini_cache_ttl"],
+          helpId: "gemini_cache_ttl",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+        },
+        {
+          flags: ["--no-gemini_cache_ttl_autoupdate"],
+          helpId: "gemini_cache_ttl_autoupdate",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+          note: "The GUI emits the negative form only when TTL auto-refresh is turned off.",
+        },
+        {
+          flags: ["--keep_gemini_cache"],
+          helpId: "keep_gemini_cache",
+          modes: ["Run", "Run & Validate"],
+          providers: ["Gemini"],
+        },
+      ],
+    },
+    {
+      title: "Evaluation & Metadata",
+      entries: [
+        {
+          flags: ["--task_name"],
+          helpId: "task_name",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--task_description"],
+          helpId: "task_description",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--tags"],
+          helpId: "tags",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--calibration"],
+          helpId: "calibration",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+        },
+        {
+          flags: ["--no-confusion_heatmap"],
+          helpId: "confusion_heatmap",
+          modes: ["Run", "Run & Validate", "Metrics only"],
+          note: "The GUI emits the negative form only when heatmap generation is turned off.",
+        },
+      ],
+    },
+    {
+      title: "Validator",
+      entries: [
+        {
+          flags: ["--validator_cmd"],
+          helpId: "validator_cmd",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_args"],
+          helpId: "validator_args",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_timeout"],
+          helpId: "validator_timeout",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_prompt_max_candidates"],
+          helpId: "validator_prompt_max_candidates",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_prompt_max_chars"],
+          helpId: "validator_prompt_max_chars",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_exhausted_policy"],
+          helpId: "validator_exhausted_policy",
+          modes: ["Run & Validate"],
+        },
+        {
+          flags: ["--validator_debug"],
+          helpId: "validator_debug",
+          modes: ["Run & Validate"],
+        },
+      ],
+    },
+  ];
+
   function getWindowModelCatalog() {
     return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
       ? window.MODEL_CATALOG
@@ -275,6 +586,87 @@
       safety += 1;
     }
     return null;
+  }
+
+  function buildFlagReferenceDescription(entry) {
+    const parts = [];
+    const primary =
+      typeof entry.description === "string" && entry.description.trim()
+        ? entry.description.trim()
+        : typeof entry.helpId === "string" && inputHelpTextById[entry.helpId]
+          ? inputHelpTextById[entry.helpId].trim()
+          : "";
+    if (primary) {
+      parts.push(primary);
+    }
+    if (typeof entry.note === "string" && entry.note.trim()) {
+      parts.push(entry.note.trim());
+    }
+    return parts.join(" ");
+  }
+
+  function createFlagReferenceChip(text) {
+    const chip = document.createElement("span");
+    chip.className = "cli-reference-chip";
+    chip.textContent = text;
+    return chip;
+  }
+
+  function renderCliFlagReference(ctx) {
+    if (!ctx.cliFlagReference) {
+      return;
+    }
+    ctx.cliFlagReference.innerHTML = "";
+    const fragment = document.createDocumentFragment();
+    cliFlagReferenceSections.forEach((section) => {
+      const group = document.createElement("section");
+      group.className = "cli-reference-group";
+
+      const heading = document.createElement("h3");
+      heading.textContent = section.title;
+      group.appendChild(heading);
+
+      const list = document.createElement("div");
+      list.className = "cli-reference-list";
+
+      section.entries.forEach((entry) => {
+        const item = document.createElement("article");
+        item.className = "cli-reference-item";
+
+        const flags = document.createElement("div");
+        flags.className = "cli-reference-flags";
+        (entry.flags || []).forEach((flag) => {
+          const code = document.createElement("code");
+          code.textContent = flag;
+          flags.appendChild(code);
+        });
+        item.appendChild(flags);
+
+        const meta = document.createElement("div");
+        meta.className = "cli-reference-meta";
+        if (Array.isArray(entry.modes) && entry.modes.length > 0) {
+          meta.appendChild(createFlagReferenceChip(`Modes: ${entry.modes.join(" / ")}`));
+        }
+        if (Array.isArray(entry.providers) && entry.providers.length > 0) {
+          meta.appendChild(
+            createFlagReferenceChip(`Providers: ${entry.providers.join(" / ")}`)
+          );
+        }
+        if (meta.childNodes.length > 0) {
+          item.appendChild(meta);
+        }
+
+        const description = document.createElement("p");
+        description.textContent = buildFlagReferenceDescription(entry);
+        item.appendChild(description);
+
+        list.appendChild(item);
+      });
+
+      group.appendChild(list);
+      fragment.appendChild(group);
+    });
+    ctx.cliFlagReference.appendChild(fragment);
   }
 
   function summarizeModelPricing(ctx, provider, modelId) {
@@ -2252,12 +2644,14 @@
       sidebarModeLabel: document.getElementById("sidebar-mode-label"),
       sidebarFlagCount: document.getElementById("sidebar-flag-count"),
       modeLabelElements: Array.from(document.querySelectorAll("[data-current-mode-label]")),
+      cliFlagReference: document.getElementById("cli-flag-reference"),
     };
   }
 
   function initClassicPage(ctx) {
     syncProvidersFromCatalog(ctx);
     loadConfig(ctx);
+    renderCliFlagReference(ctx);
     applyInputHoverHelp(ctx);
     updatePlaceholdersForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
     updateModelOptionsForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
@@ -2271,6 +2665,7 @@
   function initPreviewPage(ctx) {
     syncProvidersFromCatalog(ctx);
     loadConfig(ctx);
+    renderCliFlagReference(ctx);
     ctx.sidebarCollapsed = loadSidebarState(ctx);
     applyInputHoverHelp(ctx);
     updatePlaceholdersForProvider(ctx, ctx.providerSelect?.value || defaultValues.provider);
