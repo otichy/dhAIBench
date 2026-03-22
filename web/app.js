@@ -37,6 +37,7 @@ const state = {
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
   priceScatterViewport: null,
+  priceScatterCostMode: "total",
   radarAxis: "task",
   radarScale: "linear",
   tokenSignalsVisibleCount: TOKEN_SIGNAL_PAGE_SIZE,
@@ -130,6 +131,7 @@ const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "price_scatter", "time_series", "table", "best_by_task", "radar"]);
 const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
+const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
   "macro_f1",
@@ -1221,6 +1223,7 @@ function persistUiState() {
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
     priceScatterViewport: state.priceScatterViewport,
+    priceScatterCostMode: state.priceScatterCostMode,
     radarAxis: state.radarAxis,
     radarScale: state.radarScale,
     hideNoAccuracy: state.hideNoAccuracy,
@@ -1292,6 +1295,12 @@ function restoreUiState() {
       }
       if (payload.priceScatterViewport && typeof payload.priceScatterViewport === "object") {
         state.priceScatterViewport = payload.priceScatterViewport;
+      }
+      if (
+        typeof payload.priceScatterCostMode === "string" &&
+        PRICE_SCATTER_COST_MODE_KEYS.has(payload.priceScatterCostMode)
+      ) {
+        state.priceScatterCostMode = payload.priceScatterCostMode;
       }
       if (typeof payload.radarAxis === "string" && RADAR_AXIS_KEYS.has(payload.radarAxis)) {
         state.radarAxis = payload.radarAxis;
@@ -1587,6 +1596,16 @@ function setLeaderboardTab(tab) {
 
 function setTimeSeriesShowLabels(nextValue) {
   state.timeSeriesShowLabels = Boolean(nextValue);
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setPriceScatterCostMode(nextMode) {
+  if (!PRICE_SCATTER_COST_MODE_KEYS.has(nextMode) || state.priceScatterCostMode === nextMode) {
+    return;
+  }
+  state.priceScatterCostMode = nextMode;
+  state.priceScatterViewport = null;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -4003,16 +4022,45 @@ function expandNumericDomain(minValue, maxValue, options = {}) {
   return { min: nextMin, max: nextMax };
 }
 
+function getPriceScatterCostModeLabel(mode = state.priceScatterCostMode) {
+  return mode === "per_prompt" ? "Average Cost per Prompt (USD)" : "Estimated Cost (USD)";
+}
+
+function getPriceScatterUnknownLabel(mode = state.priceScatterCostMode) {
+  return mode === "per_prompt" ? "Unknown Avg/Prompt" : "Unknown Cost";
+}
+
+function getPriceScatterUnknownValueText(mode = state.priceScatterCostMode) {
+  return mode === "per_prompt" ? "Unknown avg/prompt cost" : "Unknown cost";
+}
+
+function getPriceScatterValueForRun(run, mode = state.priceScatterCostMode) {
+  const estimatedCostUsd = safeNum(run && run.estimatedCostUsd);
+  if (estimatedCostUsd == null) {
+    return null;
+  }
+  if (mode !== "per_prompt") {
+    return estimatedCostUsd;
+  }
+  const prompts = toNonNegativeNumber(getPromptCountForRun(run));
+  return prompts > 0 ? estimatedCostUsd / prompts : null;
+}
+
 function renderLeaderboardPriceScatter(container, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
+  const priceScatterCostMode = state.priceScatterCostMode;
+  const priceAxisLabel = getPriceScatterCostModeLabel(priceScatterCostMode);
+  const unknownBandLabelText = getPriceScatterUnknownLabel(priceScatterCostMode);
+  const unknownValueText = getPriceScatterUnknownValueText(priceScatterCostMode);
+  const averagedCostLabel = priceScatterCostMode === "per_prompt" ? "avg/prompt cost" : "cost";
   const entriesWithMetric = runs
     .map((run) => {
       const metricValue = getMetricValueForRun(run, metricKey);
       if (typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
         return null;
       }
-      const knownPriceValue = safeNum(run.estimatedCostUsd);
+      const knownPriceValue = getPriceScatterValueForRun(run, priceScatterCostMode);
       const hasKnownPrice = typeof knownPriceValue === "number" && Number.isFinite(knownPriceValue);
       return {
         run,
@@ -4118,6 +4166,20 @@ function renderLeaderboardPriceScatter(container, runs) {
   header.className = "time-series-head";
   const controls = document.createElement("div");
   controls.className = "time-series-controls";
+  const totalCostButton = document.createElement("button");
+  totalCostButton.type = "button";
+  totalCostButton.className = `time-series-control-btn${priceScatterCostMode === "total" ? " active" : ""}`;
+  totalCostButton.textContent = "Total Cost";
+  totalCostButton.setAttribute("aria-pressed", priceScatterCostMode === "total" ? "true" : "false");
+  totalCostButton.addEventListener("click", () => setPriceScatterCostMode("total"));
+  controls.appendChild(totalCostButton);
+  const avgPromptButton = document.createElement("button");
+  avgPromptButton.type = "button";
+  avgPromptButton.className = `time-series-control-btn${priceScatterCostMode === "per_prompt" ? " active" : ""}`;
+  avgPromptButton.textContent = "Avg/Prompt";
+  avgPromptButton.setAttribute("aria-pressed", priceScatterCostMode === "per_prompt" ? "true" : "false");
+  avgPromptButton.addEventListener("click", () => setPriceScatterCostMode("per_prompt"));
+  controls.appendChild(avgPromptButton);
   const labelsButton = document.createElement("button");
   labelsButton.type = "button";
   labelsButton.className = `time-series-control-btn${state.timeSeriesShowLabels ? " active" : ""}`;
@@ -4161,7 +4223,7 @@ function renderLeaderboardPriceScatter(container, runs) {
   const svg = createSvgNode("svg", {
     viewBox: `0 0 ${width} ${height}`,
     class: "time-series-svg",
-    "aria-label": `Price versus ${metricLabel} scatterplot`,
+    "aria-label": `${priceAxisLabel} versus ${metricLabel} scatterplot`,
   });
   chartWrap.appendChild(svg);
 
@@ -4242,7 +4304,7 @@ function renderLeaderboardPriceScatter(container, runs) {
       "text-anchor": "middle",
       class: "time-series-unknown-band-label",
     });
-    unknownBandLabel.textContent = "Unknown Price";
+    unknownBandLabel.textContent = unknownBandLabelText;
     svg.appendChild(unknownBandLabel);
     const unknownBandTick = createSvgNode("text", {
       x: unknownBandCenterX,
@@ -4294,7 +4356,7 @@ function renderLeaderboardPriceScatter(container, runs) {
     "text-anchor": "middle",
     class: "time-series-axis-label",
   });
-  xAxisLabel.textContent = "Estimated Cost (USD)";
+  xAxisLabel.textContent = priceAxisLabel;
   svg.appendChild(xAxisLabel);
   const xAxisSubLabel = createSvgNode("text", {
     x: hasNumericAxis
@@ -4334,12 +4396,12 @@ function renderLeaderboardPriceScatter(container, runs) {
 
   source.forEach((entry) => {
     const isSelected = entry.runs.some((run) => run.filePath === state.selectedRunPath);
-    const priceLabelText = entry.hasKnownPrice ? formatUsd(entry.priceValue) : "Unknown price";
+    const priceLabelText = entry.hasKnownPrice ? formatUsd(entry.priceValue) : unknownValueText;
     const priceDetailText = entry.hasKnownPrice
       ? entry.unknownPriceCount
-        ? `${formatNum(entry.unknownPriceCount, 0)} unknown-price run(s) omitted from average price`
+        ? `${formatNum(entry.unknownPriceCount, 0)} run(s) omitted from average ${averagedCostLabel}`
         : ""
-      : "Shown in Unknown Price band";
+      : `Shown in ${unknownBandLabelText} band`;
     const pointGroup = createSvgNode("g", {
       class: `time-series-point${isSelected ? " is-selected" : ""}`,
       tabindex: "0",
