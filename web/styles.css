@@ -1250,32 +1250,202 @@ select[multiple] option.is-selected {
 .time-series-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem 0.9rem;
-  align-items: baseline;
-  justify-content: flex-end;
+  gap: 0.45rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
   margin-bottom: 0.55rem;
 }
 
 .time-series-controls {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
-  gap: 0.38rem;
+  gap: 0.46rem;
+  align-items: center;
 }
 
-.time-series-control-btn {
+.time-series-controls-primary {
+  flex: 1 1 320px;
+}
+
+.time-series-controls-secondary {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.time-series-segmented-control {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line-strong));
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface-input)),
+      color-mix(in srgb, var(--accent-3) 7%, var(--surface-soft))
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+    0 8px 20px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.time-series-segment-btn {
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 84%, var(--muted));
+  border-radius: 999px;
+  padding: 0.38rem 0.86rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.time-series-segment-btn:hover {
+  color: var(--ink);
+}
+
+.time-series-segment-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.time-series-segment-btn.active {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
+  color: #031017;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.time-series-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.52rem;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 88%, transparent);
+  border-radius: 999px;
+  padding: 0.28rem 0.38rem 0.28rem 0.72rem;
+  background: color-mix(in srgb, var(--surface-soft) 90%, transparent);
+  color: var(--ink);
+  font-size: 0.73rem;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.time-series-toggle:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line-strong));
+}
+
+.time-series-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.time-series-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface-hover)),
+      color-mix(in srgb, var(--paper-strong) 96%, transparent)
+    );
+}
+
+.time-series-toggle-label {
+  font-weight: 700;
+}
+
+.time-series-toggle-status {
+  min-width: 2ch;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.69rem;
+  color: var(--muted);
+}
+
+.time-series-toggle-switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 28%, var(--surface-input));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 92%, transparent);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.time-series-toggle.active .time-series-toggle-switch {
+  background: color-mix(in srgb, var(--accent) 78%, white 22%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.time-series-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 2px 8px rgba(3, 16, 23, 0.24);
+  transition: transform 160ms ease;
+}
+
+.time-series-toggle.active .time-series-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.time-series-reset-btn {
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
   color: var(--ink);
   border-radius: 999px;
-  padding: 0.28rem 0.68rem;
+  padding: 0.38rem 0.82rem;
   font-size: 0.73rem;
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
-.time-series-control-btn.active {
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
-  border-color: transparent;
-  color: #031017;
+.time-series-reset-btn:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--line-strong));
+}
+
+.time-series-reset-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.time-series-reset-btn:disabled,
+.time-series-toggle:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.chart-tab-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.6rem;
+}
+
+.chart-tab-controls-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.46rem;
+  align-items: center;
 }
 
 .time-series-notes {
@@ -1994,25 +2164,8 @@ html[data-theme="light"] .bar-track-label {
 }
 
 .radar-mode-toggle {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.radar-mode-btn {
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 0.26rem 0.62rem;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-
-.radar-mode-btn.active {
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-3) 42%, var(--accent)));
-  border-color: transparent;
-  color: #031017;
+  flex-wrap: nowrap;
+  gap: 0;
 }
 
 .radar-svg {
@@ -2641,6 +2794,15 @@ tbody tr.selected-row {
 
   .time-series-controls {
     width: 100%;
+  }
+
+  .time-series-controls-primary,
+  .time-series-controls-secondary {
+    flex: 1 1 100%;
+  }
+
+  .time-series-controls-secondary {
+    justify-content: flex-end;
   }
 
   .token-table {

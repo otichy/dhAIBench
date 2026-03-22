@@ -34,6 +34,7 @@ const state = {
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
   leaderboardChartGroupBy: "model",
+  leaderboardScatterGroupBy: "none",
   leaderboardChartBestByTask: false,
   leaderboardScatterXAxis: "price",
   scatterShowCi: true,
@@ -41,8 +42,8 @@ const state = {
   timeSeriesViewport: null,
   priceScatterViewport: null,
   priceScatterCostMode: "total",
-  radarAxis: "task",
-  radarScale: "linear",
+  radarAxis: "tag",
+  radarScale: "contrast",
   tokenSignalsVisibleCount: TOKEN_SIGNAL_PAGE_SIZE,
   bestByTaskVisibleCount: BEST_BY_TASK_PAGE_SIZE,
   radarVisibleSeriesCount: RADAR_MODEL_PAGE_SIZE,
@@ -1225,6 +1226,7 @@ function persistUiState() {
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
+    leaderboardScatterGroupBy: state.leaderboardScatterGroupBy,
     leaderboardChartBestByTask: state.leaderboardChartBestByTask,
     leaderboardScatterXAxis: state.leaderboardScatterXAxis,
     scatterShowCi: state.scatterShowCi,
@@ -1305,6 +1307,12 @@ function restoreUiState() {
         LEADERBOARD_CHART_GROUP_BY_KEYS.has(payload.leaderboardChartGroupBy)
       ) {
         state.leaderboardChartGroupBy = payload.leaderboardChartGroupBy;
+      }
+      if (
+        typeof payload.leaderboardScatterGroupBy === "string" &&
+        LEADERBOARD_CHART_GROUP_BY_KEYS.has(payload.leaderboardScatterGroupBy)
+      ) {
+        state.leaderboardScatterGroupBy = payload.leaderboardScatterGroupBy;
       }
       if (typeof payload.leaderboardChartBestByTask === "boolean") {
         state.leaderboardChartBestByTask = payload.leaderboardChartBestByTask;
@@ -2737,11 +2745,21 @@ function setLeaderboardChartGroupBy(groupBy) {
   renderLeaderboard(state.filtered);
 }
 
+function setLeaderboardScatterGroupBy(groupBy) {
+  if (!LEADERBOARD_CHART_GROUP_BY_KEYS.has(groupBy) || state.leaderboardScatterGroupBy === groupBy) {
+    return;
+  }
+  state.leaderboardScatterGroupBy = groupBy;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
 function renderLeaderboardGroupSwitch() {
   if (!els.leaderboardGroupSwitch) {
     return;
   }
-  const supportsGrouping = state.leaderboardTab === "chart" || state.leaderboardTab === "scatter";
+  const supportsGrouping =
+    state.leaderboardTab === "chart" || state.leaderboardTab === "scatter" || state.leaderboardTab === "radar";
   els.leaderboardGroupSwitch.hidden = !supportsGrouping;
   els.leaderboardGroupSwitch.innerHTML = "";
   if (!supportsGrouping) {
@@ -2756,48 +2774,39 @@ function renderLeaderboardGroupSwitch() {
   const toggle = document.createElement("div");
   toggle.className = "leaderboard-group-toggle";
   toggle.setAttribute("role", "group");
-  toggle.setAttribute("aria-label", "Leaderboard grouping");
+  toggle.setAttribute("aria-label", state.leaderboardTab === "radar" ? "Radar grouping" : "Leaderboard grouping");
 
-  Object.entries(LEADERBOARD_CHART_GROUP_BY_LABELS).forEach(([key, text]) => {
+  const options =
+    state.leaderboardTab === "radar"
+      ? [
+          { key: "task", label: "Task", active: state.radarAxis === "task", onClick: () => setRadarAxis("task") },
+          { key: "tag", label: "Tag", active: state.radarAxis === "tag", onClick: () => setRadarAxis("tag") },
+        ]
+      : state.leaderboardTab === "scatter"
+        ? Object.entries(LEADERBOARD_CHART_GROUP_BY_LABELS).map(([key, text]) => ({
+            key,
+            label: text,
+            active: state.leaderboardScatterGroupBy === key,
+            onClick: () => setLeaderboardScatterGroupBy(key),
+          }))
+      : Object.entries(LEADERBOARD_CHART_GROUP_BY_LABELS).map(([key, text]) => ({
+          key,
+          label: text,
+          active: state.leaderboardChartGroupBy === key,
+          onClick: () => setLeaderboardChartGroupBy(key),
+        }));
+
+  options.forEach((option) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `leaderboard-group-btn${state.leaderboardChartGroupBy === key ? " active" : ""}`;
-    button.textContent = text;
-    button.setAttribute("aria-pressed", state.leaderboardChartGroupBy === key ? "true" : "false");
-    button.addEventListener("click", () => setLeaderboardChartGroupBy(key));
+    button.className = `leaderboard-group-btn${option.active ? " active" : ""}`;
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", option.active ? "true" : "false");
+    button.addEventListener("click", option.onClick);
     toggle.appendChild(button);
   });
 
   els.leaderboardGroupSwitch.appendChild(toggle);
-}
-
-function renderLeaderboardChartToggle() {
-  if (!els.leaderboardChartToggle) {
-    return;
-  }
-  const showToggle = state.leaderboardTab === "chart";
-  els.leaderboardChartToggle.hidden = !showToggle;
-  els.leaderboardChartToggle.innerHTML = "";
-  if (!showToggle) {
-    return;
-  }
-
-  const label = document.createElement("span");
-  label.className = "leaderboard-group-switch-label";
-  label.textContent = "Chart";
-  els.leaderboardChartToggle.appendChild(label);
-
-  const checkboxLabel = document.createElement("label");
-  checkboxLabel.className = "checkbox leaderboard-chart-toggle-label";
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = state.leaderboardChartBestByTask;
-  checkbox.addEventListener("change", (event) => setLeaderboardChartBestByTask(event.target.checked));
-  const text = document.createElement("span");
-  text.textContent = "Best run per task";
-  checkboxLabel.appendChild(checkbox);
-  checkboxLabel.appendChild(text);
-  els.leaderboardChartToggle.appendChild(checkboxLabel);
 }
 
 function renderLeaderboardTabControls() {
@@ -2805,7 +2814,10 @@ function renderLeaderboardTabControls() {
     return;
   }
   renderLeaderboardGroupSwitch();
-  renderLeaderboardChartToggle();
+  if (els.leaderboardChartToggle) {
+    els.leaderboardChartToggle.hidden = true;
+    els.leaderboardChartToggle.innerHTML = "";
+  }
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
@@ -3651,26 +3663,74 @@ function clampTimeSeriesViewport(viewport, fullDomain, minimumSpan = {}) {
   return { xMin, xMax, yMin, yMax };
 }
 
+function createTimeSeriesSegmentedControl(ariaLabel, options) {
+  const control = document.createElement("div");
+  control.className = "time-series-segmented-control";
+  control.setAttribute("role", "group");
+  control.setAttribute("aria-label", ariaLabel);
+
+  options.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `time-series-segment-btn${option.active ? " active" : ""}`;
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", option.active ? "true" : "false");
+    button.addEventListener("click", option.onClick);
+    control.appendChild(button);
+  });
+
+  return control;
+}
+
 function appendLeaderboardScatterAxisControls(controls) {
   if (!controls) {
     return;
   }
 
-  const priceButton = document.createElement("button");
-  priceButton.type = "button";
-  priceButton.className = `time-series-control-btn${state.leaderboardScatterXAxis === "price" ? " active" : ""}`;
-  priceButton.textContent = "Price";
-  priceButton.setAttribute("aria-pressed", state.leaderboardScatterXAxis === "price" ? "true" : "false");
-  priceButton.addEventListener("click", () => setLeaderboardScatterXAxis("price"));
-  controls.appendChild(priceButton);
+  controls.appendChild(
+    createTimeSeriesSegmentedControl("Scatter x-axis", [
+      {
+        label: "Price",
+        active: state.leaderboardScatterXAxis === "price",
+        onClick: () => setLeaderboardScatterXAxis("price"),
+      },
+      {
+        label: "Time",
+        active: state.leaderboardScatterXAxis === "time",
+        onClick: () => setLeaderboardScatterXAxis("time"),
+      },
+    ])
+  );
+}
 
-  const timeButton = document.createElement("button");
-  timeButton.type = "button";
-  timeButton.className = `time-series-control-btn${state.leaderboardScatterXAxis === "time" ? " active" : ""}`;
-  timeButton.textContent = "Time";
-  timeButton.setAttribute("aria-pressed", state.leaderboardScatterXAxis === "time" ? "true" : "false");
-  timeButton.addEventListener("click", () => setLeaderboardScatterXAxis("time"));
-  controls.appendChild(timeButton);
+function createTimeSeriesToggleControl(label, checked, onToggle) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `time-series-toggle${checked ? " active" : ""}`;
+  button.setAttribute("role", "switch");
+  button.setAttribute("aria-checked", checked ? "true" : "false");
+  button.setAttribute("aria-label", `${label}: ${checked ? "on" : "off"}`);
+  button.addEventListener("click", onToggle);
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "time-series-toggle-label";
+  labelEl.textContent = label;
+  button.appendChild(labelEl);
+
+  const statusEl = document.createElement("span");
+  statusEl.className = "time-series-toggle-status";
+  statusEl.textContent = checked ? "On" : "Off";
+  button.appendChild(statusEl);
+
+  const switchEl = document.createElement("span");
+  switchEl.className = "time-series-toggle-switch";
+  switchEl.setAttribute("aria-hidden", "true");
+  const thumbEl = document.createElement("span");
+  thumbEl.className = "time-series-toggle-thumb";
+  switchEl.appendChild(thumbEl);
+  button.appendChild(switchEl);
+
+  return button;
 }
 
 function appendScatterCiToggleControl(controls, showControl) {
@@ -3678,13 +3738,46 @@ function appendScatterCiToggleControl(controls, showControl) {
     return;
   }
 
-  const ciButton = document.createElement("button");
-  ciButton.type = "button";
-  ciButton.className = `time-series-control-btn${state.scatterShowCi ? " active" : ""}`;
-  ciButton.textContent = state.scatterShowCi ? "CI: On" : "CI: Off";
-  ciButton.setAttribute("aria-pressed", state.scatterShowCi ? "true" : "false");
-  ciButton.addEventListener("click", () => setScatterShowCi(!state.scatterShowCi));
-  controls.appendChild(ciButton);
+  controls.appendChild(createTimeSeriesToggleControl("CI", state.scatterShowCi, () => setScatterShowCi(!state.scatterShowCi)));
+}
+
+function appendTimeSeriesLabelsToggleControl(controls) {
+  if (!controls) {
+    return;
+  }
+  controls.appendChild(
+    createTimeSeriesToggleControl("Labels", state.timeSeriesShowLabels, () => setTimeSeriesShowLabels(!state.timeSeriesShowLabels))
+  );
+}
+
+function createTimeSeriesResetButton(label, onClick, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "time-series-reset-btn";
+  button.textContent = label;
+  button.disabled = disabled;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function renderChartTabControls(container) {
+  if (!container) {
+    return;
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "chart-tab-controls";
+
+  const group = document.createElement("div");
+  group.className = "chart-tab-controls-group";
+  group.appendChild(
+    createTimeSeriesToggleControl("Best run per task", state.leaderboardChartBestByTask, () =>
+      setLeaderboardChartBestByTask(!state.leaderboardChartBestByTask)
+    )
+  );
+
+  controls.appendChild(group);
+  container.appendChild(controls);
 }
 
 function renderLeaderboardTimeSeries(container, runs, options = {}) {
@@ -3735,31 +3828,22 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
   const header = document.createElement("div");
   header.className = "time-series-head";
 
-  const controls = document.createElement("div");
-  controls.className = "time-series-controls";
+  const primaryControls = document.createElement("div");
+  primaryControls.className = "time-series-controls time-series-controls-primary";
+  const secondaryControls = document.createElement("div");
+  secondaryControls.className = "time-series-controls time-series-controls-secondary";
 
   if (includeScatterAxisSwitch) {
-    appendLeaderboardScatterAxisControls(controls);
+    appendLeaderboardScatterAxisControls(primaryControls);
   }
-  appendScatterCiToggleControl(controls, supportsCi);
+  appendScatterCiToggleControl(secondaryControls, supportsCi);
+  appendTimeSeriesLabelsToggleControl(secondaryControls);
+  secondaryControls.appendChild(createTimeSeriesResetButton("Reset Zoom", () => resetTimeSeriesZoom(), !state.timeSeriesViewport));
 
-  const labelsButton = document.createElement("button");
-  labelsButton.type = "button";
-  labelsButton.className = `time-series-control-btn${state.timeSeriesShowLabels ? " active" : ""}`;
-  labelsButton.textContent = state.timeSeriesShowLabels ? "Labels: On" : "Labels: Off";
-  labelsButton.setAttribute("aria-pressed", state.timeSeriesShowLabels ? "true" : "false");
-  labelsButton.addEventListener("click", () => setTimeSeriesShowLabels(!state.timeSeriesShowLabels));
-  controls.appendChild(labelsButton);
-
-  const zoomResetButton = document.createElement("button");
-  zoomResetButton.type = "button";
-  zoomResetButton.className = "time-series-control-btn";
-  zoomResetButton.textContent = "Reset Zoom";
-  zoomResetButton.disabled = !state.timeSeriesViewport;
-  zoomResetButton.addEventListener("click", () => resetTimeSeriesZoom());
-  controls.appendChild(zoomResetButton);
-
-  header.appendChild(controls);
+  if (primaryControls.childElementCount) {
+    header.appendChild(primaryControls);
+  }
+  header.appendChild(secondaryControls);
   container.appendChild(header);
 
   const noteWrap = document.createElement("div");
@@ -4235,7 +4319,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     }
     modelRunsByName.get(modelName).push(entry.run);
   });
-  const groupBy = state.leaderboardChartGroupBy;
+  const groupBy = state.leaderboardScatterGroupBy;
   const noGrouping = groupBy === "none";
   const taskColorByName = new Map(tasks.map((task) => [task, getTaskSeriesColor(task)]));
   const modelColorByName = new Map(models.map((model) => [model, getModelSeriesColor(model)]));
@@ -4313,41 +4397,36 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
 
   const header = document.createElement("div");
   header.className = "time-series-head";
-  const controls = document.createElement("div");
-  controls.className = "time-series-controls";
+  const primaryControls = document.createElement("div");
+  primaryControls.className = "time-series-controls time-series-controls-primary";
+  const secondaryControls = document.createElement("div");
+  secondaryControls.className = "time-series-controls time-series-controls-secondary";
   if (includeScatterAxisSwitch) {
-    appendLeaderboardScatterAxisControls(controls);
+    appendLeaderboardScatterAxisControls(primaryControls);
   }
-  appendScatterCiToggleControl(controls, supportsCi);
-  const totalCostButton = document.createElement("button");
-  totalCostButton.type = "button";
-  totalCostButton.className = `time-series-control-btn${priceScatterCostMode === "total" ? " active" : ""}`;
-  totalCostButton.textContent = "Total Cost";
-  totalCostButton.setAttribute("aria-pressed", priceScatterCostMode === "total" ? "true" : "false");
-  totalCostButton.addEventListener("click", () => setPriceScatterCostMode("total"));
-  controls.appendChild(totalCostButton);
-  const avgPromptButton = document.createElement("button");
-  avgPromptButton.type = "button";
-  avgPromptButton.className = `time-series-control-btn${priceScatterCostMode === "per_prompt" ? " active" : ""}`;
-  avgPromptButton.textContent = "Avg/Prediction";
-  avgPromptButton.setAttribute("aria-pressed", priceScatterCostMode === "per_prompt" ? "true" : "false");
-  avgPromptButton.addEventListener("click", () => setPriceScatterCostMode("per_prompt"));
-  controls.appendChild(avgPromptButton);
-  const labelsButton = document.createElement("button");
-  labelsButton.type = "button";
-  labelsButton.className = `time-series-control-btn${state.timeSeriesShowLabels ? " active" : ""}`;
-  labelsButton.textContent = state.timeSeriesShowLabels ? "Labels: On" : "Labels: Off";
-  labelsButton.setAttribute("aria-pressed", state.timeSeriesShowLabels ? "true" : "false");
-  labelsButton.addEventListener("click", () => setTimeSeriesShowLabels(!state.timeSeriesShowLabels));
-  controls.appendChild(labelsButton);
-  const zoomResetButton = document.createElement("button");
-  zoomResetButton.type = "button";
-  zoomResetButton.className = "time-series-control-btn";
-  zoomResetButton.textContent = "Reset Zoom";
-  zoomResetButton.disabled = !state.priceScatterViewport || !numericSource.length;
-  zoomResetButton.addEventListener("click", () => resetPriceScatterZoom());
-  controls.appendChild(zoomResetButton);
-  header.appendChild(controls);
+  primaryControls.appendChild(
+    createTimeSeriesSegmentedControl("Price aggregation mode", [
+      {
+        label: "Total",
+        active: priceScatterCostMode === "total",
+        onClick: () => setPriceScatterCostMode("total"),
+      },
+      {
+        label: "Avg Price",
+        active: priceScatterCostMode === "per_prompt",
+        onClick: () => setPriceScatterCostMode("per_prompt"),
+      },
+    ])
+  );
+  appendScatterCiToggleControl(secondaryControls, supportsCi);
+  appendTimeSeriesLabelsToggleControl(secondaryControls);
+  secondaryControls.appendChild(
+    createTimeSeriesResetButton("Reset Zoom", () => resetPriceScatterZoom(), !state.priceScatterViewport || !numericSource.length)
+  );
+  if (primaryControls.childElementCount) {
+    header.appendChild(primaryControls);
+  }
+  header.appendChild(secondaryControls);
   container.appendChild(header);
 
   const noteWrap = document.createElement("div");
@@ -5046,12 +5125,17 @@ function renderLeaderboard(runs) {
     renderLeaderboardMetricsTable(panel, runs);
     return;
   }
-  if (state.leaderboardTab === "chart" && state.leaderboardChartBestByTask) {
-    renderBestByTask(panel, runs);
-    return;
-  }
   if (state.leaderboardTab === "radar") {
     renderRadarPanel(panel, runs);
+    return;
+  }
+  if (state.leaderboardTab === "chart") {
+    renderChartTabControls(panel);
+    if (state.leaderboardChartBestByTask) {
+      renderBestByTask(panel, runs);
+      return;
+    }
+    renderLeaderboardChart(panel, runs);
     return;
   }
   renderLeaderboardChart(panel, runs);
@@ -5638,27 +5722,6 @@ function renderRadarPanel(panel, runs) {
   const controls = document.createElement("div");
   controls.className = "radar-controls";
 
-  const axisControls = document.createElement("div");
-  axisControls.className = "radar-control-group";
-  const axisLabelEl = document.createElement("span");
-  axisLabelEl.className = "radar-control-label";
-  axisLabelEl.textContent = "Axes";
-  axisControls.appendChild(axisLabelEl);
-
-  const toggleWrap = document.createElement("div");
-  toggleWrap.className = "radar-mode-toggle";
-  ["task", "tag"].forEach((mode) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `radar-mode-btn${state.radarAxis === mode ? " active" : ""}`;
-    button.textContent = mode === "task" ? "Per Task" : "Per Tag";
-    button.setAttribute("aria-pressed", state.radarAxis === mode ? "true" : "false");
-    button.addEventListener("click", () => setRadarAxis(mode));
-    toggleWrap.appendChild(button);
-  });
-  axisControls.appendChild(toggleWrap);
-  controls.appendChild(axisControls);
-
   const scaleControls = document.createElement("div");
   scaleControls.className = "radar-control-group";
   const scaleLabelEl = document.createElement("span");
@@ -5666,17 +5729,19 @@ function renderRadarPanel(panel, runs) {
   scaleLabelEl.textContent = "Scale";
   scaleControls.appendChild(scaleLabelEl);
 
-  const scaleToggle = document.createElement("div");
-  scaleToggle.className = "radar-mode-toggle";
-  ["linear", "contrast"].forEach((mode) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `radar-mode-btn${scaleMode === mode ? " active" : ""}`;
-    button.textContent = RADAR_SCALE_LABELS[mode];
-    button.setAttribute("aria-pressed", scaleMode === mode ? "true" : "false");
-    button.addEventListener("click", () => setRadarScale(mode));
-    scaleToggle.appendChild(button);
-  });
+  const scaleToggle = createTimeSeriesSegmentedControl("Radar scale mode", [
+    {
+      label: RADAR_SCALE_LABELS.linear,
+      active: scaleMode === "linear",
+      onClick: () => setRadarScale("linear"),
+    },
+    {
+      label: RADAR_SCALE_LABELS.contrast,
+      active: scaleMode === "contrast",
+      onClick: () => setRadarScale("contrast"),
+    },
+  ]);
+  scaleToggle.classList.add("radar-mode-toggle");
   scaleControls.appendChild(scaleToggle);
   controls.appendChild(scaleControls);
 
