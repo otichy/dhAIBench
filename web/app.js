@@ -34,6 +34,8 @@ const state = {
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
   leaderboardChartGroupBy: "model",
+  leaderboardChartBestByTask: false,
+  leaderboardScatterXAxis: "price",
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
   priceScatterViewport: null,
@@ -105,6 +107,7 @@ const els = {
   kpiRequests: document.querySelector("#kpiRequests"),
   leaderboardTabs: document.querySelector("#leaderboardTabs"),
   leaderboardGroupSwitch: document.querySelector("#leaderboardGroupSwitch"),
+  leaderboardChartToggle: document.querySelector("#leaderboardChartToggle"),
   leaderboardChart: document.querySelector("#leaderboardChart"),
   tokenChart: document.querySelector("#tokenChart"),
   runsTableBody: document.querySelector("#runsTableBody"),
@@ -129,8 +132,9 @@ const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision"
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
-const LEADERBOARD_TAB_KEYS = new Set(["chart", "price_scatter", "time_series", "table", "best_by_task", "radar"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar"]);
 const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
+const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
 const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
@@ -1220,6 +1224,8 @@ function persistUiState() {
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
+    leaderboardChartBestByTask: state.leaderboardChartBestByTask,
+    leaderboardScatterXAxis: state.leaderboardScatterXAxis,
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
     priceScatterViewport: state.priceScatterViewport,
@@ -1278,14 +1284,34 @@ function restoreUiState() {
       ) {
         state.leaderboardTableSortDirection = payload.leaderboardTableSortDirection;
       }
-      if (typeof payload.leaderboardTab === "string" && LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
-        state.leaderboardTab = payload.leaderboardTab;
+      if (typeof payload.leaderboardTab === "string") {
+        if (LEADERBOARD_TAB_KEYS.has(payload.leaderboardTab)) {
+          state.leaderboardTab = payload.leaderboardTab;
+        } else if (payload.leaderboardTab === "price_scatter") {
+          state.leaderboardTab = "scatter";
+          state.leaderboardScatterXAxis = "price";
+        } else if (payload.leaderboardTab === "time_series") {
+          state.leaderboardTab = "scatter";
+          state.leaderboardScatterXAxis = "time";
+        } else if (payload.leaderboardTab === "best_by_task") {
+          state.leaderboardTab = "chart";
+          state.leaderboardChartBestByTask = true;
+        }
       }
       if (
         typeof payload.leaderboardChartGroupBy === "string" &&
         LEADERBOARD_CHART_GROUP_BY_KEYS.has(payload.leaderboardChartGroupBy)
       ) {
         state.leaderboardChartGroupBy = payload.leaderboardChartGroupBy;
+      }
+      if (typeof payload.leaderboardChartBestByTask === "boolean") {
+        state.leaderboardChartBestByTask = payload.leaderboardChartBestByTask;
+      }
+      if (
+        typeof payload.leaderboardScatterXAxis === "string" &&
+        LEADERBOARD_SCATTER_X_AXIS_KEYS.has(payload.leaderboardScatterXAxis)
+      ) {
+        state.leaderboardScatterXAxis = payload.leaderboardScatterXAxis;
       }
       if (typeof payload.timeSeriesShowLabels === "boolean") {
         state.timeSeriesShowLabels = payload.timeSeriesShowLabels;
@@ -1590,6 +1616,28 @@ function setLeaderboardTab(tab) {
     return;
   }
   state.leaderboardTab = tab;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setLeaderboardChartBestByTask(nextValue) {
+  const normalized = Boolean(nextValue);
+  if (state.leaderboardChartBestByTask === normalized) {
+    return;
+  }
+  state.leaderboardChartBestByTask = normalized;
+  if (!normalized) {
+    state.bestByTaskVisibleCount = BEST_BY_TASK_PAGE_SIZE;
+  }
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function setLeaderboardScatterXAxis(nextAxis) {
+  if (!LEADERBOARD_SCATTER_X_AXIS_KEYS.has(nextAxis) || state.leaderboardScatterXAxis === nextAxis) {
+    return;
+  }
+  state.leaderboardScatterXAxis = nextAxis;
   persistUiState();
   renderLeaderboard(state.filtered);
 }
@@ -2678,7 +2726,7 @@ function renderLeaderboardGroupSwitch() {
   if (!els.leaderboardGroupSwitch) {
     return;
   }
-  const supportsGrouping = state.leaderboardTab === "chart" || state.leaderboardTab === "price_scatter";
+  const supportsGrouping = state.leaderboardTab === "chart" || state.leaderboardTab === "scatter";
   els.leaderboardGroupSwitch.hidden = !supportsGrouping;
   els.leaderboardGroupSwitch.innerHTML = "";
   if (!supportsGrouping) {
@@ -2687,13 +2735,13 @@ function renderLeaderboardGroupSwitch() {
 
   const label = document.createElement("span");
   label.className = "leaderboard-group-switch-label";
-  label.textContent = "Group Chart By";
+  label.textContent = "Group By";
   els.leaderboardGroupSwitch.appendChild(label);
 
   const toggle = document.createElement("div");
   toggle.className = "leaderboard-group-toggle";
   toggle.setAttribute("role", "group");
-  toggle.setAttribute("aria-label", "Leaderboard chart grouping");
+  toggle.setAttribute("aria-label", "Leaderboard grouping");
 
   Object.entries(LEADERBOARD_CHART_GROUP_BY_LABELS).forEach(([key, text]) => {
     const button = document.createElement("button");
@@ -2708,18 +2756,46 @@ function renderLeaderboardGroupSwitch() {
   els.leaderboardGroupSwitch.appendChild(toggle);
 }
 
+function renderLeaderboardChartToggle() {
+  if (!els.leaderboardChartToggle) {
+    return;
+  }
+  const showToggle = state.leaderboardTab === "chart";
+  els.leaderboardChartToggle.hidden = !showToggle;
+  els.leaderboardChartToggle.innerHTML = "";
+  if (!showToggle) {
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = "leaderboard-group-switch-label";
+  label.textContent = "Chart";
+  els.leaderboardChartToggle.appendChild(label);
+
+  const checkboxLabel = document.createElement("label");
+  checkboxLabel.className = "checkbox leaderboard-chart-toggle-label";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = state.leaderboardChartBestByTask;
+  checkbox.addEventListener("change", (event) => setLeaderboardChartBestByTask(event.target.checked));
+  const text = document.createElement("span");
+  text.textContent = "Best run per task";
+  checkboxLabel.appendChild(checkbox);
+  checkboxLabel.appendChild(text);
+  els.leaderboardChartToggle.appendChild(checkboxLabel);
+}
+
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
   }
   renderLeaderboardGroupSwitch();
+  renderLeaderboardChartToggle();
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
-    { key: "price_scatter", label: "Price Scatter" },
-    { key: "time_series", label: "Time Series" },
-    { key: "table", label: "Metrics Table" },
-    { key: "best_by_task", label: "Best Run Per Task" },
+    { key: "scatter", label: "Scatter" },
+    { key: "table", label: "Table" },
     { key: "radar", label: "Radar" },
   ];
   tabs.forEach((tab) => {
@@ -3560,7 +3636,30 @@ function clampTimeSeriesViewport(viewport, fullDomain, minimumSpan = {}) {
   return { xMin, xMax, yMin, yMax };
 }
 
-function renderLeaderboardTimeSeries(container, runs) {
+function appendLeaderboardScatterAxisControls(controls) {
+  if (!controls) {
+    return;
+  }
+
+  const priceButton = document.createElement("button");
+  priceButton.type = "button";
+  priceButton.className = `time-series-control-btn${state.leaderboardScatterXAxis === "price" ? " active" : ""}`;
+  priceButton.textContent = "Price";
+  priceButton.setAttribute("aria-pressed", state.leaderboardScatterXAxis === "price" ? "true" : "false");
+  priceButton.addEventListener("click", () => setLeaderboardScatterXAxis("price"));
+  controls.appendChild(priceButton);
+
+  const timeButton = document.createElement("button");
+  timeButton.type = "button";
+  timeButton.className = `time-series-control-btn${state.leaderboardScatterXAxis === "time" ? " active" : ""}`;
+  timeButton.textContent = "Time";
+  timeButton.setAttribute("aria-pressed", state.leaderboardScatterXAxis === "time" ? "true" : "false");
+  timeButton.addEventListener("click", () => setLeaderboardScatterXAxis("time"));
+  controls.appendChild(timeButton);
+}
+
+function renderLeaderboardTimeSeries(container, runs, options = {}) {
+  const { includeScatterAxisSwitch = false } = options;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const showApproximateCi = supportsApproximateCi(metricKey);
@@ -3608,6 +3707,10 @@ function renderLeaderboardTimeSeries(container, runs) {
 
   const controls = document.createElement("div");
   controls.className = "time-series-controls";
+
+  if (includeScatterAxisSwitch) {
+    appendLeaderboardScatterAxisControls(controls);
+  }
 
   const labelsButton = document.createElement("button");
   labelsButton.type = "button";
@@ -4046,7 +4149,8 @@ function getPriceScatterValueForRun(run, mode = state.priceScatterCostMode) {
   return predictions > 0 ? estimatedCostUsd / predictions : null;
 }
 
-function renderLeaderboardPriceScatter(container, runs) {
+function renderLeaderboardPriceScatter(container, runs, options = {}) {
+  const { includeScatterAxisSwitch = false } = options;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const priceScatterCostMode = state.priceScatterCostMode;
@@ -4166,6 +4270,9 @@ function renderLeaderboardPriceScatter(container, runs) {
   header.className = "time-series-head";
   const controls = document.createElement("div");
   controls.className = "time-series-controls";
+  if (includeScatterAxisSwitch) {
+    appendLeaderboardScatterAxisControls(controls);
+  }
   const totalCostButton = document.createElement("button");
   totalCostButton.type = "button";
   totalCostButton.className = `time-series-control-btn${priceScatterCostMode === "total" ? " active" : ""}`;
@@ -4823,6 +4930,14 @@ function renderLeaderboardMetricsTable(container, runs) {
   setupLeaderboardMetricsScrollAffordance(wrap, scrollHint);
 }
 
+function renderLeaderboardScatter(container, runs) {
+  if (state.leaderboardScatterXAxis === "time") {
+    renderLeaderboardTimeSeries(container, runs, { includeScatterAxisSwitch: true });
+    return;
+  }
+  renderLeaderboardPriceScatter(container, runs, { includeScatterAxisSwitch: true });
+}
+
 function renderLeaderboard(runs) {
   cleanupLeaderboardMetricsScrollAffordance();
   renderLeaderboardTabControls();
@@ -4832,25 +4947,21 @@ function renderLeaderboard(runs) {
   panel.className = `leaderboard-panel${
     state.leaderboardTab === "radar"
       ? " leaderboard-panel-radar"
-      : state.leaderboardTab === "time_series"
+      : state.leaderboardTab === "scatter"
         ? " leaderboard-panel-time-series"
         : ""
   }`;
   els.leaderboardChart.appendChild(panel);
 
-  if (state.leaderboardTab === "time_series") {
-    renderLeaderboardTimeSeries(panel, runs);
-    return;
-  }
-  if (state.leaderboardTab === "price_scatter") {
-    renderLeaderboardPriceScatter(panel, runs);
+  if (state.leaderboardTab === "scatter") {
+    renderLeaderboardScatter(panel, runs);
     return;
   }
   if (state.leaderboardTab === "table") {
     renderLeaderboardMetricsTable(panel, runs);
     return;
   }
-  if (state.leaderboardTab === "best_by_task") {
+  if (state.leaderboardTab === "chart" && state.leaderboardChartBestByTask) {
     renderBestByTask(panel, runs);
     return;
   }
