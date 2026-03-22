@@ -4023,15 +4023,15 @@ function expandNumericDomain(minValue, maxValue, options = {}) {
 }
 
 function getPriceScatterCostModeLabel(mode = state.priceScatterCostMode) {
-  return mode === "per_prompt" ? "Average Cost per Prompt (USD)" : "Estimated Cost (USD)";
+  return mode === "per_prompt" ? "Average Cost per Prediction (USD)" : "Estimated Cost (USD)";
 }
 
 function getPriceScatterUnknownLabel(mode = state.priceScatterCostMode) {
-  return mode === "per_prompt" ? "Unknown Avg/Prompt" : "Unknown Cost";
+  return mode === "per_prompt" ? "Unknown Avg/Prediction" : "Unknown Cost";
 }
 
 function getPriceScatterUnknownValueText(mode = state.priceScatterCostMode) {
-  return mode === "per_prompt" ? "Unknown avg/prompt cost" : "Unknown cost";
+  return mode === "per_prompt" ? "Unknown avg/prediction cost" : "Unknown cost";
 }
 
 function getPriceScatterValueForRun(run, mode = state.priceScatterCostMode) {
@@ -4042,8 +4042,8 @@ function getPriceScatterValueForRun(run, mode = state.priceScatterCostMode) {
   if (mode !== "per_prompt") {
     return estimatedCostUsd;
   }
-  const prompts = toNonNegativeNumber(getPromptCountForRun(run));
-  return prompts > 0 ? estimatedCostUsd / prompts : null;
+  const predictions = toNonNegativeNumber(getPredictionCountForRun(run));
+  return predictions > 0 ? estimatedCostUsd / predictions : null;
 }
 
 function renderLeaderboardPriceScatter(container, runs) {
@@ -4053,7 +4053,7 @@ function renderLeaderboardPriceScatter(container, runs) {
   const priceAxisLabel = getPriceScatterCostModeLabel(priceScatterCostMode);
   const unknownBandLabelText = getPriceScatterUnknownLabel(priceScatterCostMode);
   const unknownValueText = getPriceScatterUnknownValueText(priceScatterCostMode);
-  const averagedCostLabel = priceScatterCostMode === "per_prompt" ? "avg/prompt cost" : "cost";
+  const averagedCostLabel = priceScatterCostMode === "per_prompt" ? "avg/prediction cost" : "cost";
   const entriesWithMetric = runs
     .map((run) => {
       const metricValue = getMetricValueForRun(run, metricKey);
@@ -4176,7 +4176,7 @@ function renderLeaderboardPriceScatter(container, runs) {
   const avgPromptButton = document.createElement("button");
   avgPromptButton.type = "button";
   avgPromptButton.className = `time-series-control-btn${priceScatterCostMode === "per_prompt" ? " active" : ""}`;
-  avgPromptButton.textContent = "Avg/Prompt";
+  avgPromptButton.textContent = "Avg/Prediction";
   avgPromptButton.setAttribute("aria-pressed", priceScatterCostMode === "per_prompt" ? "true" : "false");
   avgPromptButton.addEventListener("click", () => setPriceScatterCostMode("per_prompt"));
   controls.appendChild(avgPromptButton);
@@ -4932,8 +4932,8 @@ function renderBestByTask(container, runs) {
   }
 }
 
-function getPromptCountForRun(run) {
-  return run.requestsTotal ?? run.attemptsWithUsage ?? run.predictionCount ?? run.totalExamples ?? 0;
+function getPredictionCountForRun(run) {
+  return run.predictionCount ?? run.totalExamples ?? run.truthLabelCount ?? 0;
 }
 
 const TOKEN_SEGMENTS = [
@@ -5157,22 +5157,22 @@ function createMetricRevealControls({
 function computeRunSignalRows(runs) {
   return runs
     .map((run) => {
-      const prompts = toNonNegativeNumber(getPromptCountForRun(run));
+      const predictions = toNonNegativeNumber(getPredictionCountForRun(run));
       const inputTotal = toNonNegativeNumber(run.inputTokensTotal);
       const cachedTotal = toNonNegativeNumber(run.cachedInputTokensTotal ?? run.cachedTokens);
       const outputTotal = toNonNegativeNumber(run.outputTokensTotal);
       const thinkingTotal = toNonNegativeNumber(run.thinkingTokensTotal);
-      const avgInput = averageOrZero(inputTotal, prompts);
-      const avgCached = averageOrZero(cachedTotal, prompts);
-      const avgOutput = averageOrZero(outputTotal, prompts);
-      const avgThinking = averageOrZero(thinkingTotal, prompts);
+      const avgInput = averageOrZero(inputTotal, predictions);
+      const avgCached = averageOrZero(cachedTotal, predictions);
+      const avgOutput = averageOrZero(outputTotal, predictions);
+      const avgThinking = averageOrZero(thinkingTotal, predictions);
       const estimatedCostUsd = safeNum(run.estimatedCostUsd);
       return {
         run,
         model: run.model || "unknown",
         modelDisplay: getRunModelDisplayName(run),
         task: run.task || "unknown",
-        prompts,
+        predictions,
         inputTotal,
         cachedTotal,
         outputTotal,
@@ -5551,7 +5551,7 @@ function renderRadarPanel(panel, runs) {
 
 function renderTokenSignals(runs) {
   els.tokenChart.innerHTML = "";
-  const runRows = computeRunSignalRows(runs).filter((row) => row.prompts > 0 || row.totalAvg > 0);
+  const runRows = computeRunSignalRows(runs).filter((row) => row.predictions > 0 || row.totalAvg > 0);
   if (!runRows.length) {
     els.tokenChart.innerHTML = '<p class="muted">No token/request metadata for current filter.</p>';
     return;
@@ -5561,7 +5561,7 @@ function renderTokenSignals(runs) {
   stackPanel.className = "token-stack-panel";
   const stackHeader = document.createElement("h4");
   stackHeader.className = "token-stack-header";
-  stackHeader.textContent = "Average tokens per prompt by run";
+  stackHeader.textContent = "Average tokens per prediction by run";
   stackPanel.appendChild(stackHeader);
   appendTokenLegend(stackPanel);
 
@@ -5582,7 +5582,7 @@ function renderTokenSignals(runs) {
     const meta = document.createElement("span");
     meta.className = "mono";
     meta.textContent =
-      `${row.task} | avg/prompt ${formatNum(row.totalAvg, 2)} | prompts ${formatNum(row.prompts, 0)} | ` +
+      `${row.task} | avg/prediction ${formatNum(row.totalAvg, 2)} | predictions ${formatNum(row.predictions, 0)} | ` +
       `~ ${formatUsd(row.estimatedCostUsd)}`;
     head.appendChild(modelLabel);
     head.appendChild(meta);
@@ -5600,7 +5600,7 @@ function renderTokenSignals(runs) {
       seg.style.background = segment.color;
       const totalKey = segment.key.replace(/^avg/, "").toLowerCase();
       const totalValue = row[`${totalKey}Total`];
-      seg.title = `${segment.label}: ${formatNum(totalValue, 0)} total | ${formatNum(value, 2)} avg/prompt`;
+      seg.title = `${segment.label}: ${formatNum(totalValue, 0)} total | ${formatNum(value, 2)} avg/prediction`;
       track.appendChild(seg);
     });
     rowEl.appendChild(track);
