@@ -557,6 +557,49 @@
     })}`;
   }
 
+  function getPricingServiceTiers(entry) {
+    return entry && entry.service_tiers && typeof entry.service_tiers === "object"
+      ? entry.service_tiers
+      : {};
+  }
+
+  function pricingEntryHasRef(entry) {
+    return !!(entry && typeof entry.pricing_ref === "string" && entry.pricing_ref.trim());
+  }
+
+  function pricingEntryHasReason(entry) {
+    return !!(entry && typeof entry.reason === "string" && entry.reason.trim());
+  }
+
+  function pricingEntryHasUsableRates(entry) {
+    return Object.values(getPricingServiceTiers(entry)).some((tierRates) => {
+      if (!tierRates || typeof tierRates !== "object") {
+        return false;
+      }
+      return ["input_usd_per_mtokens", "cached_input_usd_per_mtokens", "output_usd_per_mtokens"]
+        .some((key) => typeof tierRates[key] === "number" && Number.isFinite(tierRates[key]));
+    });
+  }
+
+  function classifyPricingCatalogEntry(entry) {
+    if (!entry || typeof entry !== "object") {
+      return "missing";
+    }
+    if (pricingEntryHasRef(entry)) {
+      return "alias";
+    }
+    if (pricingEntryHasUsableRates(entry)) {
+      return "priced";
+    }
+    if (entry.needs_manual_update === true) {
+      return "unpriced";
+    }
+    if (pricingEntryHasReason(entry)) {
+      return "unsupported";
+    }
+    return "unpriced";
+  }
+
   function resolvePricingCatalogEntry(ctx, provider, modelId) {
     const catalog = ctx.priceCatalog;
     const normalizedProvider = normalizePricingProviderKey(provider);
@@ -579,7 +622,7 @@
       if (!entry || typeof entry !== "object") {
         return null;
       }
-      if (entry.status !== "alias") {
+      if (!pricingEntryHasRef(entry)) {
         return { entry, resolvedKey: currentKey };
       }
       currentKey = typeof entry.pricing_ref === "string" ? entry.pricing_ref.trim() : "";
@@ -675,19 +718,19 @@
       return "";
     }
     const { entry } = resolved;
-    if (entry.status === "unpriced") {
+    const entryKind = classifyPricingCatalogEntry(entry);
+    if (entryKind === "unpriced") {
       return "manual pricing needed";
     }
-    if (entry.status === "unsupported") {
+    if (entryKind === "unsupported") {
       return "no compatible token pricing";
     }
-    if (entry.status !== "priced") {
+    if (entryKind !== "priced") {
       return "";
     }
 
     const requestedTier = getSelectedServiceTier(ctx);
-    const serviceTiers =
-      entry.service_tiers && typeof entry.service_tiers === "object" ? entry.service_tiers : {};
+    const serviceTiers = getPricingServiceTiers(entry);
     const preferredTier =
       serviceTiers[requestedTier] && typeof serviceTiers[requestedTier] === "object"
         ? serviceTiers[requestedTier]

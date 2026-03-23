@@ -5,189 +5,147 @@ window.MODEL_PRICING_CATALOG = {
     "e-infra": {
       "models": {
         "agentic": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "coder": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "deepseek-v3.2": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "deepseek-v3.2-thinking": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "glm-4.7": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "glm-5": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "gpt-oss-120b": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "kimi-k2.5": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "llama-4-scout-17b-16e-instruct": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "mini": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "mistral-large": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "mistral-small-4": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "multilingual-e5-large-instruct": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "mxbai-embed-large:latest": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "nomic-embed-text-v1.5": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "nomic-embed-text-v2-moe": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3-coder": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3-coder-30b": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3-coder-next": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3-embedding-4b": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3-reranker-4b": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "qwen3.5": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "thinker": {
-          "status": "unsupported",
           "reason": "No official compatible per-token pricing source is configured for this provider."
         },
         "deepseekv32": {
-          "status": "alias",
           "pricing_ref": "deepseek-v3.2",
           "alias_kind": "legacy_slug"
         },
         "deepseekv32thinking": {
-          "status": "alias",
           "pricing_ref": "deepseek-v3.2-thinking",
           "alias_kind": "legacy_slug"
         },
         "glm47": {
-          "status": "alias",
           "pricing_ref": "glm-4.7",
           "alias_kind": "legacy_slug"
         },
         "glm5": {
-          "status": "alias",
           "pricing_ref": "glm-5",
           "alias_kind": "legacy_slug"
         },
         "gptoss120b": {
-          "status": "alias",
           "pricing_ref": "gpt-oss-120b",
           "alias_kind": "legacy_slug"
         },
         "kimik25": {
-          "status": "alias",
           "pricing_ref": "kimi-k2.5",
           "alias_kind": "legacy_slug"
         },
         "llama4scout17b16einstruct": {
-          "status": "alias",
           "pricing_ref": "llama-4-scout-17b-16e-instruct",
           "alias_kind": "legacy_slug"
         },
         "mistrallarge": {
-          "status": "alias",
           "pricing_ref": "mistral-large",
           "alias_kind": "legacy_slug"
         },
         "mistralsmall4": {
-          "status": "alias",
           "pricing_ref": "mistral-small-4",
           "alias_kind": "legacy_slug"
         },
         "multilinguale5largeinstruct": {
-          "status": "alias",
           "pricing_ref": "multilingual-e5-large-instruct",
           "alias_kind": "legacy_slug"
         },
         "mxbaiembedlargelatest": {
-          "status": "alias",
           "pricing_ref": "mxbai-embed-large:latest",
           "alias_kind": "legacy_slug"
         },
         "nomicembedtextv15": {
-          "status": "alias",
           "pricing_ref": "nomic-embed-text-v1.5",
           "alias_kind": "legacy_slug"
         },
         "nomicembedtextv2moe": {
-          "status": "alias",
           "pricing_ref": "nomic-embed-text-v2-moe",
           "alias_kind": "legacy_slug"
         },
         "qwen3coder": {
-          "status": "alias",
           "pricing_ref": "qwen3-coder",
           "alias_kind": "legacy_slug"
         },
         "qwen3coder30b": {
-          "status": "alias",
           "pricing_ref": "qwen3-coder-30b",
           "alias_kind": "legacy_slug"
         },
         "qwen3codernext": {
-          "status": "alias",
           "pricing_ref": "qwen3-coder-next",
           "alias_kind": "legacy_slug"
         },
         "qwen3embedding4b": {
-          "status": "alias",
           "pricing_ref": "qwen3-embedding-4b",
           "alias_kind": "legacy_slug"
         },
         "qwen3reranker4b": {
-          "status": "alias",
           "pricing_ref": "qwen3-reranker-4b",
           "alias_kind": "legacy_slug"
         },
         "qwen35": {
-          "status": "alias",
           "pricing_ref": "qwen3.5",
           "alias_kind": "legacy_slug"
         }
@@ -196,35 +154,27 @@ window.MODEL_PRICING_CATALOG = {
     "google": {
       "models": {
         "models/aqa": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/deep-research-pro-preview-12-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.0-flash": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.0-flash-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.0-flash-lite": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.0-flash-lite-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-computer-use-preview-10-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.3,
@@ -260,11 +210,9 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-2.5-flash-image": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash-lite": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.1,
@@ -300,27 +248,21 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-2.5-flash-lite-preview-09-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash-native-audio-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash-native-audio-preview-09-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash-native-audio-preview-12-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-flash-preview-tts": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-2.5-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.25,
@@ -356,11 +298,9 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-2.5-pro-preview-tts": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-3-flash-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.5,
@@ -396,19 +336,15 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-3-pro-image-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-3-pro-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-3.1-flash-image-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-3.1-flash-lite-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.25,
@@ -444,7 +380,6 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-3.1-pro-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -480,325 +415,256 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "models/gemini-3.1-pro-preview-customtools": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3.1-pro-preview",
           "alias_kind": "provider_alias"
         },
         "models/gemini-embedding-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-embedding-2-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-flash-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-flash-lite-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-pro-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemini-robotics-er-1.5-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3-12b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3-1b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3-27b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3-4b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3n-e2b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/gemma-3n-e4b-it": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/imagen-4.0-fast-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/imagen-4.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/imagen-4.0-ultra-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/lyria-realtime-exp": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/nano-banana-pro-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/veo-2.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/veo-3.0-fast-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/veo-3.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/veo-3.1-fast-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "models/veo-3.1-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "modelsaqa": {
-          "status": "alias",
           "pricing_ref": "models/aqa",
           "alias_kind": "legacy_slug"
         },
         "modelsdeepresearchpropreview122025": {
-          "status": "alias",
           "pricing_ref": "models/deep-research-pro-preview-12-2025",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini20flash": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.0-flash",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini20flash001": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.0-flash-001",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini20flashlite": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.0-flash-lite",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini20flashlite001": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.0-flash-lite-001",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25computerusepreview102025": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-computer-use-preview-10-2025",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flash": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashimage": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-image",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashlite": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-lite",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashlitepreview092025": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-lite-preview-09-2025",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashnativeaudiolatest": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-native-audio-latest",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashnativeaudiopreview092025": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-native-audio-preview-09-2025",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashnativeaudiopreview122025": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-native-audio-preview-12-2025",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25flashpreviewtts": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-flash-preview-tts",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25pro": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-pro",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini25propreviewtts": {
-          "status": "alias",
           "pricing_ref": "models/gemini-2.5-pro-preview-tts",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini3flashpreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3-flash-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini3proimagepreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3-pro-image-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini3propreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini31flashimagepreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3.1-flash-image-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini31flashlitepreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3.1-flash-lite-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini31propreview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3.1-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemini31propreviewcustomtools": {
-          "status": "alias",
           "pricing_ref": "models/gemini-3.1-pro-preview-customtools",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiembedding001": {
-          "status": "alias",
           "pricing_ref": "models/gemini-embedding-001",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiembedding2preview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-embedding-2-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiflashlatest": {
-          "status": "alias",
           "pricing_ref": "models/gemini-flash-latest",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiflashlitelatest": {
-          "status": "alias",
           "pricing_ref": "models/gemini-flash-lite-latest",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiprolatest": {
-          "status": "alias",
           "pricing_ref": "models/gemini-pro-latest",
           "alias_kind": "legacy_slug"
         },
         "modelsgeminiroboticser15preview": {
-          "status": "alias",
           "pricing_ref": "models/gemini-robotics-er-1.5-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma312bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3-12b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma31bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3-1b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma327bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3-27b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma34bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3-4b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma3ne2bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3n-e2b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsgemma3ne4bit": {
-          "status": "alias",
           "pricing_ref": "models/gemma-3n-e4b-it",
           "alias_kind": "legacy_slug"
         },
         "modelsimagen40fastgenerate001": {
-          "status": "alias",
           "pricing_ref": "models/imagen-4.0-fast-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelsimagen40generate001": {
-          "status": "alias",
           "pricing_ref": "models/imagen-4.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelsimagen40ultragenerate001": {
-          "status": "alias",
           "pricing_ref": "models/imagen-4.0-ultra-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelslyriarealtimeexp": {
-          "status": "alias",
           "pricing_ref": "models/lyria-realtime-exp",
           "alias_kind": "legacy_slug"
         },
         "modelsnanobananapropreview": {
-          "status": "alias",
           "pricing_ref": "models/nano-banana-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsveo20generate001": {
-          "status": "alias",
           "pricing_ref": "models/veo-2.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelsveo30fastgenerate001": {
-          "status": "alias",
           "pricing_ref": "models/veo-3.0-fast-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelsveo30generate001": {
-          "status": "alias",
           "pricing_ref": "models/veo-3.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "modelsveo31fastgeneratepreview": {
-          "status": "alias",
           "pricing_ref": "models/veo-3.1-fast-generate-preview",
           "alias_kind": "legacy_slug"
         },
         "modelsveo31generatepreview": {
-          "status": "alias",
           "pricing_ref": "models/veo-3.1-generate-preview",
           "alias_kind": "legacy_slug"
         }
@@ -807,11 +673,9 @@ window.MODEL_PRICING_CATALOG = {
     "inception": {
       "models": {
         "mercury": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "mercury-2": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.25,
@@ -827,11 +691,9 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "mercury-coder": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "mercury-edit": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.25,
@@ -847,17 +709,14 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "mercury2": {
-          "status": "alias",
           "pricing_ref": "mercury-2",
           "alias_kind": "legacy_slug"
         },
         "mercurycoder": {
-          "status": "alias",
           "pricing_ref": "mercury-coder",
           "alias_kind": "legacy_slug"
         },
         "mercuryedit": {
-          "status": "alias",
           "pricing_ref": "mercury-edit",
           "alias_kind": "legacy_slug"
         }
@@ -866,7 +725,6 @@ window.MODEL_PRICING_CATALOG = {
     "openai": {
       "models": {
         "babbage-002": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.4,
@@ -882,19 +740,15 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "chatgpt-image-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "dall-e-2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "dall-e-3": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "davinci-002": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -910,7 +764,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-3.5-turbo": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.5,
@@ -926,19 +779,15 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-3.5-turbo-0125": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-3.5-turbo-1106": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-3.5-turbo-16k": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-3.5-turbo-instruct": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.5,
@@ -954,11 +803,9 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-3.5-turbo-instruct-0914": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 30.0,
@@ -974,19 +821,15 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4-0125-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4-0613": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4-1106-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4-turbo": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 10.0,
@@ -1002,11 +845,9 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4-turbo-2024-04-09": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4-turbo-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 10.0,
@@ -1022,7 +863,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4.1": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 3.5,
@@ -1047,12 +887,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4.1-2025-04-14": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1",
           "alias_kind": "snapshot"
         },
         "gpt-4.1-mini": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 0.7,
@@ -1077,12 +915,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4.1-mini-2025-04-14": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-mini",
           "alias_kind": "snapshot"
         },
         "gpt-4.1-nano": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 0.2,
@@ -1107,12 +943,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4.1-nano-2025-04-14": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-nano",
           "alias_kind": "snapshot"
         },
         "gpt-4o": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.5,
@@ -1128,31 +962,24 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4o-2024-05-13": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-2024-08-06": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-2024-11-20": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-audio-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-audio-preview-2024-12-17": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-audio-preview-2025-06-03": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 0.25,
@@ -1177,87 +1004,66 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-4o-mini-2024-07-18": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-audio-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-audio-preview-2024-12-17": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-realtime-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-realtime-preview-2024-12-17": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-search-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-search-preview-2025-03-11": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-transcribe": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-transcribe-2025-03-20": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-transcribe-2025-12-15": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-tts": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-tts-2025-03-20": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-mini-tts-2025-12-15": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-realtime-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-realtime-preview-2024-12-17": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-realtime-preview-2025-06-03": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-search-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-search-preview-2025-03-11": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-transcribe": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-4o-transcribe-diarize": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-5": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.25,
@@ -1273,12 +1079,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-2025-08-07": {
-          "status": "alias",
           "pricing_ref": "gpt-5",
           "alias_kind": "snapshot"
         },
         "gpt-5-chat-latest": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.25,
@@ -1294,7 +1098,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-codex": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 2.5,
@@ -1319,7 +1122,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-mini": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 0.45,
@@ -1344,12 +1146,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-mini-2025-08-07": {
-          "status": "alias",
           "pricing_ref": "gpt-5-mini",
           "alias_kind": "snapshot"
         },
         "gpt-5-nano": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.05,
@@ -1365,12 +1165,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-nano-2025-08-07": {
-          "status": "alias",
           "pricing_ref": "gpt-5-nano",
           "alias_kind": "snapshot"
         },
         "gpt-5-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 15.0,
@@ -1386,20 +1184,16 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5-pro-2025-10-06": {
-          "status": "alias",
           "pricing_ref": "gpt-5-pro",
           "alias_kind": "snapshot"
         },
         "gpt-5-search-api": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-5-search-api-2025-10-14": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-5.1": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 2.5,
@@ -1424,12 +1218,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.1-2025-11-13": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1",
           "alias_kind": "snapshot"
         },
         "gpt-5.1-chat-latest": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.25,
@@ -1445,7 +1237,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.1-codex": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 2.5,
@@ -1470,7 +1261,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.1-codex-max": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.25,
@@ -1486,7 +1276,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.1-codex-mini": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.25,
@@ -1502,7 +1291,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.2": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 3.5,
@@ -1527,12 +1315,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.2-2025-12-11": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2",
           "alias_kind": "snapshot"
         },
         "gpt-5.2-chat-latest": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.75,
@@ -1548,7 +1334,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.2-codex": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.75,
@@ -1564,7 +1349,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.2-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 21.0,
@@ -1580,12 +1364,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.2-pro-2025-12-11": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-pro",
           "alias_kind": "snapshot"
         },
         "gpt-5.3-chat-latest": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.75,
@@ -1605,7 +1387,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.3-codex": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.75,
@@ -1630,7 +1411,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.4": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.5,
@@ -1679,12 +1459,10 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gpt-5.4-2026-03-05": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4",
           "alias_kind": "snapshot"
         },
         "gpt-5.4-mini": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.75,
@@ -1714,12 +1492,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.4-mini-2026-03-17": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-mini",
           "alias_kind": "snapshot"
         },
         "gpt-5.4-nano": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.2,
@@ -1749,12 +1525,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "gpt-5.4-nano-2026-03-17": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-nano",
           "alias_kind": "snapshot"
         },
         "gpt-5.4-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 30.0,
@@ -1794,72 +1568,55 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gpt-5.4-pro-2026-03-05": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-pro",
           "alias_kind": "snapshot"
         },
         "gpt-audio": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-audio-1.5": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-audio-2025-08-28": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-audio-mini": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-audio-mini-2025-10-06": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-audio-mini-2025-12-15": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-image-1": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-image-1-mini": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-image-1.5": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime-1.5": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime-2025-08-28": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime-mini": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime-mini-2025-10-06": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gpt-realtime-mini-2025-12-15": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "o1": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 15.0,
@@ -1875,11 +1632,9 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "o1-2024-12-17": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "o1-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 150.0,
@@ -1895,12 +1650,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "o1-pro-2025-03-19": {
-          "status": "alias",
           "pricing_ref": "o1-pro",
           "alias_kind": "snapshot"
         },
         "o3": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 3.5,
@@ -1930,12 +1683,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "o3-2025-04-16": {
-          "status": "alias",
           "pricing_ref": "o3",
           "alias_kind": "snapshot"
         },
         "o3-mini": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 1.1,
@@ -1951,12 +1702,10 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "o3-mini-2025-01-31": {
-          "status": "alias",
           "pricing_ref": "o3-mini",
           "alias_kind": "snapshot"
         },
         "o4-mini": {
-          "status": "priced",
           "service_tiers": {
             "priority": {
               "input_usd_per_mtokens": 2.0,
@@ -1981,678 +1730,540 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "o4-mini-2025-04-16": {
-          "status": "alias",
           "pricing_ref": "o4-mini",
           "alias_kind": "snapshot"
         },
         "o4-mini-deep-research": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "o4-mini-deep-research-2025-06-26": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "omni-moderation-2024-09-26": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "omni-moderation-latest": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "sora-2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "sora-2-pro": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-embedding-3-large": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-embedding-3-small": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-embedding-ada-002": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tts-1": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tts-1-1106": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tts-1-hd": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tts-1-hd-1106": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "whisper-1": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "babbage002": {
-          "status": "alias",
           "pricing_ref": "babbage-002",
           "alias_kind": "legacy_slug"
         },
         "chatgptimagelatest": {
-          "status": "alias",
           "pricing_ref": "chatgpt-image-latest",
           "alias_kind": "legacy_slug"
         },
         "dalle2": {
-          "status": "alias",
           "pricing_ref": "dall-e-2",
           "alias_kind": "legacy_slug"
         },
         "dalle3": {
-          "status": "alias",
           "pricing_ref": "dall-e-3",
           "alias_kind": "legacy_slug"
         },
         "davinci002": {
-          "status": "alias",
           "pricing_ref": "davinci-002",
           "alias_kind": "legacy_slug"
         },
         "gpt35turbo": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo",
           "alias_kind": "legacy_slug"
         },
         "gpt35turbo0125": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo-0125",
           "alias_kind": "legacy_slug"
         },
         "gpt35turbo1106": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo-1106",
           "alias_kind": "legacy_slug"
         },
         "gpt35turbo16k": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo-16k",
           "alias_kind": "legacy_slug"
         },
         "gpt35turboinstruct": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo-instruct",
           "alias_kind": "legacy_slug"
         },
         "gpt35turboinstruct0914": {
-          "status": "alias",
           "pricing_ref": "gpt-3.5-turbo-instruct-0914",
           "alias_kind": "legacy_slug"
         },
         "gpt4": {
-          "status": "alias",
           "pricing_ref": "gpt-4",
           "alias_kind": "legacy_slug"
         },
         "gpt40125preview": {
-          "status": "alias",
           "pricing_ref": "gpt-4-0125-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt40613": {
-          "status": "alias",
           "pricing_ref": "gpt-4-0613",
           "alias_kind": "legacy_slug"
         },
         "gpt41106preview": {
-          "status": "alias",
           "pricing_ref": "gpt-4-1106-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4turbo": {
-          "status": "alias",
           "pricing_ref": "gpt-4-turbo",
           "alias_kind": "legacy_slug"
         },
         "gpt4turbo20240409": {
-          "status": "alias",
           "pricing_ref": "gpt-4-turbo-2024-04-09",
           "alias_kind": "legacy_slug"
         },
         "gpt4turbopreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4-turbo-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt41": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1",
           "alias_kind": "legacy_slug"
         },
         "gpt4120250414": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-2025-04-14",
           "alias_kind": "legacy_slug"
         },
         "gpt41mini": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-mini",
           "alias_kind": "legacy_slug"
         },
         "gpt41mini20250414": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-mini-2025-04-14",
           "alias_kind": "legacy_slug"
         },
         "gpt41nano": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-nano",
           "alias_kind": "legacy_slug"
         },
         "gpt41nano20250414": {
-          "status": "alias",
           "pricing_ref": "gpt-4.1-nano-2025-04-14",
           "alias_kind": "legacy_slug"
         },
         "gpt4o": {
-          "status": "alias",
           "pricing_ref": "gpt-4o",
           "alias_kind": "legacy_slug"
         },
         "gpt4o20240513": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-2024-05-13",
           "alias_kind": "legacy_slug"
         },
         "gpt4o20240806": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-2024-08-06",
           "alias_kind": "legacy_slug"
         },
         "gpt4o20241120": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-2024-11-20",
           "alias_kind": "legacy_slug"
         },
         "gpt4oaudiopreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-audio-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4oaudiopreview20241217": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-audio-preview-2024-12-17",
           "alias_kind": "legacy_slug"
         },
         "gpt4oaudiopreview20250603": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-audio-preview-2025-06-03",
           "alias_kind": "legacy_slug"
         },
         "gpt4omini": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini",
           "alias_kind": "legacy_slug"
         },
         "gpt4omini20240718": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-2024-07-18",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominiaudiopreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-audio-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominiaudiopreview20241217": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-audio-preview-2024-12-17",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominirealtimepreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-realtime-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominirealtimepreview20241217": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-realtime-preview-2024-12-17",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominisearchpreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-search-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominisearchpreview20250311": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-search-preview-2025-03-11",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitranscribe": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-transcribe",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitranscribe20250320": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-transcribe-2025-03-20",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitranscribe20251215": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-transcribe-2025-12-15",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitts": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-tts",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitts20250320": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-tts-2025-03-20",
           "alias_kind": "legacy_slug"
         },
         "gpt4ominitts20251215": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-mini-tts-2025-12-15",
           "alias_kind": "legacy_slug"
         },
         "gpt4orealtimepreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-realtime-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4orealtimepreview20241217": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-realtime-preview-2024-12-17",
           "alias_kind": "legacy_slug"
         },
         "gpt4orealtimepreview20250603": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-realtime-preview-2025-06-03",
           "alias_kind": "legacy_slug"
         },
         "gpt4osearchpreview": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-search-preview",
           "alias_kind": "legacy_slug"
         },
         "gpt4osearchpreview20250311": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-search-preview-2025-03-11",
           "alias_kind": "legacy_slug"
         },
         "gpt4otranscribe": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-transcribe",
           "alias_kind": "legacy_slug"
         },
         "gpt4otranscribediarize": {
-          "status": "alias",
           "pricing_ref": "gpt-4o-transcribe-diarize",
           "alias_kind": "legacy_slug"
         },
         "gpt5": {
-          "status": "alias",
           "pricing_ref": "gpt-5",
           "alias_kind": "legacy_slug"
         },
         "gpt520250807": {
-          "status": "alias",
           "pricing_ref": "gpt-5-2025-08-07",
           "alias_kind": "legacy_slug"
         },
         "gpt5chatlatest": {
-          "status": "alias",
           "pricing_ref": "gpt-5-chat-latest",
           "alias_kind": "legacy_slug"
         },
         "gpt5codex": {
-          "status": "alias",
           "pricing_ref": "gpt-5-codex",
           "alias_kind": "legacy_slug"
         },
         "gpt5mini": {
-          "status": "alias",
           "pricing_ref": "gpt-5-mini",
           "alias_kind": "legacy_slug"
         },
         "gpt5mini20250807": {
-          "status": "alias",
           "pricing_ref": "gpt-5-mini-2025-08-07",
           "alias_kind": "legacy_slug"
         },
         "gpt5nano": {
-          "status": "alias",
           "pricing_ref": "gpt-5-nano",
           "alias_kind": "legacy_slug"
         },
         "gpt5nano20250807": {
-          "status": "alias",
           "pricing_ref": "gpt-5-nano-2025-08-07",
           "alias_kind": "legacy_slug"
         },
         "gpt5pro": {
-          "status": "alias",
           "pricing_ref": "gpt-5-pro",
           "alias_kind": "legacy_slug"
         },
         "gpt5pro20251006": {
-          "status": "alias",
           "pricing_ref": "gpt-5-pro-2025-10-06",
           "alias_kind": "legacy_slug"
         },
         "gpt5searchapi": {
-          "status": "alias",
           "pricing_ref": "gpt-5-search-api",
           "alias_kind": "legacy_slug"
         },
         "gpt5searchapi20251014": {
-          "status": "alias",
           "pricing_ref": "gpt-5-search-api-2025-10-14",
           "alias_kind": "legacy_slug"
         },
         "gpt51": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1",
           "alias_kind": "legacy_slug"
         },
         "gpt5120251113": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1-2025-11-13",
           "alias_kind": "legacy_slug"
         },
         "gpt51chatlatest": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1-chat-latest",
           "alias_kind": "legacy_slug"
         },
         "gpt51codex": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1-codex",
           "alias_kind": "legacy_slug"
         },
         "gpt51codexmax": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1-codex-max",
           "alias_kind": "legacy_slug"
         },
         "gpt51codexmini": {
-          "status": "alias",
           "pricing_ref": "gpt-5.1-codex-mini",
           "alias_kind": "legacy_slug"
         },
         "gpt52": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2",
           "alias_kind": "legacy_slug"
         },
         "gpt5220251211": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-2025-12-11",
           "alias_kind": "legacy_slug"
         },
         "gpt52chatlatest": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-chat-latest",
           "alias_kind": "legacy_slug"
         },
         "gpt52codex": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-codex",
           "alias_kind": "legacy_slug"
         },
         "gpt52pro": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-pro",
           "alias_kind": "legacy_slug"
         },
         "gpt52pro20251211": {
-          "status": "alias",
           "pricing_ref": "gpt-5.2-pro-2025-12-11",
           "alias_kind": "legacy_slug"
         },
         "gpt53chatlatest": {
-          "status": "alias",
           "pricing_ref": "gpt-5.3-chat-latest",
           "alias_kind": "legacy_slug"
         },
         "gpt53codex": {
-          "status": "alias",
           "pricing_ref": "gpt-5.3-codex",
           "alias_kind": "legacy_slug"
         },
         "gpt54": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4",
           "alias_kind": "legacy_slug"
         },
         "gpt5420260305": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-2026-03-05",
           "alias_kind": "legacy_slug"
         },
         "gpt54mini": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-mini",
           "alias_kind": "legacy_slug"
         },
         "gpt54mini20260317": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-mini-2026-03-17",
           "alias_kind": "legacy_slug"
         },
         "gpt54nano": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-nano",
           "alias_kind": "legacy_slug"
         },
         "gpt54nano20260317": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-nano-2026-03-17",
           "alias_kind": "legacy_slug"
         },
         "gpt54pro": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-pro",
           "alias_kind": "legacy_slug"
         },
         "gpt54pro20260305": {
-          "status": "alias",
           "pricing_ref": "gpt-5.4-pro-2026-03-05",
           "alias_kind": "legacy_slug"
         },
         "gptaudio": {
-          "status": "alias",
           "pricing_ref": "gpt-audio",
           "alias_kind": "legacy_slug"
         },
         "gptaudio15": {
-          "status": "alias",
           "pricing_ref": "gpt-audio-1.5",
           "alias_kind": "legacy_slug"
         },
         "gptaudio20250828": {
-          "status": "alias",
           "pricing_ref": "gpt-audio-2025-08-28",
           "alias_kind": "legacy_slug"
         },
         "gptaudiomini": {
-          "status": "alias",
           "pricing_ref": "gpt-audio-mini",
           "alias_kind": "legacy_slug"
         },
         "gptaudiomini20251006": {
-          "status": "alias",
           "pricing_ref": "gpt-audio-mini-2025-10-06",
           "alias_kind": "legacy_slug"
         },
         "gptaudiomini20251215": {
-          "status": "alias",
           "pricing_ref": "gpt-audio-mini-2025-12-15",
           "alias_kind": "legacy_slug"
         },
         "gptimage1": {
-          "status": "alias",
           "pricing_ref": "gpt-image-1",
           "alias_kind": "legacy_slug"
         },
         "gptimage1mini": {
-          "status": "alias",
           "pricing_ref": "gpt-image-1-mini",
           "alias_kind": "legacy_slug"
         },
         "gptimage15": {
-          "status": "alias",
           "pricing_ref": "gpt-image-1.5",
           "alias_kind": "legacy_slug"
         },
         "gptrealtime": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime",
           "alias_kind": "legacy_slug"
         },
         "gptrealtime15": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime-1.5",
           "alias_kind": "legacy_slug"
         },
         "gptrealtime20250828": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime-2025-08-28",
           "alias_kind": "legacy_slug"
         },
         "gptrealtimemini": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime-mini",
           "alias_kind": "legacy_slug"
         },
         "gptrealtimemini20251006": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime-mini-2025-10-06",
           "alias_kind": "legacy_slug"
         },
         "gptrealtimemini20251215": {
-          "status": "alias",
           "pricing_ref": "gpt-realtime-mini-2025-12-15",
           "alias_kind": "legacy_slug"
         },
         "o120241217": {
-          "status": "alias",
           "pricing_ref": "o1-2024-12-17",
           "alias_kind": "legacy_slug"
         },
         "o1pro": {
-          "status": "alias",
           "pricing_ref": "o1-pro",
           "alias_kind": "legacy_slug"
         },
         "o1pro20250319": {
-          "status": "alias",
           "pricing_ref": "o1-pro-2025-03-19",
           "alias_kind": "legacy_slug"
         },
         "o320250416": {
-          "status": "alias",
           "pricing_ref": "o3-2025-04-16",
           "alias_kind": "legacy_slug"
         },
         "o3mini": {
-          "status": "alias",
           "pricing_ref": "o3-mini",
           "alias_kind": "legacy_slug"
         },
         "o3mini20250131": {
-          "status": "alias",
           "pricing_ref": "o3-mini-2025-01-31",
           "alias_kind": "legacy_slug"
         },
         "o4mini": {
-          "status": "alias",
           "pricing_ref": "o4-mini",
           "alias_kind": "legacy_slug"
         },
         "o4mini20250416": {
-          "status": "alias",
           "pricing_ref": "o4-mini-2025-04-16",
           "alias_kind": "legacy_slug"
         },
         "o4minideepresearch": {
-          "status": "alias",
           "pricing_ref": "o4-mini-deep-research",
           "alias_kind": "legacy_slug"
         },
         "o4minideepresearch20250626": {
-          "status": "alias",
           "pricing_ref": "o4-mini-deep-research-2025-06-26",
           "alias_kind": "legacy_slug"
         },
         "omnimoderation20240926": {
-          "status": "alias",
           "pricing_ref": "omni-moderation-2024-09-26",
           "alias_kind": "legacy_slug"
         },
         "omnimoderationlatest": {
-          "status": "alias",
           "pricing_ref": "omni-moderation-latest",
           "alias_kind": "legacy_slug"
         },
         "sora2": {
-          "status": "alias",
           "pricing_ref": "sora-2",
           "alias_kind": "legacy_slug"
         },
         "sora2pro": {
-          "status": "alias",
           "pricing_ref": "sora-2-pro",
           "alias_kind": "legacy_slug"
         },
         "textembedding3large": {
-          "status": "alias",
           "pricing_ref": "text-embedding-3-large",
           "alias_kind": "legacy_slug"
         },
         "textembedding3small": {
-          "status": "alias",
           "pricing_ref": "text-embedding-3-small",
           "alias_kind": "legacy_slug"
         },
         "textembeddingada002": {
-          "status": "alias",
           "pricing_ref": "text-embedding-ada-002",
           "alias_kind": "legacy_slug"
         },
         "tts1": {
-          "status": "alias",
           "pricing_ref": "tts-1",
           "alias_kind": "legacy_slug"
         },
         "tts11106": {
-          "status": "alias",
           "pricing_ref": "tts-1-1106",
           "alias_kind": "legacy_slug"
         },
         "tts1hd": {
-          "status": "alias",
           "pricing_ref": "tts-1-hd",
           "alias_kind": "legacy_slug"
         },
         "tts1hd1106": {
-          "status": "alias",
           "pricing_ref": "tts-1-hd-1106",
           "alias_kind": "legacy_slug"
         },
         "whisper1": {
-          "status": "alias",
           "pricing_ref": "whisper-1",
           "alias_kind": "legacy_slug"
         }
@@ -2661,7 +2272,6 @@ window.MODEL_PRICING_CATALOG = {
     "requesty": {
       "models": {
         "alibaba/qwen3.5": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.6,
@@ -2677,7 +2287,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "anthropic/claude-opus-4-6": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 5.0,
@@ -2693,7 +2302,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "anthropic/claude-sonnet-4-6": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.0,
@@ -2709,7 +2317,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.0,
@@ -2725,7 +2332,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@eu-central-1": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2741,7 +2347,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@eu-north-1": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2757,7 +2362,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@eu-west-1": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2773,7 +2377,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@eu-west-3": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2789,7 +2392,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@us-east-1": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2805,7 +2407,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@us-east-2": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2821,7 +2422,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "bedrock/claude-sonnet-4-6@us-west-2": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 3.3,
@@ -2837,7 +2437,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "deepseek/deepseek-reasoner": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.28,
@@ -2853,7 +2452,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "google/gemini-3.1-pro-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -2869,7 +2467,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "moonshot/kimi-k2.5": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.6,
@@ -2885,7 +2482,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "nebius/zai-org/GLM-4.7": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.4,
@@ -2901,7 +2497,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "novita/deepseek/deepseek-v3.2": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.27,
@@ -2917,7 +2512,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "openai-responses/gpt-5.4": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.5,
@@ -2933,7 +2527,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "openai-responses/gpt-5.4-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 30.0,
@@ -2949,7 +2542,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "openai/gpt-5.4": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.5,
@@ -2965,7 +2557,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "openai/gpt-5.4-pro": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 30.0,
@@ -2981,15 +2572,12 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "policy/claude-sonnet-4-6_fallback": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "policy/gemini3.1-fallback": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "vertex/gemini-3-flash-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.5,
@@ -3005,7 +2593,6 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "vertex/gemini-3.1-pro-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -3021,127 +2608,102 @@ window.MODEL_PRICING_CATALOG = {
           ]
         },
         "alibabaqwen35": {
-          "status": "alias",
           "pricing_ref": "alibaba/qwen3.5",
           "alias_kind": "legacy_slug"
         },
         "anthropicclaudeopus46": {
-          "status": "alias",
           "pricing_ref": "anthropic/claude-opus-4-6",
           "alias_kind": "legacy_slug"
         },
         "anthropicclaudesonnet46": {
-          "status": "alias",
           "pricing_ref": "anthropic/claude-sonnet-4-6",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46eucentral1": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@eu-central-1",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46eunorth1": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@eu-north-1",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46euwest1": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@eu-west-1",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46euwest3": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@eu-west-3",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46useast1": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@us-east-1",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46useast2": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@us-east-2",
           "alias_kind": "legacy_slug"
         },
         "bedrockclaudesonnet46uswest2": {
-          "status": "alias",
           "pricing_ref": "bedrock/claude-sonnet-4-6@us-west-2",
           "alias_kind": "legacy_slug"
         },
         "deepseekdeepseekreasoner": {
-          "status": "alias",
           "pricing_ref": "deepseek/deepseek-reasoner",
           "alias_kind": "legacy_slug"
         },
         "googlegemini31propreview": {
-          "status": "alias",
           "pricing_ref": "google/gemini-3.1-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "moonshotkimik25": {
-          "status": "alias",
           "pricing_ref": "moonshot/kimi-k2.5",
           "alias_kind": "legacy_slug"
         },
         "nebiuszaiorgglm47": {
-          "status": "alias",
           "pricing_ref": "nebius/zai-org/GLM-4.7",
           "alias_kind": "legacy_slug"
         },
         "novitadeepseekdeepseekv32": {
-          "status": "alias",
           "pricing_ref": "novita/deepseek/deepseek-v3.2",
           "alias_kind": "legacy_slug"
         },
         "openairesponsesgpt54": {
-          "status": "alias",
           "pricing_ref": "openai-responses/gpt-5.4",
           "alias_kind": "legacy_slug"
         },
         "openairesponsesgpt54pro": {
-          "status": "alias",
           "pricing_ref": "openai-responses/gpt-5.4-pro",
           "alias_kind": "legacy_slug"
         },
         "openaigpt54": {
-          "status": "alias",
           "pricing_ref": "openai/gpt-5.4",
           "alias_kind": "legacy_slug"
         },
         "openaigpt54pro": {
-          "status": "alias",
           "pricing_ref": "openai/gpt-5.4-pro",
           "alias_kind": "legacy_slug"
         },
         "policyclaudesonnet46fallback": {
-          "status": "alias",
           "pricing_ref": "policy/claude-sonnet-4-6_fallback",
           "alias_kind": "legacy_slug"
         },
         "policygemini31fallback": {
-          "status": "alias",
           "pricing_ref": "policy/gemini3.1-fallback",
           "alias_kind": "legacy_slug"
         },
         "vertexgemini3flashpreview": {
-          "status": "alias",
           "pricing_ref": "vertex/gemini-3-flash-preview",
           "alias_kind": "legacy_slug"
         },
         "vertexgemini31propreview": {
-          "status": "alias",
           "pricing_ref": "vertex/gemini-3.1-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "anthropic/claude-haiku-4-5": {
-          "status": "unpriced",
           "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
           "needs_manual_update": true,
           "service_tiers": {
@@ -3153,7 +2715,10 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "anthropicclaudehaiku45": {
-          "status": "alias",
+          "pricing_ref": "anthropic/claude-haiku-4-5",
+          "alias_kind": "legacy_slug"
+        },
+        "claude-haiku-4-5": {
           "pricing_ref": "anthropic/claude-haiku-4-5",
           "alias_kind": "legacy_slug"
         }
@@ -3162,99 +2727,75 @@ window.MODEL_PRICING_CATALOG = {
     "vertex": {
       "models": {
         "automl-e2e": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "automl-vision-image-classification": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "automl-vision-image-object-detection": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "bart-large-cnn": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "bert-base": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "bert-base-uncased": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "chirp-2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "chirp-3": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "cloudnerf-pytorch-zipnerf": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "codegemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "content-moderation": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "cxr-foundation": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "derm-foundation": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "dito": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "earth-ai-imagery-mammut-eap-10-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "earth-ai-imagery-owlvit-eap-10-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "embeddinggemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "f-vlm-jax": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "face-detector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "functiongemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.0-flash-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.0-flash-lite-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-computer-use-preview-10-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-flash": {
-          "status": "priced",
           "service_tiers": {
             "flex": {
               "input_usd_per_mtokens": 0.3,
@@ -3290,15 +2831,12 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-2.5-flash-image": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-flash-image-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-flash-lite": {
-          "status": "priced",
           "service_tiers": {
             "flex": {
               "input_usd_per_mtokens": 0.1,
@@ -3334,15 +2872,12 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-2.5-flash-lite-preview-09-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-flash-preview-09-2025": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-2.5-pro": {
-          "status": "priced",
           "service_tiers": {
             "flex": {
               "input_usd_per_mtokens": 1.25,
@@ -3378,7 +2913,6 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-3-flash-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.5,
@@ -3434,11 +2968,9 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-3-pro-image-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-3-pro-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -3494,11 +3026,9 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-3.1-flash-image-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-3.1-flash-lite-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 0.25,
@@ -3554,7 +3084,6 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-3.1-pro-preview": {
-          "status": "priced",
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
@@ -3610,853 +3139,665 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "gemini-embedding-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-embedding-2-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemini-live-2.5-flash-native-audio": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemma2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemma3": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "gemma3n": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "hear": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "image-segmentation-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageclassification-efficientnet": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageclassification-proprietary-efficientnet": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageclassification-proprietary-maxvit": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageclassification-proprietary-vit": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageclassification-vit": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagegeneration": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-3.0-capability-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-3.0-capability-002": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-3.0-generate-002": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-4.0-fast-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-4.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagen-4.0-ultra-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageobjectdetection-proprietary-spinenet": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageobjectdetection-proprietary-yolo": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imageobjectdetection-yolo": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagesegmentation-deeplabv3": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagetext": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "imagewatermarkdetector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "jax-owl-vit-v2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "keras-yolov8": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "label-detector-pali-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "language-v1-analyze-entity-sentiment": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "language-v1-analyze-sentiment": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "language-v1-analyze-syntax": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "language-v1-classify-text-v1": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "language-v1-moderate-text": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "lyria-002": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "mammut": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "medasr": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "medgemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "medsiglip": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "multimodalembedding": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "object-detector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "occupancy-analytics": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "owlvit-base-patch32": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "paligemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "path-foundation": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "people-blur": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "pic2word": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "ppe-detector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "pretrained-form-parser": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "pretrained-ocr": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "product-recognizer": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "pt-test": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "resnet50": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "shieldgemma2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "t5-1.1": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "t5-flan": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "t5gemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tab-net": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tag-recognizer": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-detector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-embedding-005": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-embedding-large-exp-03-07": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-multilingual-embedding-002": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "text-translation": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "textembedding-gecko": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tfvision-movinet-var": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tfvision-movinet-vcn": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "tfvision-yolov7": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "timesfm": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "translate-llm": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "translategemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "txgemma": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "vehicle-detector": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-2.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.0-fast-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.0-fast-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.0-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.0-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.1-fast-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.1-fast-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.1-generate-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "veo-3.1-generate-preview": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "video-speech-transcription": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "video-text-detection": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "virtual-try-on-001": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "vit-jax": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "weather-next-v2": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "weathernext": {
-          "status": "unsupported",
           "reason": "No compatible official per-token pricing was found for this model."
         },
         "automle2e": {
-          "status": "alias",
           "pricing_ref": "automl-e2e",
           "alias_kind": "legacy_slug"
         },
         "automlvisionimageclassification": {
-          "status": "alias",
           "pricing_ref": "automl-vision-image-classification",
           "alias_kind": "legacy_slug"
         },
         "automlvisionimageobjectdetection": {
-          "status": "alias",
           "pricing_ref": "automl-vision-image-object-detection",
           "alias_kind": "legacy_slug"
         },
         "bartlargecnn": {
-          "status": "alias",
           "pricing_ref": "bart-large-cnn",
           "alias_kind": "legacy_slug"
         },
         "bertbase": {
-          "status": "alias",
           "pricing_ref": "bert-base",
           "alias_kind": "legacy_slug"
         },
         "bertbaseuncased": {
-          "status": "alias",
           "pricing_ref": "bert-base-uncased",
           "alias_kind": "legacy_slug"
         },
         "chirp2": {
-          "status": "alias",
           "pricing_ref": "chirp-2",
           "alias_kind": "legacy_slug"
         },
         "chirp3": {
-          "status": "alias",
           "pricing_ref": "chirp-3",
           "alias_kind": "legacy_slug"
         },
         "cloudnerfpytorchzipnerf": {
-          "status": "alias",
           "pricing_ref": "cloudnerf-pytorch-zipnerf",
           "alias_kind": "legacy_slug"
         },
         "contentmoderation": {
-          "status": "alias",
           "pricing_ref": "content-moderation",
           "alias_kind": "legacy_slug"
         },
         "cxrfoundation": {
-          "status": "alias",
           "pricing_ref": "cxr-foundation",
           "alias_kind": "legacy_slug"
         },
         "dermfoundation": {
-          "status": "alias",
           "pricing_ref": "derm-foundation",
           "alias_kind": "legacy_slug"
         },
         "earthaiimagerymammuteap102025": {
-          "status": "alias",
           "pricing_ref": "earth-ai-imagery-mammut-eap-10-2025",
           "alias_kind": "legacy_slug"
         },
         "earthaiimageryowlviteap102025": {
-          "status": "alias",
           "pricing_ref": "earth-ai-imagery-owlvit-eap-10-2025",
           "alias_kind": "legacy_slug"
         },
         "fvlmjax": {
-          "status": "alias",
           "pricing_ref": "f-vlm-jax",
           "alias_kind": "legacy_slug"
         },
         "facedetector": {
-          "status": "alias",
           "pricing_ref": "face-detector",
           "alias_kind": "legacy_slug"
         },
         "gemini20flash001": {
-          "status": "alias",
           "pricing_ref": "gemini-2.0-flash-001",
           "alias_kind": "legacy_slug"
         },
         "gemini20flashlite001": {
-          "status": "alias",
           "pricing_ref": "gemini-2.0-flash-lite-001",
           "alias_kind": "legacy_slug"
         },
         "gemini25computerusepreview102025": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-computer-use-preview-10-2025",
           "alias_kind": "legacy_slug"
         },
         "gemini25flash": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash",
           "alias_kind": "legacy_slug"
         },
         "gemini25flashimage": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash-image",
           "alias_kind": "legacy_slug"
         },
         "gemini25flashimagepreview": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash-image-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini25flashlite": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash-lite",
           "alias_kind": "legacy_slug"
         },
         "gemini25flashlitepreview092025": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash-lite-preview-09-2025",
           "alias_kind": "legacy_slug"
         },
         "gemini25flashpreview092025": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-flash-preview-09-2025",
           "alias_kind": "legacy_slug"
         },
         "gemini25pro": {
-          "status": "alias",
           "pricing_ref": "gemini-2.5-pro",
           "alias_kind": "legacy_slug"
         },
         "gemini3flashpreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3-flash-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini3proimagepreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3-pro-image-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini3propreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini31flashimagepreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3.1-flash-image-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini31flashlitepreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3.1-flash-lite-preview",
           "alias_kind": "legacy_slug"
         },
         "gemini31propreview": {
-          "status": "alias",
           "pricing_ref": "gemini-3.1-pro-preview",
           "alias_kind": "legacy_slug"
         },
         "geminiembedding001": {
-          "status": "alias",
           "pricing_ref": "gemini-embedding-001",
           "alias_kind": "legacy_slug"
         },
         "geminiembedding2preview": {
-          "status": "alias",
           "pricing_ref": "gemini-embedding-2-preview",
           "alias_kind": "legacy_slug"
         },
         "geminilive25flashnativeaudio": {
-          "status": "alias",
           "pricing_ref": "gemini-live-2.5-flash-native-audio",
           "alias_kind": "legacy_slug"
         },
         "imagesegmentation001": {
-          "status": "alias",
           "pricing_ref": "image-segmentation-001",
           "alias_kind": "legacy_slug"
         },
         "imageclassificationefficientnet": {
-          "status": "alias",
           "pricing_ref": "imageclassification-efficientnet",
           "alias_kind": "legacy_slug"
         },
         "imageclassificationproprietaryefficientnet": {
-          "status": "alias",
           "pricing_ref": "imageclassification-proprietary-efficientnet",
           "alias_kind": "legacy_slug"
         },
         "imageclassificationproprietarymaxvit": {
-          "status": "alias",
           "pricing_ref": "imageclassification-proprietary-maxvit",
           "alias_kind": "legacy_slug"
         },
         "imageclassificationproprietaryvit": {
-          "status": "alias",
           "pricing_ref": "imageclassification-proprietary-vit",
           "alias_kind": "legacy_slug"
         },
         "imageclassificationvit": {
-          "status": "alias",
           "pricing_ref": "imageclassification-vit",
           "alias_kind": "legacy_slug"
         },
         "imagen30capability001": {
-          "status": "alias",
           "pricing_ref": "imagen-3.0-capability-001",
           "alias_kind": "legacy_slug"
         },
         "imagen30capability002": {
-          "status": "alias",
           "pricing_ref": "imagen-3.0-capability-002",
           "alias_kind": "legacy_slug"
         },
         "imagen30generate002": {
-          "status": "alias",
           "pricing_ref": "imagen-3.0-generate-002",
           "alias_kind": "legacy_slug"
         },
         "imagen40fastgenerate001": {
-          "status": "alias",
           "pricing_ref": "imagen-4.0-fast-generate-001",
           "alias_kind": "legacy_slug"
         },
         "imagen40generate001": {
-          "status": "alias",
           "pricing_ref": "imagen-4.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "imagen40ultragenerate001": {
-          "status": "alias",
           "pricing_ref": "imagen-4.0-ultra-generate-001",
           "alias_kind": "legacy_slug"
         },
         "imageobjectdetectionproprietaryspinenet": {
-          "status": "alias",
           "pricing_ref": "imageobjectdetection-proprietary-spinenet",
           "alias_kind": "legacy_slug"
         },
         "imageobjectdetectionproprietaryyolo": {
-          "status": "alias",
           "pricing_ref": "imageobjectdetection-proprietary-yolo",
           "alias_kind": "legacy_slug"
         },
         "imageobjectdetectionyolo": {
-          "status": "alias",
           "pricing_ref": "imageobjectdetection-yolo",
           "alias_kind": "legacy_slug"
         },
         "imagesegmentationdeeplabv3": {
-          "status": "alias",
           "pricing_ref": "imagesegmentation-deeplabv3",
           "alias_kind": "legacy_slug"
         },
         "jaxowlvitv2": {
-          "status": "alias",
           "pricing_ref": "jax-owl-vit-v2",
           "alias_kind": "legacy_slug"
         },
         "kerasyolov8": {
-          "status": "alias",
           "pricing_ref": "keras-yolov8",
           "alias_kind": "legacy_slug"
         },
         "labeldetectorpali001": {
-          "status": "alias",
           "pricing_ref": "label-detector-pali-001",
           "alias_kind": "legacy_slug"
         },
         "languagev1analyzeentitysentiment": {
-          "status": "alias",
           "pricing_ref": "language-v1-analyze-entity-sentiment",
           "alias_kind": "legacy_slug"
         },
         "languagev1analyzesentiment": {
-          "status": "alias",
           "pricing_ref": "language-v1-analyze-sentiment",
           "alias_kind": "legacy_slug"
         },
         "languagev1analyzesyntax": {
-          "status": "alias",
           "pricing_ref": "language-v1-analyze-syntax",
           "alias_kind": "legacy_slug"
         },
         "languagev1classifytextv1": {
-          "status": "alias",
           "pricing_ref": "language-v1-classify-text-v1",
           "alias_kind": "legacy_slug"
         },
         "languagev1moderatetext": {
-          "status": "alias",
           "pricing_ref": "language-v1-moderate-text",
           "alias_kind": "legacy_slug"
         },
         "lyria002": {
-          "status": "alias",
           "pricing_ref": "lyria-002",
           "alias_kind": "legacy_slug"
         },
         "objectdetector": {
-          "status": "alias",
           "pricing_ref": "object-detector",
           "alias_kind": "legacy_slug"
         },
         "occupancyanalytics": {
-          "status": "alias",
           "pricing_ref": "occupancy-analytics",
           "alias_kind": "legacy_slug"
         },
         "owlvitbasepatch32": {
-          "status": "alias",
           "pricing_ref": "owlvit-base-patch32",
           "alias_kind": "legacy_slug"
         },
         "pathfoundation": {
-          "status": "alias",
           "pricing_ref": "path-foundation",
           "alias_kind": "legacy_slug"
         },
         "peopleblur": {
-          "status": "alias",
           "pricing_ref": "people-blur",
           "alias_kind": "legacy_slug"
         },
         "ppedetector": {
-          "status": "alias",
           "pricing_ref": "ppe-detector",
           "alias_kind": "legacy_slug"
         },
         "pretrainedformparser": {
-          "status": "alias",
           "pricing_ref": "pretrained-form-parser",
           "alias_kind": "legacy_slug"
         },
         "pretrainedocr": {
-          "status": "alias",
           "pricing_ref": "pretrained-ocr",
           "alias_kind": "legacy_slug"
         },
         "productrecognizer": {
-          "status": "alias",
           "pricing_ref": "product-recognizer",
           "alias_kind": "legacy_slug"
         },
         "pttest": {
-          "status": "alias",
           "pricing_ref": "pt-test",
           "alias_kind": "legacy_slug"
         },
         "t511": {
-          "status": "alias",
           "pricing_ref": "t5-1.1",
           "alias_kind": "legacy_slug"
         },
         "t5flan": {
-          "status": "alias",
           "pricing_ref": "t5-flan",
           "alias_kind": "legacy_slug"
         },
         "tabnet": {
-          "status": "alias",
           "pricing_ref": "tab-net",
           "alias_kind": "legacy_slug"
         },
         "tagrecognizer": {
-          "status": "alias",
           "pricing_ref": "tag-recognizer",
           "alias_kind": "legacy_slug"
         },
         "textdetector": {
-          "status": "alias",
           "pricing_ref": "text-detector",
           "alias_kind": "legacy_slug"
         },
         "textembedding005": {
-          "status": "alias",
           "pricing_ref": "text-embedding-005",
           "alias_kind": "legacy_slug"
         },
         "textembeddinglargeexp0307": {
-          "status": "alias",
           "pricing_ref": "text-embedding-large-exp-03-07",
           "alias_kind": "legacy_slug"
         },
         "textmultilingualembedding002": {
-          "status": "alias",
           "pricing_ref": "text-multilingual-embedding-002",
           "alias_kind": "legacy_slug"
         },
         "texttranslation": {
-          "status": "alias",
           "pricing_ref": "text-translation",
           "alias_kind": "legacy_slug"
         },
         "textembeddinggecko": {
-          "status": "alias",
           "pricing_ref": "textembedding-gecko",
           "alias_kind": "legacy_slug"
         },
         "tfvisionmovinetvar": {
-          "status": "alias",
           "pricing_ref": "tfvision-movinet-var",
           "alias_kind": "legacy_slug"
         },
         "tfvisionmovinetvcn": {
-          "status": "alias",
           "pricing_ref": "tfvision-movinet-vcn",
           "alias_kind": "legacy_slug"
         },
         "tfvisionyolov7": {
-          "status": "alias",
           "pricing_ref": "tfvision-yolov7",
           "alias_kind": "legacy_slug"
         },
         "translatellm": {
-          "status": "alias",
           "pricing_ref": "translate-llm",
           "alias_kind": "legacy_slug"
         },
         "vehicledetector": {
-          "status": "alias",
           "pricing_ref": "vehicle-detector",
           "alias_kind": "legacy_slug"
         },
         "veo20generate001": {
-          "status": "alias",
           "pricing_ref": "veo-2.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "veo30fastgenerate001": {
-          "status": "alias",
           "pricing_ref": "veo-3.0-fast-generate-001",
           "alias_kind": "legacy_slug"
         },
         "veo30fastgeneratepreview": {
-          "status": "alias",
           "pricing_ref": "veo-3.0-fast-generate-preview",
           "alias_kind": "legacy_slug"
         },
         "veo30generate001": {
-          "status": "alias",
           "pricing_ref": "veo-3.0-generate-001",
           "alias_kind": "legacy_slug"
         },
         "veo30generatepreview": {
-          "status": "alias",
           "pricing_ref": "veo-3.0-generate-preview",
           "alias_kind": "legacy_slug"
         },
         "veo31fastgenerate001": {
-          "status": "alias",
           "pricing_ref": "veo-3.1-fast-generate-001",
           "alias_kind": "legacy_slug"
         },
         "veo31fastgeneratepreview": {
-          "status": "alias",
           "pricing_ref": "veo-3.1-fast-generate-preview",
           "alias_kind": "legacy_slug"
         },
         "veo31generate001": {
-          "status": "alias",
           "pricing_ref": "veo-3.1-generate-001",
           "alias_kind": "legacy_slug"
         },
         "veo31generatepreview": {
-          "status": "alias",
           "pricing_ref": "veo-3.1-generate-preview",
           "alias_kind": "legacy_slug"
         },
         "videospeechtranscription": {
-          "status": "alias",
           "pricing_ref": "video-speech-transcription",
           "alias_kind": "legacy_slug"
         },
         "videotextdetection": {
-          "status": "alias",
           "pricing_ref": "video-text-detection",
           "alias_kind": "legacy_slug"
         },
         "virtualtryon001": {
-          "status": "alias",
           "pricing_ref": "virtual-try-on-001",
           "alias_kind": "legacy_slug"
         },
         "vitjax": {
-          "status": "alias",
           "pricing_ref": "vit-jax",
           "alias_kind": "legacy_slug"
         },
         "weathernextv2": {
-          "status": "alias",
           "pricing_ref": "weather-next-v2",
           "alias_kind": "legacy_slug"
         }

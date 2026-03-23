@@ -155,7 +155,6 @@ class PricingCatalogGenerationTests(unittest.TestCase):
 
         catalog = pc.build_pricing_catalog(model_catalog, fetch_html=fetcher, updated_at="2026-03-21T00:00:00Z")
         snapshot_entry = catalog["providers"]["openai"]["models"]["gpt-5.4-mini-2026-03-17"]
-        self.assertEqual(snapshot_entry["status"], "alias")
         self.assertEqual(snapshot_entry["pricing_ref"], "gpt-5.4-mini")
 
     def test_unsupported_stub_is_created_for_provider_without_official_source(self) -> None:
@@ -166,7 +165,6 @@ class PricingCatalogGenerationTests(unittest.TestCase):
         }
         catalog = pc.build_pricing_catalog(model_catalog, fetch_html=_fake_fetcher({}), updated_at="2026-03-21T00:00:00Z")
         entry = catalog["providers"]["e-infra"]["models"]["qwen3.5"]
-        self.assertEqual(entry["status"], "unsupported")
         self.assertIn("No official compatible", entry["reason"])
 
     def test_legacy_slug_alias_is_generated(self) -> None:
@@ -189,7 +187,6 @@ class PricingCatalogGenerationTests(unittest.TestCase):
         )
         catalog = pc.build_pricing_catalog(model_catalog, fetch_html=fetcher, updated_at="2026-03-21T00:00:00Z")
         alias_entry = catalog["providers"]["openai"]["models"]["gpt54mini"]
-        self.assertEqual(alias_entry["status"], "alias")
         self.assertEqual(alias_entry["pricing_ref"], "gpt-5.4-mini")
 
     def test_provider_filtering_limits_output(self) -> None:
@@ -239,7 +236,6 @@ class PricingCatalogGenerationTests(unittest.TestCase):
                 "openai": {
                     "models": {
                         "gpt-5.4-mini": {
-                            "status": "priced",
                             "service_tiers": {
                                 "standard": {
                                     "input_usd_per_mtokens": 0.75,
@@ -258,7 +254,6 @@ class PricingCatalogGenerationTests(unittest.TestCase):
         self.assertEqual(
             synced["providers"]["openai"]["models"]["gpt-6-preview"],
             {
-                "status": "unpriced",
                 "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
                 "needs_manual_update": True,
                 "service_tiers": {
@@ -271,9 +266,41 @@ class PricingCatalogGenerationTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            synced["providers"]["openai"]["models"]["gpt6preview"]["status"],
-            "alias",
+            synced["providers"]["openai"]["models"]["gpt6preview"]["pricing_ref"],
+            "gpt-6-preview",
         )
+
+    def test_write_and_sync_strip_legacy_status_fields(self) -> None:
+        pricing_catalog = {
+            "updated_at": "2026-03-21T00:00:00Z",
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-5.4-mini": {
+                            "status": "priced",
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 0.75,
+                                    "cached_input_usd_per_mtokens": 0.075,
+                                    "output_usd_per_mtokens": 4.5,
+                                }
+                            },
+                        },
+                        "gpt54mini": {
+                            "status": "alias",
+                            "pricing_ref": "gpt-5.4-mini",
+                            "alias_kind": "legacy_slug",
+                        },
+                    }
+                }
+            },
+        }
+        synced, _ = pc.sync_pricing_catalog_with_model_catalog(
+            {"openai": {"models": ["gpt-5.4-mini"]}},
+            pricing_catalog,
+        )
+        self.assertNotIn("status", synced["providers"]["openai"]["models"]["gpt-5.4-mini"])
+        self.assertNotIn("status", synced["providers"]["openai"]["models"]["gpt54mini"])
 
 
 if __name__ == "__main__":

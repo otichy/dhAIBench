@@ -39,6 +39,52 @@
     return catalog && typeof catalog === "object" ? catalog : null;
   }
 
+  function getServiceTiers(entry) {
+    return entry && entry.service_tiers && typeof entry.service_tiers === "object"
+      ? entry.service_tiers
+      : {};
+  }
+
+  function hasPricingRef(entry) {
+    return !!asTrimmedString(entry && entry.pricing_ref);
+  }
+
+  function hasReason(entry) {
+    return !!asTrimmedString(entry && entry.reason);
+  }
+
+  function hasAnyUsableRates(entry) {
+    return Object.values(getServiceTiers(entry)).some((tierRates) => {
+      if (!tierRates || typeof tierRates !== "object") {
+        return false;
+      }
+      return (
+        safeNum(tierRates.input_usd_per_mtokens) != null ||
+        safeNum(tierRates.cached_input_usd_per_mtokens) != null ||
+        safeNum(tierRates.output_usd_per_mtokens) != null
+      );
+    });
+  }
+
+  function classifyCatalogEntry(entry) {
+    if (!entry || typeof entry !== "object") {
+      return "missing";
+    }
+    if (hasPricingRef(entry)) {
+      return "alias";
+    }
+    if (hasAnyUsableRates(entry)) {
+      return "priced";
+    }
+    if (entry.needs_manual_update === true) {
+      return "unpriced";
+    }
+    if (hasReason(entry)) {
+      return "unsupported";
+    }
+    return "unpriced";
+  }
+
   function pushUnique(list, seen, value) {
     const normalized = asTrimmedString(value);
     if (!normalized || seen.has(normalized)) {
@@ -122,7 +168,7 @@
           return null;
         }
         const resolved = resolveEntryForKey(providerModels, normalizedKey);
-        if (!resolved || !resolved.entry || resolved.entry.status !== "priced") {
+        if (!resolved || classifyCatalogEntry(resolved.entry) !== "priced") {
           return null;
         }
         return {
@@ -221,7 +267,7 @@
       if (!entry || typeof entry !== "object") {
         return null;
       }
-      if (entry.status !== "alias") {
+      if (!hasPricingRef(entry)) {
         return {
           entry,
           resolvedKey: currentKey,
@@ -360,20 +406,19 @@
       return baseResult;
     }
 
-    if (!match.entry || match.entry.status === "unsupported" || match.entry.status === "unpriced") {
+    const entryKind = classifyCatalogEntry(match.entry);
+    if (entryKind === "unsupported" || entryKind === "unpriced") {
       return {
         ...baseResult,
         providerKey: match.providerKey,
         matchedKey: match.matchedKey,
         resolvedKey: match.resolvedKey,
-        status: match.entry && match.entry.status === "unpriced" ? "unpriced" : "unsupported",
-        statusLabel: statusLabel(match.entry && match.entry.status === "unpriced" ? "unpriced" : "unsupported"),
+        status: entryKind,
+        statusLabel: statusLabel(entryKind),
       };
     }
 
-    const serviceTiers = match.entry.service_tiers && typeof match.entry.service_tiers === "object"
-      ? match.entry.service_tiers
-      : {};
+    const serviceTiers = getServiceTiers(match.entry);
     const tierRates = serviceTiers[serviceTier];
     if (!tierRates) {
       return {
@@ -427,8 +472,10 @@
 
   global.DHAIBenchPricing = {
     buildLookupCandidates,
+    classifyCatalogEntry,
     estimateRunCost,
     getPricingCatalog,
+    hasAnyUsableRates,
     normalizeProviderKey,
     normalizeServiceTier,
     sanitizeModelIdentifier,

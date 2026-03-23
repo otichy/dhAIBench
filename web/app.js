@@ -3505,7 +3505,10 @@ function buildModelLegendPricingTooltip(modelName, runsForModel) {
     const tierName = asTrimmedString(pricing && pricing.pricingTier) || "standard";
     const entry = providerKey && resolvedKey ? getResolvedPricingCatalogEntry(providerKey, resolvedKey) : null;
     let line = "";
-    if (entry && entry.status === "priced") {
+    const entryKind = entry && pricingApi && typeof pricingApi.classifyCatalogEntry === "function"
+      ? pricingApi.classifyCatalogEntry(entry)
+      : "";
+    if (entryKind === "priced") {
       const serviceTiers = entry.service_tiers && typeof entry.service_tiers === "object" ? entry.service_tiers : {};
       const preferredTier = serviceTiers[tierName] && typeof serviceTiers[tierName] === "object" ? serviceTiers[tierName] : null;
       const standardTier = serviceTiers.standard && typeof serviceTiers.standard === "object" ? serviceTiers.standard : null;

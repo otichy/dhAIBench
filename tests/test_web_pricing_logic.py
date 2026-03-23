@@ -41,7 +41,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "openai": {
                     "models": {
                         "gpt-5.4-mini": {
-                            "status": "priced",
                             "service_tiers": {
                                 "standard": {
                                     "input_usd_per_mtokens": 0.75,
@@ -113,7 +112,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "requesty": {
                     "models": {
                         "anthropic/claude-sonnet-4-6": {
-                            "status": "priced",
                             "service_tiers": {
                                 "standard": {
                                     "input_usd_per_mtokens": 3.0,
@@ -156,7 +154,6 @@ class WebPricingLogicTests(unittest.TestCase):
                             },
                         },
                         "anthropicclaudesonnet46": {
-                            "status": "alias",
                             "pricing_ref": "anthropic/claude-sonnet-4-6",
                             "alias_kind": "legacy_slug",
                         },
@@ -268,7 +265,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "google": {
                     "models": {
                         "models/gemini-3.1-pro-preview": {
-                            "status": "priced",
                             "service_tiers": {
                                 "standard": {
                                     "input_usd_per_mtokens": 2.0,
@@ -322,8 +318,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "openai": {
                     "models": {
                         "gpt-6-preview": {
-                            "status": "unpriced",
-                            "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
                             "needs_manual_update": True,
                             "service_tiers": {
                                 "standard": {
@@ -357,7 +351,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "e-infra": {
                     "models": {
                         "qwen3.5": {
-                            "status": "unsupported",
                             "reason": "No official compatible per-token pricing source is configured for this provider.",
                         }
                     }
@@ -383,7 +376,6 @@ class WebPricingLogicTests(unittest.TestCase):
                 "openai": {
                     "models": {
                         "gpt-5.2-pro": {
-                            "status": "priced",
                             "service_tiers": {
                                 "standard": {
                                     "input_usd_per_mtokens": 21.0,
@@ -393,7 +385,6 @@ class WebPricingLogicTests(unittest.TestCase):
                             },
                         },
                         "gpt52pro": {
-                            "status": "alias",
                             "pricing_ref": "gpt-5.2-pro",
                             "alias_kind": "legacy_slug",
                         },
@@ -415,6 +406,42 @@ class WebPricingLogicTests(unittest.TestCase):
         self.assertEqual(result["status"], "priced")
         self.assertEqual(result["pricingTier"], "standard")
         self.assertEqual(result["providerKey"], "openai")
+
+    def test_stale_unpriced_status_with_real_rates_still_computes_cost(self) -> None:
+        catalog = {
+            "providers": {
+                "requesty": {
+                    "models": {
+                        "anthropic/claude-haiku-4-5": {
+                            "status": "unpriced",
+                            "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
+                            "needs_manual_update": True,
+                            "service_tiers": {
+                                "standard": {
+                                    "input_usd_per_mtokens": 1.0,
+                                    "cached_input_usd_per_mtokens": 0.1,
+                                    "output_usd_per_mtokens": 5.0,
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        run = {
+            "provider": "requesty",
+            "model": "claude-haiku-4-5",
+            "modelDetails": {"provider": "requesty", "model_requested": "claude-haiku-4-5"},
+            "rawMetrics": {"run_config": {"service_tier": "standard"}},
+            "inputTokensTotal": 956033,
+            "cachedInputTokensTotal": 0,
+            "nonCachedInputTokensTotal": 956033,
+            "outputTokensTotal": 263271,
+        }
+        result = _run_node_pricing(catalog, run)
+        self.assertEqual(result["status"], "priced")
+        self.assertEqual(result["resolvedKey"], "anthropic/claude-haiku-4-5")
+        self.assertAlmostEqual(result["estimatedCostUsd"], 2.272388)
 
 
 if __name__ == "__main__":
