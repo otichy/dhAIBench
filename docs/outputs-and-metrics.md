@@ -72,7 +72,7 @@ In this mode, `--output` is ignored and metrics artifacts are written to `data/m
 
 ## Dashboard Consumption
 
-The static dashboard in `web/` reads the `*_metrics.json` artifacts produced here. See [GUI and Metrics Dashboard](gui.md) for browser usage.
+The static dashboard in `web/` reads the `*_metrics.json` artifacts produced here. See [Metrics Dashboard](metrics-dashboard.md) for loading modes, navigation, and feature details.
 
 ## Operational Tips
 

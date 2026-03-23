@@ -4880,7 +4880,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     );
     legends.appendChild(
       createTimeSeriesLegend(
-        "Models (shape + outline)",
+        "Models (shape + outline, hover to see pricing)",
         models.map((model) => ({
           type: "model",
           shape: modelShapeByName.get(model),
@@ -4905,7 +4905,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   } else {
     legends.appendChild(
       createTimeSeriesLegend(
-        "Models (shape + outline)",
+        "Models (shape + outline, hover to see pricing)",
         models.map((model) => ({
           type: "model",
           shape: modelShapeByName.get(model),
