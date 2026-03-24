@@ -4,6 +4,9 @@ config_models.js
 /data/analysis/*
 /data/logs/*
 !/data/logs/.gitkeep
+!/data/logs/sessions/
+/data/logs/sessions/*
+!/data/logs/sessions/.gitkeep
 /data/input/*
 !/data/input/.gitkeep
 /data/output/*
