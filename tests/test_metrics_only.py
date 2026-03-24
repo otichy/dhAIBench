@@ -83,6 +83,42 @@ def _assert_metrics_metadata(
 
 
 class MetricsOnlyTests(unittest.TestCase):
+    def test_metrics_only_writes_session_logs_under_sessions_subdir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                _write_output_csv(
+                    output_csv,
+                    [
+                        {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                    ],
+                )
+
+                exit_code = ba.main(
+                    [
+                        "--metrics_only",
+                        "--input",
+                        output_csv,
+                    ]
+                )
+
+                self.assertEqual(exit_code, 0)
+                session_logs_dir = os.path.join(ba.DEFAULT_LOGS_DIR, "sessions")
+                self.assertTrue(os.path.isdir(session_logs_dir))
+                self.assertTrue(
+                    any(
+                        name.startswith("benchmark_agent_") and name.endswith(".log")
+                        for name in os.listdir(session_logs_dir)
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        name.startswith("benchmark_agent_") and name.endswith(".log")
+                        for name in os.listdir(ba.DEFAULT_LOGS_DIR)
+                        if os.path.isfile(os.path.join(ba.DEFAULT_LOGS_DIR, name))
+                    )
+                )
+
     def test_metrics_only_honors_no_confusion_heatmap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):

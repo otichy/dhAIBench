@@ -59,5 +59,5 @@ Start here depending on what you need:
 
 - Input files are semicolon-delimited CSVs with at least `ID` and `node`.
 - Additional columns are preserved in the output CSV even if they are not used in the prompt.
-- Metrics artifacts are written under `data/metrics`, and prompt logs under `data/logs`.
+- Metrics artifacts are written under `data/metrics`, prompt logs under `data/logs`, and session logs under `data/logs/sessions`.
 - Set `DHAIBENCH_DATA_ROOT` to move the default `data/` root.

@@ -9,6 +9,7 @@ A benchmark run can create several artifacts:
 - confusion heatmap: `data/metrics/<output_basename>__heatmap.png`
 - calibration plot: `data/metrics/<output_basename>__calibration.png`
 - prompt log: `data/logs/<output_basename>.log`
+- session log: `data/logs/sessions/benchmark_agent_<timestamp>.log`
 
 If `--output` is omitted, the predictions CSV name is inferred from input, provider, model, and timestamp.
 
@@ -58,6 +59,10 @@ They capture:
 - retry and validator metadata
 
 Legacy JSON-array logs are auto-migrated to NDJSON on resume, with a backup written as `<output_basename>.log.legacy.json`.
+
+## Session Logs
+
+Session logs capture the benchmark runner's own process logging and are written separately under `data/logs/sessions`.
 
 ## Metrics-Only Mode
 

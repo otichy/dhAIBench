@@ -171,9 +171,20 @@ METRICS_RUN_CONFIG_METADATA_FIELDS: Tuple[str, ...] = (
 )
 
 
+def default_session_logs_dir() -> str:
+    """Return the session-log directory under the current logs root."""
+    return os.path.join(DEFAULT_LOGS_DIR, "sessions")
+
+
 def ensure_data_layout() -> None:
     """Create standard data directories when missing."""
-    for path in (DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_METRICS_DIR, DEFAULT_LOGS_DIR):
+    for path in (
+        DEFAULT_INPUT_DIR,
+        DEFAULT_OUTPUT_DIR,
+        DEFAULT_METRICS_DIR,
+        DEFAULT_LOGS_DIR,
+        default_session_logs_dir(),
+    ):
         os.makedirs(path, exist_ok=True)
 
 
@@ -8872,7 +8883,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     ensure_data_layout()
     session_log_file = os.path.join(
-        DEFAULT_LOGS_DIR,
+        default_session_logs_dir(),
         f"benchmark_agent_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.log",
     )
     logging.basicConfig(
