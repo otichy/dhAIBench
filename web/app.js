@@ -715,6 +715,9 @@ function getDefaultSortDirectionForMetric(metricKey) {
 }
 
 function getLeaderboardMetricsTableRunLabel(run) {
+  if (state.selectedTasks.length === 1) {
+    return getRunModelDisplayName(run);
+  }
   return `${run.task} / ${getRunModelDisplayName(run)}`;
 }
 
@@ -5182,7 +5185,14 @@ function renderLeaderboardMetricsTable(container, runs) {
     runCell.className = "leaderboard-run-cell";
     const runLabel = getLeaderboardMetricsTableRunLabel(run);
     const runTags = showSelectedTagBadges ? getSelectedTagsForRun(run) : [];
-    runCell.title = [runLabel, ...runTags, run.fileName].filter(Boolean).join(" / ");
+    const runTooltipParts = [runLabel];
+    if (run.tagsDisplay) {
+      runTooltipParts.push(`Tags: ${run.tagsDisplay}`);
+    }
+    if (run.fileName) {
+      runTooltipParts.push(run.fileName);
+    }
+    runCell.title = runTooltipParts.join("\n");
     const runContent = document.createElement("span");
     runContent.className = "leaderboard-run-cell-content";
     const runLabelEl = document.createElement("span");
