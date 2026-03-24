@@ -122,7 +122,7 @@ const els = {
   barRowTemplate: document.querySelector("#barRowTemplate"),
 };
 
-const METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall", "calibration_ece"]);
+const METRIC_KEYS = new Set(["accuracy", "cohen_kappa", "macro_f1", "macro_precision", "macro_recall", "calibration_ece"]);
 const PERCENT_METRIC_KEYS = new Set([
   "accuracy",
   "macro_f1",
@@ -140,6 +140,7 @@ const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
 const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
+  "cohen_kappa",
   "macro_f1",
   "macro_precision",
   "macro_recall",
@@ -151,6 +152,7 @@ let leaderboardMetricsScrollCleanup = null;
 
 const METRIC_LABELS = {
   accuracy: "Accuracy",
+  cohen_kappa: "Cohen's Kappa",
   macro_f1: "Macro F1",
   macro_precision: "Macro Precision",
   macro_recall: "Macro Recall",
@@ -767,6 +769,7 @@ function normalizeRun(filePath, payload) {
     : parseSemicolonTags(payload.tags);
 
   const accuracy = toPct(safeNum(payload.accuracy));
+  const cohenKappa = safeNum(payload.cohen_kappa);
   const macroPrecision = toPct(safeNum(payload.macro_precision));
   const macroRecall = toPct(safeNum(payload.macro_recall));
   const macroF1 = toPct(safeNum(payload.macro_f1));
@@ -786,6 +789,7 @@ function normalizeRun(filePath, payload) {
     model: modelFromMetrics || nameParts.model,
     timestamp: ts,
     accuracy,
+    cohenKappa,
     macroPrecision,
     macroRecall,
     macroF1,
@@ -824,6 +828,7 @@ function normalizeRun(filePath, payload) {
       payload.label_metrics_available !== false &&
       (
         safeNum(payload.accuracy) !== null ||
+        safeNum(payload.cohen_kappa) !== null ||
         safeNum(payload.macro_precision) !== null ||
         safeNum(payload.macro_recall) !== null ||
         safeNum(payload.macro_f1) !== null
@@ -2113,6 +2118,7 @@ function setupSourceControls() {
 
 function getMetricValueForRun(run, key) {
   if (key === "accuracy") return run.accuracy;
+  if (key === "cohen_kappa") return run.cohenKappa;
   if (key === "macro_f1") return run.macroF1;
   if (key === "macro_precision") return run.macroPrecision;
   if (key === "macro_recall") return run.macroRecall;
@@ -2125,6 +2131,9 @@ function isPercentMetric(metricKey) {
 }
 
 function resolveLeaderboardBarMax(metricKey, values) {
+  if (metricKey === "cohen_kappa") {
+    return 1;
+  }
   if (isPercentMetric(metricKey)) {
     return 100;
   }
@@ -2527,6 +2536,7 @@ function createBarRow(
   const fillEl = node.querySelector(".bar-fill");
   const valueEl = node.querySelector(".bar-value");
   const labelText = asTrimmedString(label);
+  const metricKey = asTrimmedString(options.metricKey);
   labelEl.textContent = labelText;
   labelEl.title = label;
 
@@ -2535,7 +2545,14 @@ function createBarRow(
     node.classList.add(rowClass);
   }
 
-  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  const normalizeTrackPosition = (rawValue) => {
+    if (metricKey === "cohen_kappa") {
+      const clamped = Math.max(-1, Math.min(1, rawValue));
+      return (clamped + 1) / 2;
+    }
+    return max > 0 ? Math.max(0, Math.min(1, rawValue / max)) : 0;
+  };
+  const ratio = normalizeTrackPosition(value);
   fillEl.style.width = `${ratio * 100}%`;
 
   if (colorClass === "warm") {
@@ -2571,13 +2588,19 @@ function createBarRow(
     Number.isFinite(referenceBand.high) &&
     max > 0
   ) {
-    const lowClamped = Math.max(0, Math.min(max, referenceBand.low));
-    const highClamped = Math.max(lowClamped, Math.min(max, referenceBand.high));
+    const lowClamped = metricKey === "cohen_kappa"
+      ? Math.max(-1, Math.min(1, referenceBand.low))
+      : Math.max(0, Math.min(max, referenceBand.low));
+    const highClamped = metricKey === "cohen_kappa"
+      ? Math.max(lowClamped, Math.min(1, referenceBand.high))
+      : Math.max(lowClamped, Math.min(max, referenceBand.high));
     const bandEl = document.createElement("span");
     bandEl.className = "bar-reference-band";
-    bandEl.style.left = `${(lowClamped / max) * 100}%`;
-    bandEl.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.8)}%`;
-    bandEl.title = `Grouped IQR ${formatNum(lowClamped, 2)}-${formatNum(highClamped, 2)}%`;
+    const left = normalizeTrackPosition(lowClamped);
+    const right = normalizeTrackPosition(highClamped);
+    bandEl.style.left = `${left * 100}%`;
+    bandEl.style.width = `${Math.max((right - left) * 100, 0.8)}%`;
+    bandEl.title = `Grouped IQR ${formatMetric(metricKey, lowClamped)}-${formatMetric(metricKey, highClamped)}`;
     trackEl.appendChild(bandEl);
   }
 
@@ -2587,39 +2610,52 @@ function createBarRow(
     distributionWrap.className = "bar-distribution";
     const stats = getDistributionStats(distribution.values);
     if (stats) {
-      const lowClamped = Math.max(0, Math.min(max, stats.min));
-      const highClamped = Math.max(lowClamped, Math.min(max, stats.max));
+      const lowClamped = metricKey === "cohen_kappa"
+        ? Math.max(-1, Math.min(1, stats.min))
+        : Math.max(0, Math.min(max, stats.min));
+      const highClamped = metricKey === "cohen_kappa"
+        ? Math.max(lowClamped, Math.min(1, stats.max))
+        : Math.max(lowClamped, Math.min(max, stats.max));
       const whiskerEl = document.createElement("span");
       whiskerEl.className = "bar-distribution-whisker";
-      whiskerEl.style.left = `${(lowClamped / max) * 100}%`;
-      whiskerEl.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.5)}%`;
+      const whiskerLeft = normalizeTrackPosition(lowClamped);
+      const whiskerRight = normalizeTrackPosition(highClamped);
+      whiskerEl.style.left = `${whiskerLeft * 100}%`;
+      whiskerEl.style.width = `${Math.max((whiskerRight - whiskerLeft) * 100, 0.5)}%`;
       distributionWrap.appendChild(whiskerEl);
 
-      const q1Clamped = Math.max(0, Math.min(max, stats.q1));
-      const q3Clamped = Math.max(q1Clamped, Math.min(max, stats.q3));
+      const q1Clamped = metricKey === "cohen_kappa"
+        ? Math.max(-1, Math.min(1, stats.q1))
+        : Math.max(0, Math.min(max, stats.q1));
+      const q3Clamped = metricKey === "cohen_kappa"
+        ? Math.max(q1Clamped, Math.min(1, stats.q3))
+        : Math.max(q1Clamped, Math.min(max, stats.q3));
       const boxEl = document.createElement("span");
       boxEl.className = "bar-distribution-box";
-      boxEl.style.left = `${(q1Clamped / max) * 100}%`;
-      boxEl.style.width = `${Math.max(((q3Clamped - q1Clamped) / max) * 100, 0.8)}%`;
+      const boxLeft = normalizeTrackPosition(q1Clamped);
+      const boxRight = normalizeTrackPosition(q3Clamped);
+      boxEl.style.left = `${boxLeft * 100}%`;
+      boxEl.style.width = `${Math.max((boxRight - boxLeft) * 100, 0.8)}%`;
       distributionWrap.appendChild(boxEl);
 
-      const medianClamped = Math.max(0, Math.min(max, stats.median));
+      const medianClamped = metricKey === "cohen_kappa"
+        ? Math.max(-1, Math.min(1, stats.median))
+        : Math.max(0, Math.min(max, stats.median));
       const medianEl = document.createElement("span");
       medianEl.className = "bar-distribution-median";
-      medianEl.style.left = `${(medianClamped / max) * 100}%`;
+      medianEl.style.left = `${normalizeTrackPosition(medianClamped) * 100}%`;
       distributionWrap.appendChild(medianEl);
 
       stats.values.forEach((entryValue) => {
-        const clamped = Math.max(0, Math.min(max, entryValue));
+        const clamped = metricKey === "cohen_kappa"
+          ? Math.max(-1, Math.min(1, entryValue))
+          : Math.max(0, Math.min(max, entryValue));
         const tick = document.createElement("span");
         tick.className = "bar-distribution-tick";
-        tick.style.left = `${(clamped / max) * 100}%`;
+        tick.style.left = `${normalizeTrackPosition(clamped) * 100}%`;
         distributionWrap.appendChild(tick);
       });
-      distributionWrap.title = `Runs: min ${formatNum(stats.min, 2)}%, median ${formatNum(stats.median, 2)}%, max ${formatNum(
-        stats.max,
-        2
-      )}%`;
+      distributionWrap.title = `Runs: min ${formatMetric(metricKey, stats.min)}, median ${formatMetric(metricKey, stats.median)}, max ${formatMetric(metricKey, stats.max)}`;
       trackEl.appendChild(distributionWrap);
     }
   }
@@ -2658,13 +2694,19 @@ function createBarRow(
   }
 
   if (ci && typeof ci.low === "number" && typeof ci.high === "number" && max > 0) {
-    const lowClamped = Math.max(0, Math.min(max, ci.low));
-    const highClamped = Math.max(lowClamped, Math.min(max, ci.high));
+    const lowClamped = metricKey === "cohen_kappa"
+      ? Math.max(-1, Math.min(1, ci.low))
+      : Math.max(0, Math.min(max, ci.low));
+    const highClamped = metricKey === "cohen_kappa"
+      ? Math.max(lowClamped, Math.min(1, ci.high))
+      : Math.max(lowClamped, Math.min(max, ci.high));
     const ciRange = document.createElement("span");
     ciRange.className = "bar-ci-range";
-    ciRange.style.left = `${(lowClamped / max) * 100}%`;
-    ciRange.style.width = `${Math.max(((highClamped - lowClamped) / max) * 100, 0.6)}%`;
-    ciRange.title = `95% CI ${formatNum(lowClamped, 2)}-${formatNum(highClamped, 2)}%`;
+    const left = normalizeTrackPosition(lowClamped);
+    const right = normalizeTrackPosition(highClamped);
+    ciRange.style.left = `${left * 100}%`;
+    ciRange.style.width = `${Math.max((right - left) * 100, 0.6)}%`;
+    ciRange.title = `95% CI ${formatMetric(metricKey, lowClamped)}-${formatMetric(metricKey, highClamped)}`;
     trackEl.appendChild(ciRange);
   }
 
@@ -3003,7 +3045,7 @@ function renderLeaderboardChart(container, runs) {
           () => openRunModal(entry.run),
           entry.ci,
           groupBy === "task" ? getTaskGroupedTopRunLabel([entry.run], metricKey) : grouping.getSingleRowContextLabel(entry.run),
-          { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap }
+          { badges, rowClass, trackBadges, trackBadgeColorMap: selectedTagColorMap, metricKey }
         )
       );
       return;
@@ -3051,6 +3093,7 @@ function renderLeaderboardChart(container, runs) {
           rowClass: suppressTopMarkers ? "" : rowClass,
           trackBadges: groupTrackBadges,
           trackBadgeColorMap: selectedTagColorMap,
+          metricKey,
           distribution: distributionValues.length ? { values: distributionValues } : null,
         }
       )
@@ -3086,6 +3129,7 @@ function renderLeaderboardChart(container, runs) {
             rowClass: suppressTopMarkers ? "" : runRowClass,
             trackBadges: runTrackBadges,
             trackBadgeColorMap: selectedTagColorMap,
+            metricKey,
           }
         )
       );
@@ -5190,7 +5234,7 @@ function renderBestByTask(container, runs) {
         () => openRunModal(run),
         null,
         "",
-        {}
+        { metricKey }
       )
     );
   });
@@ -5589,6 +5633,16 @@ function normalizeRadarValue(rawValue, axisMax, metricKey, scaleMode) {
     return isLowerBetterMetric(metricKey) ? 1 : 0;
   }
 
+  if (metricKey === "cohen_kappa") {
+    const clamped = Math.max(-1, Math.min(1, rawValue));
+    const linearRatio = (clamped + 1) / 2;
+    if (scaleMode === "contrast") {
+      const gamma = 2.5;
+      return Math.pow(linearRatio, gamma);
+    }
+    return linearRatio;
+  }
+
   const maxValue = Math.max(1, toNonNegativeNumber(axisMax));
   const clampedValue = Math.min(maxValue, toNonNegativeNumber(rawValue));
   const linearRatio = Math.max(0, Math.min(1, clampedValue / maxValue));
@@ -5625,6 +5679,9 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = ser
   const axisMaxima = tasks.map((_, index) => {
     if (metricIsPercent) {
       return 100;
+    }
+    if (metricKey === "cohen_kappa") {
+      return 1;
     }
     return Math.max(
       ...seriesRows.map((row) => toNonNegativeNumber(row.values[index])),
@@ -5926,6 +5983,10 @@ function renderTable(runs) {
         run.accuracy !== null ? `${formatNum(run.accuracy, 2)}%` : '<span class="muted">N/A</span>'
       ),
       renderTableCell(
+        "Cohen's Kappa",
+        run.cohenKappa !== null ? formatNum(run.cohenKappa, 3) : '<span class="muted">N/A</span>'
+      ),
+      renderTableCell(
         "Macro F1",
         run.macroF1 !== null ? `${formatNum(run.macroF1, 2)}%` : '<span class="muted">N/A</span>'
       ),
@@ -6079,6 +6140,7 @@ function fillRunDetailsContent(run) {
     ["Reasoning/Effort", runReasoningEffort],
     ["Timestamp", formatTs(run.timestamp)],
     ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],
+    ["Cohen's Kappa", run.cohenKappa == null ? "N/A" : formatNum(run.cohenKappa, 3)],
     ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
     ["Macro Precision", run.macroPrecision == null ? "N/A" : `${formatNum(run.macroPrecision, 2)}%`],
     ["Macro Recall", run.macroRecall == null ? "N/A" : `${formatNum(run.macroRecall, 2)}%`],

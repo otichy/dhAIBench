@@ -5840,7 +5840,7 @@ def compute_metrics(
     truths: Iterable[str],
     preds: Iterable[str],
 ) -> Dict[str, Any]:
-    """Compute accuracy, macro metrics, per-label stats, and confusion matrix artifacts."""
+    """Compute accuracy, Cohen's kappa, macro metrics, per-label stats, and confusion matrix artifacts."""
     truths = list(truths)
     preds = list(preds)
     if len(truths) != len(preds):
@@ -5880,8 +5880,20 @@ def compute_metrics(
         }
 
     label_count = len(labels)
+    accuracy = correct / total if total else 0.0
+    expected_agreement = (
+        sum(row_totals[index] * col_totals[index] for index in range(label_count)) / (total * total)
+        if total
+        else 0.0
+    )
+    if math.isclose(1.0 - expected_agreement, 0.0, abs_tol=1e-12):
+        cohen_kappa = 1.0 if math.isclose(accuracy, 1.0, abs_tol=1e-12) else 0.0
+    else:
+        cohen_kappa = (accuracy - expected_agreement) / (1.0 - expected_agreement)
+
     metrics = {
-        "accuracy": correct / total if total else 0.0,
+        "accuracy": accuracy,
+        "cohen_kappa": cohen_kappa,
         "macro_precision": precision_sum / (label_count if label_count else 1),
         "macro_recall": recall_sum / (label_count if label_count else 1),
         "macro_f1": f1_sum / (label_count if label_count else 1),
@@ -7924,6 +7936,7 @@ def process_dataset(
     if "accuracy" in metrics:
         accuracy = metrics.get("accuracy", 0.0)
         logging.info("Overall accuracy: %.2f%%", accuracy * 100)
+        logging.info("Cohen's Kappa: %.3f", metrics.get("cohen_kappa", 0.0))
         logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
         logging.info("Label breakdown:")
         for label, stats in metrics["per_label"].items():
@@ -8177,6 +8190,7 @@ def process_metrics_only_output(
     if "accuracy" in metrics:
         accuracy = metrics.get("accuracy", 0.0)
         logging.info("Overall accuracy: %.2f%%", accuracy * 100)
+        logging.info("Cohen's Kappa: %.3f", metrics.get("cohen_kappa", 0.0))
         logging.info("Macro F1: %.3f", metrics.get("macro_f1", 0.0))
 
     if total_prompt_tokens or total_completion_tokens or total_reported_tokens:

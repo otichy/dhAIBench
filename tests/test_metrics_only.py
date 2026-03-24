@@ -83,6 +83,24 @@ def _assert_metrics_metadata(
 
 
 class MetricsOnlyTests(unittest.TestCase):
+    def test_compute_metrics_includes_cohen_kappa(self) -> None:
+        payload = ba.compute_metrics(
+            ["NOUN", "VERB"],
+            ["NOUN", "NOUN"],
+        )
+
+        self.assertAlmostEqual(payload.get("accuracy", 0.0), 0.5)
+        self.assertAlmostEqual(payload.get("cohen_kappa", 999.0), 0.0, places=8)
+
+    def test_compute_metrics_sets_cohen_kappa_to_one_for_single_label_perfect_agreement(self) -> None:
+        payload = ba.compute_metrics(
+            ["NOUN", "NOUN", "NOUN"],
+            ["NOUN", "NOUN", "NOUN"],
+        )
+
+        self.assertAlmostEqual(payload.get("accuracy", 0.0), 1.0)
+        self.assertAlmostEqual(payload.get("cohen_kappa", 0.0), 1.0, places=8)
+
     def test_metrics_only_writes_session_logs_under_sessions_subdir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):
@@ -229,6 +247,7 @@ class MetricsOnlyTests(unittest.TestCase):
                 with open(metrics_json, "r", encoding="utf-8") as handle:
                     payload = json.load(handle)
                 self.assertAlmostEqual(payload.get("accuracy", 0.0), 0.5)
+                self.assertAlmostEqual(payload.get("cohen_kappa", 999.0), 0.0, places=8)
                 self.assertEqual(payload.get("mode"), "metrics_only")
                 self.assertEqual(payload.get("truth_source"), "output_csv_truth_column")
                 calibration = payload.get("calibration_metrics")
@@ -277,6 +296,7 @@ class MetricsOnlyTests(unittest.TestCase):
                 with open(metrics_json, "r", encoding="utf-8") as handle:
                     payload = json.load(handle)
                 self.assertAlmostEqual(payload.get("accuracy", 0.0), 0.5)
+                self.assertAlmostEqual(payload.get("cohen_kappa", 999.0), 0.0, places=8)
                 self.assertEqual(payload.get("truth_source"), "labels_csv_override_with_output_fallback")
 
     def test_metrics_only_applies_task_metadata_overrides(self) -> None:

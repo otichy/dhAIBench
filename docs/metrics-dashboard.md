@@ -7,7 +7,7 @@ The static dashboard in `web/` is for exploring `*_metrics.json` artifacts produ
 The dashboard loads metrics files and derives a run catalogue with:
 
 - task, model, provider, timestamp, and tags
-- accuracy, macro F1, macro precision, macro recall, and calibration metrics
+- accuracy, Cohen's Kappa, macro F1, macro precision, macro recall, and calibration metrics
 - token and request summaries
 - estimated cost and pricing metadata when available
 - links back to sibling artifacts such as the heatmap, calibration chart, prompt log, output CSV, input CSV, and raw metrics JSON
@@ -114,6 +114,7 @@ These values update immediately when filters change.
 The leaderboard is the main analysis area. `Main Metric` changes the ranking basis for the views below:
 
 - Accuracy
+- Cohen's Kappa
 - Macro F1
 - Macro Precision
 - Macro Recall
@@ -198,6 +199,7 @@ The runs table is the quickest raw list view. It includes:
 - model
 - timestamp
 - accuracy
+- Cohen's Kappa
 - macro F1
 - calibration ECE
 - requests

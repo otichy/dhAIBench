@@ -31,6 +31,7 @@ When `--resume` is used, existing rows are reused by `ID`.
 The metrics JSON includes:
 
 - accuracy
+- Cohen's Kappa
 - macro F1
 - per-label precision, recall, and F1
 - confusion matrix
