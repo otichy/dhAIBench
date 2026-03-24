@@ -101,6 +101,19 @@ class MetricsOnlyTests(unittest.TestCase):
         self.assertAlmostEqual(payload.get("accuracy", 0.0), 1.0)
         self.assertAlmostEqual(payload.get("cohen_kappa", 0.0), 1.0, places=8)
 
+    def test_derive_cohen_kappa_from_dense_metrics_payload(self) -> None:
+        payload = {
+            "labels": ["NOUN", "VERB"],
+            "confusion_matrix": {
+                "NOUN": {"NOUN": 1, "VERB": 0},
+                "VERB": {"NOUN": 1, "VERB": 0},
+            },
+        }
+
+        derived = ba.derive_cohen_kappa_from_metrics_payload(payload)
+        self.assertIsNotNone(derived)
+        self.assertAlmostEqual(derived or 0.0, 0.0, places=8)
+
     def test_metrics_only_writes_session_logs_under_sessions_subdir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):
@@ -298,6 +311,64 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertAlmostEqual(payload.get("accuracy", 0.0), 0.5)
                 self.assertAlmostEqual(payload.get("cohen_kappa", 999.0), 0.0, places=8)
                 self.assertEqual(payload.get("truth_source"), "labels_csv_override_with_output_fallback")
+
+    def test_metrics_only_recovers_label_metrics_from_existing_metrics_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                output_csv = os.path.join(tmpdir, "existing_output.csv")
+                metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
+                with open(output_csv, "w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(
+                        handle,
+                        fieldnames=["ID", "prediction", "confidence"],
+                        delimiter=";",
+                    )
+                    writer.writeheader()
+                    writer.writerow({"ID": "1", "prediction": "NOUN", "confidence": "0.9"})
+                    writer.writerow({"ID": "2", "prediction": "NOUN", "confidence": "0.6"})
+                with open(metrics_json, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "accuracy": 0.5,
+                            "macro_precision": 0.25,
+                            "macro_recall": 0.5,
+                            "macro_f1": 1.0 / 3.0,
+                            "labels": ["NOUN", "VERB"],
+                            "label_count": 2,
+                            "total_examples": 2,
+                            "label_metrics_available": True,
+                            "confusion_matrix": {
+                                "NOUN": {"NOUN": 1, "VERB": 0},
+                                "VERB": {"NOUN": 1, "VERB": 0},
+                            },
+                            "model_details": {
+                                "provider": "openai",
+                                "model_requested": "gpt-5-mini",
+                                "model_for_requests": "gpt-5-mini",
+                                "api_base_url": "",
+                                "chat_completions_endpoint": "",
+                            },
+                        },
+                        handle,
+                        indent=2,
+                    )
+
+                with patch.object(ba, "generate_confusion_heatmap", return_value=None):
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                        ]
+                    )
+
+                self.assertEqual(exit_code, 0)
+                with open(metrics_json, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                self.assertTrue(payload.get("label_metrics_available"))
+                self.assertEqual(payload.get("truth_source"), "existing_metrics_artifact")
+                self.assertAlmostEqual(payload.get("accuracy", 0.0), 0.5, places=8)
+                self.assertAlmostEqual(payload.get("cohen_kappa", 999.0), 0.0, places=8)
 
     def test_metrics_only_applies_task_metadata_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

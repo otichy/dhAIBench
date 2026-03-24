@@ -5836,6 +5836,117 @@ def build_dense_confusion_matrix(
     return confusion
 
 
+def compute_cohen_kappa_from_marginals(
+    row_totals: List[int],
+    col_totals: List[int],
+    correct: int,
+    total: int,
+) -> float:
+    """Compute Cohen's kappa from observed agreement and per-label marginals."""
+    accuracy = correct / total if total else 0.0
+    expected_agreement = (
+        sum(row_totals[index] * col_totals[index] for index in range(min(len(row_totals), len(col_totals))))
+        / (total * total)
+        if total
+        else 0.0
+    )
+    if math.isclose(1.0 - expected_agreement, 0.0, abs_tol=1e-12):
+        return 1.0 if math.isclose(accuracy, 1.0, abs_tol=1e-12) else 0.0
+    return (accuracy - expected_agreement) / (1.0 - expected_agreement)
+
+
+def derive_cohen_kappa_from_metrics_payload(payload: Any) -> Optional[float]:
+    """Best-effort Cohen's kappa recovery from persisted confusion artifacts."""
+    if not isinstance(payload, dict):
+        return None
+
+    labels = payload.get("labels")
+    if not isinstance(labels, list) or not labels:
+        return None
+    label_count = len(labels)
+    row_totals = [0] * label_count
+    col_totals = [0] * label_count
+    correct = 0
+    total = 0
+
+    sparse_triplets = payload.get("confusion_matrix_sparse")
+    if isinstance(sparse_triplets, list) and sparse_triplets:
+        for triplet in sparse_triplets:
+            if (
+                not isinstance(triplet, list)
+                or len(triplet) != 3
+                or not all(isinstance(value, int) for value in triplet)
+            ):
+                return None
+            true_index, pred_index, count = triplet
+            if (
+                true_index < 0
+                or pred_index < 0
+                or true_index >= label_count
+                or pred_index >= label_count
+                or count < 0
+            ):
+                return None
+            row_totals[true_index] += count
+            col_totals[pred_index] += count
+            total += count
+            if true_index == pred_index:
+                correct += count
+        return compute_cohen_kappa_from_marginals(row_totals, col_totals, correct, total)
+
+    confusion = payload.get("confusion_matrix")
+    if not isinstance(confusion, dict):
+        return None
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    for true_label, row in confusion.items():
+        true_index = label_to_index.get(true_label)
+        if true_index is None or not isinstance(row, dict):
+            continue
+        for pred_label, raw_count in row.items():
+            pred_index = label_to_index.get(pred_label)
+            if pred_index is None or not isinstance(raw_count, int) or raw_count < 0:
+                continue
+            row_totals[true_index] += raw_count
+            col_totals[pred_index] += raw_count
+            total += raw_count
+            if true_index == pred_index:
+                correct += raw_count
+    if total <= 0:
+        return None
+    return compute_cohen_kappa_from_marginals(row_totals, col_totals, correct, total)
+
+
+def restore_label_metrics_from_existing_payload(payload: Any) -> Dict[str, Any]:
+    """Recover persisted label metrics and backfill Cohen's kappa when possible."""
+    if not isinstance(payload, dict) or payload.get("label_metrics_available") is False:
+        return {}
+
+    restored: Dict[str, Any] = {}
+    for field_name in (
+        "accuracy",
+        "cohen_kappa",
+        "macro_precision",
+        "macro_recall",
+        "macro_f1",
+        "per_label",
+        "labels",
+        "label_count",
+        "total_examples",
+        "confusion_matrix",
+        "confusion_matrix_sparse",
+        "confusion_matrix_format",
+        "confusion_matrix_nonzero_cells",
+    ):
+        if field_name in payload:
+            restored[field_name] = copy.deepcopy(payload[field_name])
+
+    if "cohen_kappa" not in restored:
+        derived_kappa = derive_cohen_kappa_from_metrics_payload(payload)
+        if derived_kappa is not None:
+            restored["cohen_kappa"] = derived_kappa
+    return restored
+
+
 def compute_metrics(
     truths: Iterable[str],
     preds: Iterable[str],
@@ -5881,15 +5992,7 @@ def compute_metrics(
 
     label_count = len(labels)
     accuracy = correct / total if total else 0.0
-    expected_agreement = (
-        sum(row_totals[index] * col_totals[index] for index in range(label_count)) / (total * total)
-        if total
-        else 0.0
-    )
-    if math.isclose(1.0 - expected_agreement, 0.0, abs_tol=1e-12):
-        cohen_kappa = 1.0 if math.isclose(accuracy, 1.0, abs_tol=1e-12) else 0.0
-    else:
-        cohen_kappa = (accuracy - expected_agreement) / (1.0 - expected_agreement)
+    cohen_kappa = compute_cohen_kappa_from_marginals(row_totals, col_totals, correct, total)
 
     metrics = {
         "accuracy": accuracy,
@@ -8168,12 +8271,23 @@ def process_metrics_only_output(
         metrics.update(compute_metrics(evaluated_truths, evaluated_preds))
         metrics["label_metrics_available"] = True
     else:
-        metrics["label_metrics_available"] = False
-        metrics["label_metrics_reason"] = "no_ground_truth_labels"
-        logging.warning(
-            "No ground-truth labels available in %s; skipping label-based metric computation.",
-            resolved_output,
-        )
+        restored_label_metrics = restore_label_metrics_from_existing_payload(existing_metrics_payload)
+        if restored_label_metrics:
+            metrics.update(restored_label_metrics)
+            metrics["label_metrics_available"] = True
+            metrics["truth_source"] = "existing_metrics_artifact"
+            metrics.pop("label_metrics_reason", None)
+            logging.info(
+                "Recovered label metrics from existing metrics artifact for %s because direct truth labels were unavailable.",
+                resolved_output,
+            )
+        else:
+            metrics["label_metrics_available"] = False
+            metrics["label_metrics_reason"] = "no_ground_truth_labels"
+            logging.warning(
+                "No ground-truth labels available in %s; skipping label-based metric computation.",
+                resolved_output,
+            )
 
     metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:

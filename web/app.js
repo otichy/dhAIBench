@@ -547,6 +547,90 @@ function safeNum(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function computeCohenKappaFromMarginals(rowTotals, colTotals, correct, total) {
+  if (!(total > 0)) {
+    return 0;
+  }
+  const accuracy = correct / total;
+  let expectedNumerator = 0;
+  const count = Math.min(Array.isArray(rowTotals) ? rowTotals.length : 0, Array.isArray(colTotals) ? colTotals.length : 0);
+  for (let index = 0; index < count; index += 1) {
+    expectedNumerator += rowTotals[index] * colTotals[index];
+  }
+  const expectedAgreement = expectedNumerator / (total * total);
+  if (Math.abs(1 - expectedAgreement) <= 1e-12) {
+    return Math.abs(accuracy - 1) <= 1e-12 ? 1 : 0;
+  }
+  return (accuracy - expectedAgreement) / (1 - expectedAgreement);
+}
+
+function deriveCohenKappaFromPayload(payload) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.labels) || !payload.labels.length) {
+    return null;
+  }
+  const labelCount = payload.labels.length;
+  const rowTotals = new Array(labelCount).fill(0);
+  const colTotals = new Array(labelCount).fill(0);
+  let correct = 0;
+  let total = 0;
+
+  if (Array.isArray(payload.confusion_matrix_sparse) && payload.confusion_matrix_sparse.length) {
+    for (const triplet of payload.confusion_matrix_sparse) {
+      if (!Array.isArray(triplet) || triplet.length !== 3) {
+        return null;
+      }
+      const [trueIndex, predIndex, count] = triplet;
+      if (
+        !Number.isInteger(trueIndex) ||
+        !Number.isInteger(predIndex) ||
+        !Number.isInteger(count) ||
+        trueIndex < 0 ||
+        predIndex < 0 ||
+        trueIndex >= labelCount ||
+        predIndex >= labelCount ||
+        count < 0
+      ) {
+        return null;
+      }
+      rowTotals[trueIndex] += count;
+      colTotals[predIndex] += count;
+      total += count;
+      if (trueIndex === predIndex) {
+        correct += count;
+      }
+    }
+    return computeCohenKappaFromMarginals(rowTotals, colTotals, correct, total);
+  }
+
+  const confusion = payload.confusion_matrix;
+  if (!confusion || typeof confusion !== "object") {
+    return null;
+  }
+  const labelToIndex = new Map(payload.labels.map((label, index) => [label, index]));
+  for (const [trueLabel, row] of Object.entries(confusion)) {
+    const trueIndex = labelToIndex.get(trueLabel);
+    if (trueIndex == null || !row || typeof row !== "object") {
+      continue;
+    }
+    for (const [predLabel, rawCount] of Object.entries(row)) {
+      const predIndex = labelToIndex.get(predLabel);
+      if (predIndex == null || !Number.isInteger(rawCount) || rawCount < 0) {
+        continue;
+      }
+      rowTotals[trueIndex] += rawCount;
+      colTotals[predIndex] += rawCount;
+      total += rawCount;
+      if (trueIndex === predIndex) {
+        correct += rawCount;
+      }
+    }
+  }
+  if (!(total > 0)) {
+    return null;
+  }
+  return computeCohenKappaFromMarginals(rowTotals, colTotals, correct, total);
+}
+
 function isLowerBetterMetric(metricKey) {
   return LOWER_IS_BETTER_METRIC_KEYS.has(metricKey);
 }
@@ -769,7 +853,7 @@ function normalizeRun(filePath, payload) {
     : parseSemicolonTags(payload.tags);
 
   const accuracy = toPct(safeNum(payload.accuracy));
-  const cohenKappa = safeNum(payload.cohen_kappa);
+  const cohenKappa = safeNum(payload.cohen_kappa) ?? deriveCohenKappaFromPayload(payload);
   const macroPrecision = toPct(safeNum(payload.macro_precision));
   const macroRecall = toPct(safeNum(payload.macro_recall));
   const macroF1 = toPct(safeNum(payload.macro_f1));
