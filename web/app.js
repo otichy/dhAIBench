@@ -721,6 +721,64 @@ function getLeaderboardMetricsTableRunLabel(run) {
   return `${run.task} / ${getRunModelDisplayName(run)}`;
 }
 
+function getSelectionAwareScatterModelLabel(run) {
+  if (!run) {
+    return "";
+  }
+  if (state.selectedModels.length !== 1) {
+    return getRunModelDisplayName(run);
+  }
+  return getRunEffortSuffix(run);
+}
+
+function getSelectionAwareScatterRunLabel(run) {
+  if (!run) {
+    return "";
+  }
+  const parts = [];
+  if (state.selectedTasks.length !== 1) {
+    const taskLabel = asTrimmedString(run.task);
+    if (taskLabel) {
+      parts.push(taskLabel);
+    }
+  }
+  const modelLabel = getSelectionAwareScatterModelLabel(run);
+  if (modelLabel) {
+    parts.push(modelLabel);
+  }
+  return parts.join(" | ");
+}
+
+function getSelectionAwarePriceScatterBaseLabel(entry, groupBy) {
+  if (!entry) {
+    return "";
+  }
+  if (groupBy === "none") {
+    return getSelectionAwareScatterRunLabel(entry.representativeRun);
+  }
+  if (groupBy === "task") {
+    return state.selectedTasks.length === 1 ? "" : asTrimmedString(entry.label);
+  }
+  if (groupBy === "model") {
+    if (state.selectedModels.length === 1) {
+      return getSharedRunEffortSuffix(entry.runs);
+    }
+    return asTrimmedString(entry.label);
+  }
+  return asTrimmedString(entry.label);
+}
+
+function buildPriceScatterPointLabelText(entry, groupBy, priceLabelText) {
+  const baseLabel = getSelectionAwarePriceScatterBaseLabel(entry, groupBy);
+  if (baseLabel) {
+    return `${baseLabel}${entry.count > 1 ? ` (${entry.count})` : ""} | ${priceLabelText}`;
+  }
+  if (entry.count > 1) {
+    return `${formatNum(entry.count, 0)} run(s) | ${priceLabelText}`;
+  }
+  return priceLabelText;
+}
+
 function resolveLeaderboardMetricsTableSortSpec() {
   const isExplicitSort =
     LEADERBOARD_TABLE_SORTABLE_KEYS.has(state.leaderboardTableSortKey) &&
@@ -4200,13 +4258,14 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
     });
     svg.appendChild(pointGroup);
 
-    if (state.timeSeriesShowLabels) {
+    const visibleLabelText = getSelectionAwareScatterRunLabel(entry.run);
+    if (state.timeSeriesShowLabels && visibleLabelText) {
       const label = createSvgNode("text", {
         x: pointX + 7,
         y: pointY - 8,
         class: "time-series-point-label",
       });
-      label.textContent = truncateTimeSeriesLabel(`${entry.run.task} | ${getRunModelDisplayName(entry.run)}`, 26);
+      label.textContent = truncateTimeSeriesLabel(visibleLabelText, 26);
       svg.appendChild(label);
     }
 
@@ -4878,15 +4937,13 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     svg.appendChild(pointGroup);
 
     if (state.timeSeriesShowLabels) {
+      const visibleLabelText = buildPriceScatterPointLabelText(entry, groupBy, priceLabelText);
       const label = createSvgNode("text", {
         x: pointX + 7,
         y: pointY - 8,
         class: "time-series-point-label",
       });
-      label.textContent = truncateTimeSeriesLabel(
-        `${entry.label}${entry.count > 1 ? ` (${entry.count})` : ""} | ${priceLabelText}`,
-        30
-      );
+      label.textContent = truncateTimeSeriesLabel(visibleLabelText, 30);
       svg.appendChild(label);
     }
   });
