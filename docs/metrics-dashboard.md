@@ -50,6 +50,10 @@ In server mode the `Auto (Server)` source attempts, in order:
 
 The `Reload` button refreshes the current source.
 
+Pricing metadata for the scatterplot and run details is loaded from `web/config_prices.js`.
+If you deploy the dashboard under a rewritten root or any setup that exposes only `web/`, make sure that file is published there as well.
+The price update flow writes a mirrored dashboard copy automatically when it generates the root `config_prices.js`.
+
 ### Manifest Notes
 
 `web/generate_metrics_manifest.py` is optional but useful for larger collections.

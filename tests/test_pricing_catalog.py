@@ -224,6 +224,39 @@ class PricingCatalogGenerationTests(unittest.TestCase):
             payload = json.loads(written.split("=", 1)[1].rsplit(";", 1)[0].strip())
             self.assertEqual(set(payload["providers"].keys()), {"openai"})
 
+    def test_write_pricing_catalog_js_mirrors_dashboard_copy_when_web_dir_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "config_prices.js"
+            dashboard_output_path = Path(tmpdir) / "web" / "config_prices.js"
+            dashboard_output_path.parent.mkdir()
+            catalog = {
+                "updated_at": "2026-03-29T00:00:00Z",
+                "providers": {
+                    "openai": {
+                        "models": {
+                            "gpt-5.4-mini": {
+                                "service_tiers": {
+                                    "standard": {
+                                        "input_usd_per_mtokens": 0.75,
+                                        "cached_input_usd_per_mtokens": 0.075,
+                                        "output_usd_per_mtokens": 4.5,
+                                    }
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+
+            pc.write_pricing_catalog_js(catalog, str(output_path))
+
+            self.assertTrue(output_path.exists())
+            self.assertTrue(dashboard_output_path.exists())
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"),
+                dashboard_output_path.read_text(encoding="utf-8"),
+            )
+
     def test_sync_pricing_catalog_adds_unpriced_placeholder_for_new_model(self) -> None:
         model_catalog = {
             "openai": {
