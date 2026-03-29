@@ -1857,6 +1857,11 @@
       ctx.inputPathInput.required = inputRequired;
       ctx.inputPathInput.setAttribute("aria-required", inputRequired ? "true" : "false");
     }
+    if (ctx.logprobsInput) {
+      const logprobsEnabled = normalizedMode !== "metrics";
+      ctx.logprobsInput.disabled = !logprobsEnabled;
+      ctx.logprobsInput.setAttribute("aria-disabled", logprobsEnabled ? "false" : "true");
+    }
   }
 
   function updateSidebarSummary(ctx, commandMeta) {
@@ -2141,7 +2146,7 @@
     if (!data.get("include_explanations")) {
       command.pushFlag("--no_explanation");
     }
-    if (data.get("logprobs")) {
+    if (!metricsOnly && data.get("logprobs")) {
       command.pushFlag("--logprobs");
     }
     if (data.get("calibration")) {
@@ -2678,6 +2683,7 @@
       modelList: document.getElementById("model-options"),
       modelCatalogMeta: document.getElementById("model-catalog-meta"),
       createGeminiCacheCheckbox: document.getElementById("create_gemini_cache"),
+      logprobsInput: document.getElementById("logprobs"),
       inputPathInput: document.getElementById("input_path"),
       outputPathInput: document.getElementById("output_path"),
       outputPathModeBadge: document.getElementById("output-path-mode-badge"),

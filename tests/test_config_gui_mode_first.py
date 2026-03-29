@@ -110,6 +110,15 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         self.assertIn('id="output-path-mode-hint"', html)
         self.assertEqual(html.count("<span>Output CSV Path</span>"), 1)
 
+    def test_hidden_attribute_has_explicit_css_support(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn("[hidden] {", html)
+        self.assertIn("display: none !important;", html)
+
+    def test_logprobs_control_is_scoped_away_from_metrics_mode(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn('data-mode-hidden="metrics"><input type="checkbox" id="logprobs"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

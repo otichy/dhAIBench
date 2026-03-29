@@ -102,6 +102,16 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn('"--validator_exhausted_policy"', shared_js)
         self.assertIn("renderCliFlagReference(ctx);", shared_js)
 
+    def test_metrics_mode_disables_logprobs_control(self) -> None:
+        shared_js = _load_file("config_gui_shared.js")
+        self.assertIn('logprobsInput: document.getElementById("logprobs")', shared_js)
+        self.assertIn('ctx.logprobsInput.disabled = !logprobsEnabled;', shared_js)
+        self.assertIn('ctx.logprobsInput.setAttribute("aria-disabled", logprobsEnabled ? "false" : "true");', shared_js)
+
+    def test_classic_builder_omits_logprobs_in_metrics_only_mode(self) -> None:
+        shared_js = _load_file("config_gui_shared.js")
+        self.assertIn("if (!metricsOnly && data.get(\"logprobs\")) {", shared_js)
+
 
 if __name__ == "__main__":
     unittest.main()
