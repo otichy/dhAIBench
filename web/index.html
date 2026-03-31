@@ -68,7 +68,37 @@
         </div>
 
         <div class="sidebar-tools">
-          <button id="resetFiltersBtn" class="btn sidebar-reset-btn" type="button">Reset All Filters</button>
+          <label class="sidebar-filter-search" for="filterSearchInput">
+            <span class="sidebar-filter-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="6"></circle>
+                <path d="M20 20l-4.2-4.2"></path>
+              </svg>
+            </span>
+            <input
+              id="filterSearchInput"
+              type="search"
+              placeholder="Search tasks or models"
+              aria-label="Search tasks and models"
+              autocomplete="off"
+              spellcheck="false"
+            >
+          </label>
+          <button
+            id="resetFiltersBtn"
+            class="btn icon-btn sidebar-reset-btn"
+            type="button"
+            aria-label="Reset filters"
+            title="Reset filters"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h12"></path>
+              <path d="M7 12h9"></path>
+              <path d="M10 17h6"></path>
+              <path d="M17 16l4 4"></path>
+              <path d="M21 16l-4 4"></path>
+            </svg>
+          </button>
         </div>
 
         <section class="panel">

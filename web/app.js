@@ -31,6 +31,7 @@ const state = {
   selectedTasks: [],
   selectedModels: [],
   selectedTags: [],
+  filterSearchQuery: "",
   timeRanges: [{ from: "", to: "" }],
   selectedRunPath: null,
   sortBy: "accuracy",
@@ -78,6 +79,7 @@ const els = {
   sidebarScrollUpBtn: document.querySelector("#sidebarScrollUpBtn"),
   sidebarScrollDownBtn: document.querySelector("#sidebarScrollDownBtn"),
   resetFiltersBtn: document.querySelector("#resetFiltersBtn"),
+  filterSearchInput: document.querySelector("#filterSearchInput"),
   mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
   mobileFilterSummary: document.querySelector("#mobileFilterSummary"),
   sidebarCloseBtn: document.querySelector("#sidebarCloseBtn"),
@@ -1373,6 +1375,7 @@ function persistUiState() {
     selectedTasks: state.selectedTasks,
     selectedModels: state.selectedModels,
     selectedTags: state.selectedTags,
+    filterSearchQuery: state.filterSearchQuery,
     timeRanges: normalizeTimeRanges(state.timeRanges),
     desktopSidebarCollapsed: state.desktopSidebarCollapsed,
     sortBy: state.sortBy,
@@ -1420,6 +1423,9 @@ function restoreUiState() {
       }
       if (Array.isArray(payload.selectedTags)) {
         state.selectedTags = uniqueNonEmptyStrings(payload.selectedTags);
+      }
+      if (typeof payload.filterSearchQuery === "string") {
+        state.filterSearchQuery = asTrimmedString(payload.filterSearchQuery);
       }
       if (Array.isArray(payload.timeRanges)) {
         state.timeRanges = normalizeTimeRanges(payload.timeRanges);
@@ -1521,6 +1527,7 @@ function applyUiStateToControls() {
   els.sortSelect.value = state.sortBy;
   els.hideNoAccuracy.checked = state.hideNoAccuracy;
   els.themeToggle.checked = state.theme === "dark";
+  renderFilterSearchControl();
   renderLeaderboardGroupSwitch();
 }
 
@@ -1636,11 +1643,15 @@ function getActiveFilterCount() {
   );
 }
 
+function hasResettableFilterState() {
+  return getActiveFilterCount() > 0 || Boolean(asTrimmedString(state.filterSearchQuery));
+}
+
 function updateResetFiltersButton() {
   if (!els.resetFiltersBtn) {
     return;
   }
-  els.resetFiltersBtn.disabled = getActiveFilterCount() === 0;
+  els.resetFiltersBtn.disabled = !hasResettableFilterState();
 }
 
 function sanitizeSelections(selectedValues, allowedValues) {
@@ -1668,6 +1679,52 @@ function setSelectedTags(values) {
   state.selectedTags = sanitizeSelections(values, state.tags);
   persistUiState();
   render();
+}
+
+function normalizeFilterSearchQuery(value) {
+  return asTrimmedString(value).toLocaleLowerCase();
+}
+
+function getVisibleFilterOptions(options, selectedValues, query = state.filterSearchQuery) {
+  const source = Array.isArray(options) ? options : [];
+  const selectedSet = new Set(Array.isArray(selectedValues) ? selectedValues : []);
+  const normalizedQuery = normalizeFilterSearchQuery(query);
+  if (!normalizedQuery) {
+    return source;
+  }
+  return source.filter((option) => {
+    const normalizedOption = asTrimmedString(option);
+    if (!normalizedOption) {
+      return false;
+    }
+    return selectedSet.has(option) || normalizedOption.toLocaleLowerCase().includes(normalizedQuery);
+  });
+}
+
+function renderFilterSearchControl() {
+  if (!els.filterSearchInput) {
+    return;
+  }
+  const nextValue = asTrimmedString(state.filterSearchQuery);
+  if (els.filterSearchInput.value !== nextValue) {
+    els.filterSearchInput.value = nextValue;
+  }
+}
+
+function setFilterSearchQuery(value) {
+  const nextValue = asTrimmedString(value);
+  if (state.filterSearchQuery === nextValue) {
+    return;
+  }
+  state.filterSearchQuery = nextValue;
+  persistUiState();
+  renderFilterSearchControl();
+  renderTaskControls();
+  renderModelControls();
+  updateResetFiltersButton();
+  requestAnimationFrame(() => {
+    updateSidebarScrollAffordances();
+  });
 }
 
 function setTimeRanges(ranges) {
@@ -1717,6 +1774,7 @@ function resetAllFilters() {
   state.selectedTasks = [];
   state.selectedModels = [];
   state.selectedTags = [];
+  state.filterSearchQuery = "";
   state.timeRanges = [createEmptyTimeRange()];
   state.activeTimeRangeEditor = null;
   state.hideNoAccuracy = false;
@@ -2124,6 +2182,12 @@ function setupFilters() {
   els.modelSelect.addEventListener("change", () => {
     setModelSelectionFromSelect(getSelectValues(els.modelSelect));
   });
+
+  if (els.filterSearchInput) {
+    els.filterSearchInput.addEventListener("input", (event) => {
+      setFilterSearchQuery(event.target.value);
+    });
+  }
 
   els.sortSelect.addEventListener("change", (event) => {
     state.sortBy = event.target.value;
@@ -2688,23 +2752,25 @@ async function runWithLoadingNotice(message, loader) {
 }
 
 function renderTaskControls() {
-  const tasks = ["ALL", ...state.tasks];
+  const visibleTasks = getVisibleFilterOptions(state.tasks, state.selectedTasks);
+  const tasks = ["ALL", ...visibleTasks];
   syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task));
 
   state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
   syncTaskSelectValue();
 
-  renderChoiceChipList(els.taskChipList, state.tasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
+  renderChoiceChipList(els.taskChipList, visibleTasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
 }
 
 function renderModelControls() {
-  const models = ["ALL", ...state.models];
+  const visibleModels = getVisibleFilterOptions(state.models, state.selectedModels);
+  const models = ["ALL", ...visibleModels];
   syncSelectOptions(els.modelSelect, models, (model) => (model === "ALL" ? "All Models" : model));
 
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
   syncModelSelectValue();
 
-  renderChoiceChipList(els.modelChipList, state.models, state.selectedModels, "All Models", toggleModelSelection);
+  renderChoiceChipList(els.modelChipList, visibleModels, state.selectedModels, "All Models", toggleModelSelection);
 }
 
 function renderTagControls() {
@@ -6546,6 +6612,7 @@ function setupModalControls() {
 function render() {
   state.filtered = getFilteredRuns();
   els.hideNoAccuracy.checked = state.hideNoAccuracy;
+  renderFilterSearchControl();
   renderTaskControls();
   renderModelControls();
   renderTagControls();
