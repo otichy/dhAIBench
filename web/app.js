@@ -17,6 +17,10 @@ const pricingApi =
   window.DHAIBenchPricing && typeof window.DHAIBenchPricing.estimateRunCost === "function"
     ? window.DHAIBenchPricing
     : null;
+const metricsAggregationApi =
+  window.DHAIBenchMetricsAggregation && typeof window.DHAIBenchMetricsAggregation.buildBalancedAggregate === "function"
+    ? window.DHAIBenchMetricsAggregation
+    : null;
 
 const state = {
   runs: [],
@@ -2333,29 +2337,114 @@ function getRunMetricConfidence(run, metricKey) {
   return computeApproximateCi95(metricValue, sampleSize);
 }
 
-function getMeanMetricConfidence(runs, metricKey, meanValue) {
-  if (!supportsApproximateCi(metricKey)) {
+function combineApproximateConfidenceRows(ciRows, meanValue) {
+  const validRows = (Array.isArray(ciRows) ? ciRows : []).filter(
+    (row) => row && typeof row.low === "number" && typeof row.high === "number"
+  );
+  if (!validRows.length || typeof meanValue !== "number" || !Number.isFinite(meanValue)) {
     return null;
   }
-  const ciRows = runs
-    .map((run) => getRunMetricConfidence(run, metricKey))
-    .filter((row) => row && typeof row.low === "number" && typeof row.high === "number");
-  if (!ciRows.length) {
-    return null;
-  }
-  const standardErrorsSquared = ciRows.map((ci) => {
+  const standardErrorsSquared = validRows.map((ci) => {
     const margin = (ci.high - ci.low) / 2;
     const sePercent = margin / 1.96;
     const se = sePercent / 100;
     return se * se;
   });
-  const meanSe = Math.sqrt(standardErrorsSquared.reduce((sum, value) => sum + value, 0)) / ciRows.length;
+  const meanSe = Math.sqrt(standardErrorsSquared.reduce((sum, value) => sum + value, 0)) / validRows.length;
   const margin = 1.96 * meanSe * 100;
   return {
     low: Math.max(0, meanValue - margin),
     high: Math.min(100, meanValue + margin),
-    sampleSize: ciRows.reduce((sum, ci) => sum + (ci.sampleSize || 0), 0),
+    sampleSize: validRows.reduce((sum, ci) => sum + (ci.sampleSize || 0), 0),
   };
+}
+
+function getMeanMetricConfidence(runs, metricKey, meanValue) {
+  if (!supportsApproximateCi(metricKey)) {
+    return null;
+  }
+  return combineApproximateConfidenceRows(
+    runs.map((run) => getRunMetricConfidence(run, metricKey)),
+    meanValue
+  );
+}
+
+function averageFiniteNumbers(values) {
+  const numeric = (Array.isArray(values) ? values : []).filter(
+    (value) => typeof value === "number" && Number.isFinite(value)
+  );
+  if (!numeric.length) {
+    return null;
+  }
+  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+}
+
+function buildBalancedGroupAggregate(items, options = {}) {
+  const source = Array.isArray(items) ? items : [];
+  const getUnitKey = typeof options.getUnitKey === "function" ? options.getUnitKey : () => "";
+  const getMetricValue = typeof options.getMetricValue === "function" ? options.getMetricValue : () => null;
+  const getPriceValue = typeof options.getPriceValue === "function" ? options.getPriceValue : null;
+  const getConfidenceRows =
+    typeof options.getConfidenceRows === "function" ? options.getConfidenceRows : null;
+  const aggregate = metricsAggregationApi
+    ? metricsAggregationApi.buildBalancedAggregate(source, {
+        getUnitKey,
+        getMetricValue,
+        getPriceValue,
+      })
+    : (() => {
+        const fallbackUnits = new Map();
+        source.forEach((item) => {
+          const unitKey = asTrimmedString(getUnitKey(item));
+          if (!fallbackUnits.has(unitKey)) {
+            fallbackUnits.set(unitKey, []);
+          }
+          fallbackUnits.get(unitKey).push(item);
+        });
+        const units = Array.from(fallbackUnits.entries()).map(([key, unitItems]) => ({
+          key,
+          items: unitItems,
+          metricValue: averageFiniteNumbers(unitItems.map((item) => getMetricValue(item))),
+          priceValue: getPriceValue ? averageFiniteNumbers(unitItems.map((item) => getPriceValue(item))) : null,
+        }));
+        return {
+          units,
+          metricValue: averageFiniteNumbers(units.map((unit) => unit.metricValue)),
+          priceValue: getPriceValue ? averageFiniteNumbers(units.map((unit) => unit.priceValue)) : null,
+          unitCount: units.length,
+          pricedUnitCount: units.filter((unit) => typeof unit.priceValue === "number" && Number.isFinite(unit.priceValue))
+            .length,
+          itemCount: source.length,
+        };
+      })();
+
+  const units = aggregate.units.map((unit) => {
+    const ciRows = getConfidenceRows ? getConfidenceRows(unit.items) : [];
+    return {
+      ...unit,
+      ci: combineApproximateConfidenceRows(ciRows, unit.metricValue),
+    };
+  });
+
+  return {
+    ...aggregate,
+    units,
+    ci: combineApproximateConfidenceRows(
+      units.map((unit) => unit.ci),
+      aggregate.metricValue
+    ),
+  };
+}
+
+function formatGroupedAggregateCount(itemCount, unitCount, singularLabel, pluralLabel) {
+  const safeItemCount = typeof itemCount === "number" && Number.isFinite(itemCount) ? itemCount : 0;
+  const safeUnitCount = typeof unitCount === "number" && Number.isFinite(unitCount) ? unitCount : 0;
+  const unitLabel = safeUnitCount === 1 ? singularLabel : pluralLabel;
+  const runLabel = safeItemCount === 1 ? "run" : "runs";
+  if (safeItemCount === safeUnitCount) {
+    return `${formatNum(safeUnitCount, 0)} ${unitLabel}`;
+  }
+  return `${formatNum(safeUnitCount, 0)} ${unitLabel}, ${formatNum(safeItemCount, 0)} ${runLabel}`;
 }
 
 function formatCiRange(ci) {
@@ -2753,6 +2842,7 @@ function createBarRow(
   if (distribution && distribution.values && Array.isArray(distribution.values) && distribution.values.length && max > 0) {
     const distributionWrap = document.createElement("span");
     distributionWrap.className = "bar-distribution";
+    const distributionItemLabel = asTrimmedString(distribution.itemLabel) || "runs";
     const stats = getDistributionStats(distribution.values);
     if (stats) {
       const lowClamped = metricKey === "cohen_kappa"
@@ -2800,7 +2890,7 @@ function createBarRow(
         tick.style.left = `${normalizeTrackPosition(clamped) * 100}%`;
         distributionWrap.appendChild(tick);
       });
-      distributionWrap.title = `Runs: min ${formatMetric(metricKey, stats.min)}, median ${formatMetric(metricKey, stats.median)}, max ${formatMetric(metricKey, stats.max)}`;
+      distributionWrap.title = `${distributionItemLabel}: min ${formatMetric(metricKey, stats.min)}, median ${formatMetric(metricKey, stats.median)}, max ${formatMetric(metricKey, stats.max)}`;
       trackEl.appendChild(distributionWrap);
     }
   }
@@ -3046,6 +3136,10 @@ function renderLeaderboardChart(container, runs) {
           getGroupedRunLabel: (run) => `${run.task} / ${getRunModelDisplayName(run)}`,
           getGroupedRunContextLabel: (run) => formatTs(run.timestamp),
           getGroupContextLabel: () => "",
+          getAggregationUnitValue: null,
+          aggregationUnitSingular: "run",
+          aggregationUnitPlural: "runs",
+          distributionItemLabel: "runs",
         }
       : groupBy === "task"
       ? {
@@ -3057,6 +3151,10 @@ function renderLeaderboardChart(container, runs) {
           getGroupedRunLabel: (run) => getRunModelDisplayName(run),
           getGroupedRunContextLabel: () => "",
           getGroupContextLabel: (groupRuns) => (showContextLabels ? getConcatenatedModelLabel(groupRuns) : ""),
+          getAggregationUnitValue: (run) => asTrimmedString(run.model) || "Unknown model",
+          aggregationUnitSingular: "model",
+          aggregationUnitPlural: "models",
+          distributionItemLabel: "model means",
         }
       : {
           key: "model",
@@ -3070,6 +3168,10 @@ function renderLeaderboardChart(container, runs) {
           getGroupedRunLabel: (run) => getRunModelDisplayName(run),
           getGroupedRunContextLabel: (run) => (showContextLabels ? run.task : ""),
           getGroupContextLabel: (groupRuns) => (showContextLabels ? getConcatenatedTaskLabel(groupRuns) : ""),
+          getAggregationUnitValue: (run) => asTrimmedString(run.task) || "Unknown task",
+          aggregationUnitSingular: "task",
+          aggregationUnitPlural: "tasks",
+          distributionItemLabel: "task means",
         };
 
   if (!source.length) {
@@ -3119,15 +3221,21 @@ function renderLeaderboardChart(container, runs) {
       };
     }
 
-    const avgMetric =
-      runsSorted.reduce((sum, run) => sum + (getMetricValueForRun(run, metricKey) ?? 0), 0) / runsSorted.length;
+    const balancedAggregate = buildBalancedGroupAggregate(runsSorted, {
+      getUnitKey: grouping.getAggregationUnitValue,
+      getMetricValue: (run) => getMetricValueForRun(run, metricKey),
+      getConfidenceRows: (unitRuns) => unitRuns.map((run) => getRunMetricConfidence(run, metricKey)),
+    });
+    const avgMetric = balancedAggregate.metricValue;
     return {
       type: "group",
       key: `${grouping.key}:${groupValue}`,
       label: grouping.getGroupLabel(runsSorted[0], runsSorted),
       metricValue: avgMetric,
       avgMetric,
-      ci: showApproximateCi ? getMeanMetricConfidence(runsSorted, metricKey, avgMetric) : null,
+      ci: showApproximateCi ? balancedAggregate.ci : null,
+      distributionValues: balancedAggregate.units.map((unit) => unit.metricValue),
+      unitCount: balancedAggregate.unitCount,
       runs: runsSorted,
     };
   });
@@ -3157,10 +3265,8 @@ function renderLeaderboardChart(container, runs) {
       noGrouping
         ? "Rows are shown per run without aggregation."
         : groupBy === "task"
-        ? `Grouped task rows show average ${metricLabel.toLowerCase()} with run distribution overlays and the top model label.`
-        : groupedEntries.length > 1
-        ? "TOP is based on the best individual run; if hidden in a collapsed group, the marker appears on the group summary."
-        : `Grouped rows include run distribution overlays${showApproximateCi ? " with CI" : ""}.`;
+        ? `Grouped task rows first average repeated runs per model, then average across models. Distribution overlays show those model means${showApproximateCi ? " with CI" : ""}.`
+        : `Grouped model rows first average repeated runs per task, then average across tasks. Distribution overlays show those task means${showApproximateCi ? " with CI" : ""}.`;
     container.appendChild(groupedSummary);
   }
 
@@ -3220,12 +3326,15 @@ function renderLeaderboardChart(container, runs) {
     if (groupHasTopRun) {
       rowClass = "bar-row-top";
     }
-    const distributionValues = entry.runs
-      .map((run) => getMetricValueForRun(run, metricKey))
-      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    const distributionValues = Array.isArray(entry.distributionValues) ? entry.distributionValues : [];
     summary.appendChild(
       createBarRow(
-        `${entry.label} (${entry.runs.length})`,
+        `${entry.label} (${formatGroupedAggregateCount(
+          entry.runs.length,
+          entry.unitCount,
+          grouping.aggregationUnitSingular,
+          grouping.aggregationUnitPlural
+        )})`,
         entry.avgMetric || 0,
         maxScore,
         (value, ci) => `${formatMetric(metricKey, value)} avg${formatCiRange(ci)}`,
@@ -3239,7 +3348,9 @@ function renderLeaderboardChart(container, runs) {
           trackBadges: groupTrackBadges,
           trackBadgeColorMap: selectedTagColorMap,
           metricKey,
-          distribution: distributionValues.length ? { values: distributionValues } : null,
+          distribution: distributionValues.length
+            ? { values: distributionValues, itemLabel: grouping.distributionItemLabel }
+            : null,
         }
       )
     );
@@ -4543,9 +4654,26 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
       const averagePrice = knownPriceEntries.length
         ? knownPriceEntries.reduce((sum, entry) => sum + entry.priceValue, 0) / knownPriceEntries.length
         : null;
-      const averageMetric =
-        groupEntries.reduce((sum, entry) => sum + entry.metricValue, 0) / Math.max(groupEntries.length, 1);
       const groupRuns = groupEntries.map((entry) => entry.run);
+      const aggregationUnitKey =
+        noGrouping
+          ? null
+          : groupBy === "task"
+          ? (entry) => asTrimmedString(entry.run.model) || "Unknown model"
+          : (entry) => asTrimmedString(entry.run.task) || "Unknown task";
+      const balancedAggregate =
+        noGrouping
+          ? null
+          : buildBalancedGroupAggregate(groupEntries, {
+              getUnitKey: aggregationUnitKey,
+              getMetricValue: (entry) => entry.metricValue,
+              getPriceValue: (entry) => entry.priceValue,
+              getConfidenceRows: (unitEntries) =>
+                unitEntries.map((entry) => getRunMetricConfidence(entry.run, metricKey)),
+            });
+      const averageMetric = noGrouping
+        ? groupEntries.reduce((sum, entry) => sum + entry.metricValue, 0) / Math.max(groupEntries.length, 1)
+        : balancedAggregate.metricValue;
       const groupUnknownPriceCount = groupEntries.filter((entry) => !entry.hasKnownPrice).length;
       const sharedSuffix = groupBy === "model" ? getSharedRunEffortSuffix(groupRuns) : "";
       const label =
@@ -4558,17 +4686,20 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
         groupKey,
         label,
         count: groupEntries.length,
-        priceValue: averagePrice,
+        priceValue: noGrouping ? averagePrice : balancedAggregate.priceValue,
         hasKnownPrice: knownPriceEntries.length > 0,
         metricValue: averageMetric,
         ci:
           showApproximateCi && groupEntries.length === 1
             ? getRunMetricConfidence(representative.run, metricKey)
             : showApproximateCi
-            ? getMeanMetricConfidence(groupRuns, metricKey, averageMetric)
+            ? noGrouping
+              ? getMeanMetricConfidence(groupRuns, metricKey, averageMetric)
+              : balancedAggregate.ci
             : null,
         unknownPriceCount: groupUnknownPriceCount,
         representativeRun: representative.run,
+        unitCount: noGrouping ? groupEntries.length : balancedAggregate.unitCount,
         runs: groupRuns,
       };
     })
@@ -4841,7 +4972,14 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
         entry.label,
         priceLabelText,
         `${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`,
-        `${formatNum(entry.count, 0)} run(s)`,
+        noGrouping
+          ? `${formatNum(entry.count, 0)} run(s)`
+          : formatGroupedAggregateCount(
+              entry.count,
+              entry.unitCount,
+              groupBy === "task" ? "model" : "task",
+              groupBy === "task" ? "models" : "tasks"
+            ),
         priceDetailText,
       ]
         .filter(Boolean)
@@ -4921,7 +5059,14 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
       entry.count > 1
         ? `avg ${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`
         : `${formatMetric(metricKey, entry.metricValue)}${formatCiRange(entry.ci)}`,
-      `${entry.count} run(s)`,
+      noGrouping
+        ? `${entry.count} run(s)`
+        : formatGroupedAggregateCount(
+            entry.count,
+            entry.unitCount,
+            groupBy === "task" ? "model" : "task",
+            groupBy === "task" ? "models" : "tasks"
+          ),
       priceDetailText,
     ]
       .filter(Boolean)

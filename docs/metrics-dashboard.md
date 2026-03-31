@@ -136,7 +136,7 @@ Available tabs:
 The chart tab shows ranked runs or grouped summaries.
 
 - `Group By` supports `None`, `Model`, and `Task`
-- grouped rows show averages; expanding them reveals the underlying runs
+- grouped rows show averages; when grouped by model or task, repeated runs are averaged within each task/model first so each task/model contributes once to the grouped summary
 - a `TOP` badge marks the best individual run for the current metric when that distinction is relevant
 - `Best run per task` switches to a compact task-leader view
 - clicking a row opens the run-detail modal
@@ -155,6 +155,7 @@ The scatter tab has two x-axis modes:
 Shared controls include:
 
 - `Group By` for `None`, `Model`, and `Task`
+- grouped price points use the same balanced averaging rule as the chart tab when grouping by model or task
 - `CI` toggle when the metric supports approximate confidence intervals
 - `Labels` toggle for point labels
 - `Reset Zoom`
