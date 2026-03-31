@@ -1847,6 +1847,10 @@ select[multiple] option.is-selected {
   white-space: nowrap;
 }
 
+.bar-label-suffix {
+  font-weight: 400;
+}
+
 .bar-label-badges {
   display: inline-flex;
   align-items: center;

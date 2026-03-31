@@ -199,7 +199,57 @@ def resolve_user_path(path: str) -> str:
             suffix = normalized[len(LEGACY_DATA_ROOT_DIR) :].lstrip("/")
             mapped = os.path.join(DATA_ROOT_DIR, suffix) if suffix else DATA_ROOT_DIR
             return os.path.normpath(mapped)
+    if resolved and not os.path.isabs(resolved):
+        cwd_candidate = os.path.abspath(resolved)
+        if os.path.exists(cwd_candidate):
+            return os.path.normpath(cwd_candidate)
+        script_candidate = os.path.normpath(os.path.join(SCRIPT_DIR, resolved))
+        if os.path.exists(script_candidate):
+            return script_candidate
     return resolved
+
+
+def relativize_project_path(path: str) -> str:
+    """Return a normalized path relative to the project root (SCRIPT_DIR)."""
+    normalized = os.path.normpath(path)
+    try:
+        return os.path.relpath(normalized, SCRIPT_DIR).replace("\\", "/")
+    except ValueError:
+        return normalized.replace("\\", "/")
+
+
+def normalize_metrics_path_reference(path: Any, preferred_dir: Optional[str] = None) -> str:
+    """Store metrics-local file references as project-relative paths whenever possible."""
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", raw):
+        return raw
+
+    resolved = resolve_user_path(raw)
+    preferred_candidate = ""
+    base_name = os.path.basename(str(resolved or raw))
+    if preferred_dir and base_name:
+        preferred_candidate = os.path.normpath(os.path.join(preferred_dir, base_name))
+        if os.path.exists(preferred_candidate):
+            return relativize_project_path(preferred_candidate)
+
+    if resolved and os.path.isabs(resolved):
+        normalized_absolute = os.path.normpath(resolved)
+        if os.path.exists(normalized_absolute):
+            return relativize_project_path(normalized_absolute)
+        return relativize_project_path(normalized_absolute)
+
+    relative_candidate = os.path.normpath(resolved)
+    script_candidate = os.path.normpath(os.path.join(SCRIPT_DIR, relative_candidate))
+    if os.path.exists(script_candidate):
+        return relativize_project_path(script_candidate)
+
+    cwd_candidate = os.path.abspath(relative_candidate)
+    if os.path.exists(cwd_candidate):
+        return relativize_project_path(cwd_candidate)
+
+    return relative_candidate.replace("\\", "/")
 
 
 def build_artifact_path(output_csv_path: str, suffix: str, target_dir: str) -> str:
@@ -1457,7 +1507,18 @@ def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
         if dest == "system_prompt_b64":
             snapshot[dest] = None
             continue
-        snapshot[dest] = normalize_resume_value(dest, getattr(args, dest))
+        normalized_value = normalize_resume_value(dest, getattr(args, dest))
+        if dest == "input":
+            snapshot[dest] = [
+                normalized_path
+                for item in normalized_value
+                if (normalized_path := normalize_metrics_path_reference(item, DEFAULT_INPUT_DIR))
+            ]
+            continue
+        if dest == "labels":
+            snapshot[dest] = normalize_metrics_path_reference(normalized_value, DEFAULT_INPUT_DIR)
+            continue
+        snapshot[dest] = normalized_value
     raw_system_prompt = getattr(args, "system_prompt", None)
     encoded_system_prompt = getattr(args, "system_prompt_b64", None)
     if encoded_system_prompt:
@@ -2362,6 +2423,13 @@ def parse_run_metadata_from_metrics_path(metrics_output_path: str) -> Tuple[str,
     return task_name, provider, model_requested
 
 
+def infer_output_csv_path_from_metrics_path(metrics_output_path: str) -> str:
+    """Infer the corresponding output CSV artifact path from a metrics artifact path."""
+    base_name = os.path.splitext(os.path.basename(str(metrics_output_path or "")))[0]
+    output_base = re.sub(r"(?:__metrics|_metrics)$", "", base_name, flags=re.IGNORECASE)
+    return os.path.join(DEFAULT_OUTPUT_DIR, f"{output_base}.csv")
+
+
 def normalize_metrics_tags_value(raw_tags: Any) -> str:
     """Normalize metrics tags into a semicolon-delimited string."""
     if isinstance(raw_tags, list):
@@ -2418,12 +2486,38 @@ def ensure_metrics_metadata_fields(metrics: Dict[str, Any], metrics_output_path:
     run_config_raw = payload.get("run_config")
     run_config = copy.deepcopy(run_config_raw) if isinstance(run_config_raw, dict) else {}
 
-    source_input_csv = str(payload.get("source_input_csv") or "").strip()
+    source_input_csv = normalize_metrics_path_reference(payload.get("source_input_csv"), DEFAULT_INPUT_DIR)
+    payload["source_input_csv"] = source_input_csv
     if source_input_csv and is_missing_resume_value(normalize_resume_value("input", run_config.get("input"))):
         run_config["input"] = [source_input_csv]
-    source_labels_csv = str(payload.get("source_labels_csv") or "").strip()
+    else:
+        normalized_inputs = [
+            normalized_path
+            for item in normalize_resume_value("input", run_config.get("input"))
+            if (normalized_path := normalize_metrics_path_reference(item, DEFAULT_INPUT_DIR))
+        ]
+        if normalized_inputs:
+            run_config["input"] = normalized_inputs
+
+    source_output_csv = normalize_metrics_path_reference(payload.get("source_output_csv"), DEFAULT_OUTPUT_DIR)
+    inferred_output_csv = normalize_metrics_path_reference(
+        infer_output_csv_path_from_metrics_path(metrics_output_path),
+        DEFAULT_OUTPUT_DIR,
+    )
+    if inferred_output_csv and os.path.exists(os.path.join(SCRIPT_DIR, inferred_output_csv)):
+        normalized_output_target = os.path.normpath(os.path.join(SCRIPT_DIR, source_output_csv))
+        if not source_output_csv or not os.path.exists(normalized_output_target):
+            source_output_csv = inferred_output_csv
+    payload["source_output_csv"] = source_output_csv
+
+    source_labels_csv = normalize_metrics_path_reference(payload.get("source_labels_csv"), DEFAULT_INPUT_DIR)
+    payload["source_labels_csv"] = source_labels_csv
     if source_labels_csv and is_missing_resume_value(run_config.get("labels")):
         run_config["labels"] = source_labels_csv
+    else:
+        normalized_labels = normalize_metrics_path_reference(run_config.get("labels"), DEFAULT_INPUT_DIR)
+        if normalized_labels:
+            run_config["labels"] = normalized_labels
 
     task_name_value = select_metrics_metadata_value(
         "task_name",
@@ -7929,10 +8023,12 @@ def process_dataset(
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
         "run_config": copy.deepcopy(run_config_snapshot),
-        "source_input_csv": os.path.abspath(input_path),
-        "source_output_csv": os.path.abspath(output_path),
+        "source_input_csv": normalize_metrics_path_reference(input_path, DEFAULT_INPUT_DIR),
+        "source_output_csv": normalize_metrics_path_reference(output_path, DEFAULT_OUTPUT_DIR),
         "source_labels_csv": (
-            os.path.abspath(resolve_user_path(args.labels)) if getattr(args, "labels", None) else ""
+            normalize_metrics_path_reference(resolve_user_path(args.labels), DEFAULT_INPUT_DIR)
+            if getattr(args, "labels", None)
+            else ""
         ),
         "task_name": str(getattr(args, "task_name", "") or "").strip(),
         "prompt_layout": args.prompt_layout,
@@ -8231,17 +8327,19 @@ def process_metrics_only_output(
     metrics: Dict[str, Any] = {
         "model_details": run_model_details,
         "run_config": copy.deepcopy(recovered_run_config) if recovered_run_config else {},
-        "source_input_csv": str(
+        "source_input_csv": normalize_metrics_path_reference(
             (existing_metrics_payload or {}).get("source_input_csv")
             or recovered_input_path
-            or ""
-        ).strip(),
-        "source_output_csv": os.path.abspath(resolved_output),
-        "source_labels_csv": str(
+            or "",
+            DEFAULT_INPUT_DIR,
+        ),
+        "source_output_csv": normalize_metrics_path_reference(resolved_output, DEFAULT_OUTPUT_DIR),
+        "source_labels_csv": normalize_metrics_path_reference(
             (existing_metrics_payload or {}).get("source_labels_csv")
             or (recovered_run_config or {}).get("labels")
-            or ""
-        ).strip(),
+            or "",
+            DEFAULT_INPUT_DIR,
+        ),
         "task_name": task_name_value,
         "prompt_layout": prompt_layout_value,
         "task_description": task_description_value,
@@ -8251,7 +8349,6 @@ def process_metrics_only_output(
         "usage_metadata_summary": usage_metadata_summary,
         "token_usage_totals": token_usage_totals,
         "mode": "metrics_only",
-        "source_output_csv": os.path.abspath(resolved_output),
         "truth_label_count": len(evaluated_truths),
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),

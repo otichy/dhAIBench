@@ -91,6 +91,7 @@ def _isolated_data_dirs(tmpdir: str):
     for path in (input_dir, output_dir, metrics_dir, logs_dir):
         os.makedirs(path, exist_ok=True)
     with (
+        patch.object(ba, "SCRIPT_DIR", tmpdir),
         patch.object(ba, "DATA_ROOT_DIR", data_root),
         patch.object(ba, "DEFAULT_INPUT_DIR", input_dir),
         patch.object(ba, "DEFAULT_OUTPUT_DIR", output_dir),
@@ -212,8 +213,28 @@ class MultithreadSmokeTests(unittest.TestCase):
                 self.assertNotIn("accuracy", metrics_payload)
                 self.assertEqual(metrics_payload.get("prediction_count"), len(ids))
                 self.assertEqual(metrics_payload.get("truth_label_count"), 0)
+                source_input_csv = str(metrics_payload.get("source_input_csv") or "")
+                source_output_csv = str(metrics_payload.get("source_output_csv") or "")
+                self.assertFalse(os.path.isabs(source_input_csv))
+                self.assertFalse(os.path.isabs(source_output_csv))
+                self.assertEqual(
+                    os.path.normpath(os.path.join(ba.SCRIPT_DIR, source_input_csv)),
+                    os.path.normpath(input_path),
+                )
+                self.assertEqual(
+                    os.path.normpath(os.path.join(ba.SCRIPT_DIR, source_output_csv)),
+                    os.path.normpath(output_path),
+                )
                 run_config = metrics_payload.get("run_config")
                 self.assertIsInstance(run_config, dict)
+                run_config_inputs = run_config.get("input")
+                self.assertIsInstance(run_config_inputs, list)
+                self.assertEqual(len(run_config_inputs), 1)
+                self.assertFalse(os.path.isabs(run_config_inputs[0]))
+                self.assertEqual(
+                    os.path.normpath(os.path.join(ba.SCRIPT_DIR, run_config_inputs[0])),
+                    os.path.normpath(input_path),
+                )
                 self.assertEqual(run_config.get("task_name"), "output")
                 self.assertEqual(run_config.get("task_description"), "")
                 self.assertEqual(run_config.get("tags"), "")

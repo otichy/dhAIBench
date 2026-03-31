@@ -2836,9 +2836,10 @@ function createBarRow(
   const fillEl = node.querySelector(".bar-fill");
   const valueEl = node.querySelector(".bar-value");
   const labelText = asTrimmedString(label);
+  const labelSuffix = asTrimmedString(options.labelSuffix);
   const metricKey = asTrimmedString(options.metricKey);
   labelEl.textContent = labelText;
-  labelEl.title = label;
+  labelEl.title = `${labelText}${labelSuffix}`;
 
   const rowClass = asTrimmedString(options.rowClass);
   if (rowClass) {
@@ -2862,12 +2863,20 @@ function createBarRow(
   }
 
   const badges = Array.isArray(options.badges) ? options.badges.filter((badge) => asTrimmedString(badge)) : [];
-  if (badges.length) {
+  if (badges.length || labelSuffix) {
     labelEl.textContent = "";
     const textNode = document.createElement("span");
     textNode.className = "bar-label-text";
     textNode.textContent = labelText;
     labelEl.appendChild(textNode);
+    if (labelSuffix) {
+      const suffixNode = document.createElement("span");
+      suffixNode.className = "bar-label-suffix";
+      suffixNode.textContent = labelSuffix;
+      labelEl.appendChild(suffixNode);
+    }
+  }
+  if (badges.length) {
     const badgesWrap = document.createElement("span");
     badgesWrap.className = "bar-label-badges";
     badges.forEach((badge) => {
@@ -3395,12 +3404,7 @@ function renderLeaderboardChart(container, runs) {
     const distributionValues = Array.isArray(entry.distributionValues) ? entry.distributionValues : [];
     summary.appendChild(
       createBarRow(
-        `${entry.label} (${formatGroupedAggregateCount(
-          entry.runs.length,
-          entry.unitCount,
-          grouping.aggregationUnitSingular,
-          grouping.aggregationUnitPlural
-        )})`,
+        entry.label,
         entry.avgMetric || 0,
         maxScore,
         (value, ci) => `${formatMetric(metricKey, value)} avg${formatCiRange(ci)}`,
@@ -3414,6 +3418,12 @@ function renderLeaderboardChart(container, runs) {
           trackBadges: groupTrackBadges,
           trackBadgeColorMap: selectedTagColorMap,
           metricKey,
+          labelSuffix: ` (${formatGroupedAggregateCount(
+            entry.runs.length,
+            entry.unitCount,
+            grouping.aggregationUnitSingular,
+            grouping.aggregationUnitPlural
+          )})`,
           distribution: distributionValues.length
             ? { values: distributionValues, itemLabel: grouping.distributionItemLabel }
             : null,

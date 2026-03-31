@@ -30,6 +30,7 @@ def _isolated_data_dirs(tmpdir: str):
     for path in (input_dir, output_dir, metrics_dir, logs_dir):
         os.makedirs(path, exist_ok=True)
     with (
+        patch.object(ba, "SCRIPT_DIR", tmpdir),
         patch.object(ba, "DATA_ROOT_DIR", data_root),
         patch.object(ba, "DEFAULT_INPUT_DIR", input_dir),
         patch.object(ba, "DEFAULT_OUTPUT_DIR", output_dir),

@@ -36,6 +36,42 @@ class PathResolutionTests(unittest.TestCase):
             self.assertTrue(output_path.startswith(os.path.join(tmpdir, "output")))
             self.assertTrue(output_path.endswith(".csv"))
 
+    def test_resolve_user_path_finds_existing_script_relative_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script_dir = os.path.join(tmpdir, "repo")
+            target_dir = os.path.join(script_dir, "nested")
+            os.makedirs(target_dir, exist_ok=True)
+            target_path = os.path.join(target_dir, "examples.csv")
+            with open(target_path, "w", encoding="utf-8") as handle:
+                handle.write("ID;node\n1;test\n")
+
+            with patch.object(ba, "SCRIPT_DIR", script_dir):
+                resolved = ba.resolve_user_path("nested/examples.csv")
+
+            self.assertEqual(resolved, os.path.normpath(target_path))
+
+    def test_normalize_metrics_path_reference_prefers_repo_data_path_for_legacy_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script_dir = os.path.join(tmpdir, "repo")
+            data_root = os.path.join(script_dir, "data")
+            input_dir = os.path.join(data_root, "input")
+            os.makedirs(input_dir, exist_ok=True)
+            target_path = os.path.join(input_dir, "examples.csv")
+            with open(target_path, "w", encoding="utf-8") as handle:
+                handle.write("ID;node\n1;test\n")
+
+            with (
+                patch.object(ba, "SCRIPT_DIR", script_dir),
+                patch.object(ba, "DATA_ROOT_DIR", data_root),
+                patch.object(ba, "DEFAULT_INPUT_DIR", input_dir),
+            ):
+                normalized = ba.normalize_metrics_path_reference(
+                    "/home/ondrej/dhAIBench/data/input/examples.csv",
+                    ba.DEFAULT_INPUT_DIR,
+                )
+
+            self.assertEqual(normalized, "data/input/examples.csv")
+
 
 if __name__ == "__main__":
     unittest.main()
