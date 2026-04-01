@@ -14,6 +14,7 @@ import base64
 import codecs
 import copy
 import csv
+import hashlib
 import json
 import logging
 import math
@@ -100,6 +101,9 @@ DEFAULT_TIMEOUT_PROBE_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "timeout_pro
 DEFAULT_TIMEOUT_PROBE_SAMPLE_SIZE = 60
 DEFAULT_TIMEOUT_PROBE_REPEATS = 2
 TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS = 120.0
+AGREEMENT_SUMMARY_FILENAME = "agreement_summary.json"
+AGREEMENT_SUMMARY_VERSION = 1
+AGREEMENT_CROSS_MODEL_POLICIES: Tuple[str, ...] = ("latest", "best_accuracy")
 DEFAULT_SYSTEM_PROMPT = "You are a linguistic classifier that excels at semantic disambiguation."
 RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
 OLD_RUN_BASENAME_RE = re.compile(
@@ -4283,6 +4287,579 @@ def load_existing_output_predictions(
     return existing_fieldnames, predictions, total_prompt_tokens, total_completion_tokens, total_reported_tokens
 
 
+@dataclass
+class AgreementRunSnapshot:
+    """Comparable run data used to build aggregate agreement summaries."""
+
+    run_stem: str
+    metrics_file_name: str
+    task_name: str
+    task_fingerprint: str
+    normalized_tag_key: str
+    tags_display: str
+    provider: str
+    model: str
+    model_key: str
+    timestamp: str
+    timestamp_sort_key: float
+    accuracy: Optional[float]
+    prediction_by_id: Dict[str, str]
+    rated_item_count: int
+
+
+def metrics_path_to_run_stem(path: str) -> str:
+    """Return the canonical run stem for a metrics artifact path."""
+    base_name = os.path.splitext(os.path.basename(path))[0]
+    if base_name.endswith("__metrics"):
+        return base_name[: -len("__metrics")]
+    if base_name.endswith("_metrics"):
+        return base_name[: -len("_metrics")]
+    return base_name
+
+
+def parse_metrics_timestamp_sort_key(raw_timestamp: Any, run_stem: str) -> float:
+    """Convert run timestamps into a sortable numeric key."""
+    text = str(raw_timestamp or "").strip()
+    if text:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+
+    parsed = parse_run_basename(run_stem)
+    timestamp_tag = str((parsed or {}).get("timestamp") or "").strip()
+    if timestamp_tag:
+        try:
+            return datetime.strptime(timestamp_tag, "%Y-%m-%d-%H-%M").replace(
+                tzinfo=timezone.utc
+            ).timestamp()
+        except ValueError:
+            pass
+    return float("-inf")
+
+
+def parse_metrics_tags_for_agreement(raw_tags: Any) -> List[str]:
+    """Split a metrics tags value into trimmed, deduplicated display tags."""
+    normalized = normalize_metrics_tags_value(raw_tags)
+    if not normalized:
+        return []
+
+    tags: List[str] = []
+    seen: set[str] = set()
+    for part in normalized.split(";"):
+        cleaned = str(part or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(cleaned)
+    return tags
+
+
+def build_agreement_normalized_tag_key(raw_tags: Any) -> str:
+    """Create a stable comparable tag key for agreement grouping."""
+    normalized_tags = sorted(tag.casefold() for tag in parse_metrics_tags_for_agreement(raw_tags))
+    return ";".join(normalized_tags)
+
+
+def is_missing_agreement_label(label: Optional[str]) -> bool:
+    """Treat empty and 'unclassified' labels as missing ratings for agreement."""
+    cleaned = str(label or "").strip()
+    return not cleaned or is_unclassified_prediction_label(cleaned)
+
+
+def load_output_agreement_snapshot(output_path: str) -> Tuple[str, Dict[str, str], int]:
+    """Load privacy-safe agreement inputs from a predictions CSV."""
+    with open(output_path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter=";")
+        fieldnames = [name for name in (reader.fieldnames or []) if name]
+        if not fieldnames:
+            raise ValueError(f"Output CSV {output_path} has no header.")
+
+        column_lookup = build_case_insensitive_column_lookup(fieldnames, output_path)
+        required_fields = {"ID", "prediction"}
+        missing = sorted(
+            name for name in required_fields if resolve_column_name(column_lookup, name) is None
+        )
+        if missing:
+            raise ValueError(
+                f"Cannot build agreement snapshot from {output_path}: missing required output columns {sorted(missing)}."
+            )
+
+        id_column = resolve_column_name(column_lookup, "ID")
+        prediction_column = resolve_column_name(column_lookup, "prediction")
+        left_context_column = resolve_column_name(column_lookup, "leftContext")
+        node_column = resolve_column_name(column_lookup, "node")
+        right_context_column = resolve_column_name(column_lookup, "rightContext")
+        truth_column = resolve_column_name(column_lookup, "truth")
+        info_column = resolve_column_name(column_lookup, "info")
+
+        fingerprint_lines: List[str] = []
+        prediction_by_id: Dict[str, str] = {}
+
+        for row_index, row in enumerate(reader, start=2):
+            example_id = row_text_value(row, id_column)
+            if not example_id:
+                logging.warning(
+                    "Ignoring agreement row %d in %s because ID is empty.",
+                    row_index,
+                    output_path,
+                )
+                continue
+
+            fingerprint_payload = {
+                "id": example_id,
+                "leftContext": row_text_value(row, left_context_column),
+                "node": row_text_value(row, node_column),
+                "rightContext": row_text_value(row, right_context_column),
+                "truth": row_text_value(row, truth_column),
+                "info": row_text_value(row, info_column),
+            }
+            fingerprint_lines.append(
+                json.dumps(
+                    fingerprint_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+
+            label = row_text_value(row, prediction_column)
+            if is_missing_agreement_label(label):
+                continue
+            prediction_by_id[example_id] = label
+
+    hasher = hashlib.sha256()
+    hasher.update(b"dhaibench-agreement-v1\n")
+    for serialized_row in sorted(fingerprint_lines):
+        hasher.update(serialized_row.encode("utf-8"))
+        hasher.update(b"\n")
+    return hasher.hexdigest(), prediction_by_id, len(fingerprint_lines)
+
+
+def load_agreement_run_snapshot(metrics_path: str) -> Optional[AgreementRunSnapshot]:
+    """Load one run's comparable data for the collection-level agreement refresh."""
+    payload = load_metrics_payload(metrics_path)
+    if not isinstance(payload, dict):
+        return None
+
+    normalized_metrics = ensure_metrics_metadata_fields(copy.deepcopy(payload), metrics_path)
+    run_config = normalized_metrics.get("run_config") if isinstance(normalized_metrics.get("run_config"), dict) else {}
+    model_details = (
+        normalized_metrics.get("model_details")
+        if isinstance(normalized_metrics.get("model_details"), dict)
+        else {}
+    )
+    run_stem = metrics_path_to_run_stem(metrics_path)
+    source_output_csv = normalize_metrics_path_reference(
+        normalized_metrics.get("source_output_csv"),
+        DEFAULT_OUTPUT_DIR,
+    )
+    if not source_output_csv:
+        source_output_csv = normalize_metrics_path_reference(
+            infer_output_csv_path_from_metrics_path(metrics_path),
+            DEFAULT_OUTPUT_DIR,
+        )
+    if not source_output_csv:
+        logging.warning(
+            "Skipping agreement refresh input for %s because no output CSV could be inferred.",
+            os.path.basename(metrics_path),
+        )
+        return None
+
+    resolved_output = os.path.normpath(os.path.join(SCRIPT_DIR, source_output_csv))
+    if not os.path.exists(resolved_output):
+        logging.warning(
+            "Skipping agreement refresh input for %s because %s is missing.",
+            os.path.basename(metrics_path),
+            source_output_csv,
+        )
+        return None
+
+    task_fingerprint, prediction_by_id, rated_item_count = load_output_agreement_snapshot(resolved_output)
+    task_name = str(run_config.get("task_name") or "").strip()
+    if not task_name:
+        task_name, _, _ = parse_run_metadata_from_metrics_path(metrics_path)
+    provider = str(model_details.get("provider") or "").strip()
+    model = (
+        str(model_details.get("model_requested") or "").strip()
+        or str(model_details.get("model_for_requests") or "").strip()
+    )
+    parsed_basename = parse_run_basename(run_stem) or {}
+    if not provider:
+        provider = str(parsed_basename.get("provider") or "").strip()
+    if not model:
+        model = str(parsed_basename.get("model") or "").strip()
+    tags_display = "; ".join(parse_metrics_tags_for_agreement(run_config.get("tags")))
+    return AgreementRunSnapshot(
+        run_stem=run_stem,
+        metrics_file_name=os.path.basename(metrics_path),
+        task_name=task_name,
+        task_fingerprint=task_fingerprint,
+        normalized_tag_key=build_agreement_normalized_tag_key(run_config.get("tags")),
+        tags_display=tags_display,
+        provider=provider,
+        model=model,
+        model_key=f"{provider}::{model}",
+        timestamp=str(normalized_metrics.get("first_prompt_timestamp") or "").strip(),
+        timestamp_sort_key=parse_metrics_timestamp_sort_key(
+            normalized_metrics.get("first_prompt_timestamp"),
+            run_stem,
+        ),
+        accuracy=parse_optional_float(normalized_metrics.get("accuracy")),
+        prediction_by_id=prediction_by_id,
+        rated_item_count=rated_item_count,
+    )
+
+
+def compute_nominal_krippendorff_alpha(
+    prediction_maps: Iterable[Dict[str, str]],
+) -> Dict[str, Any]:
+    """Compute nominal Krippendorff's alpha across runs/models with missing ratings allowed."""
+    source = [item for item in prediction_maps if isinstance(item, dict)]
+    all_item_ids = sorted({example_id for item in source for example_id in item})
+    if not source or not all_item_ids:
+        return {
+            "alpha": None,
+            "pairable_item_count": 0,
+            "rated_item_count": 0,
+            "fully_shared_item_count": 0,
+            "category_count": 0,
+        }
+
+    observed_disagreement = 0.0
+    total_pairable_ratings = 0
+    pairable_item_count = 0
+    rated_item_count = 0
+    fully_shared_item_count = 0
+    category_totals: Dict[str, int] = defaultdict(int)
+
+    for example_id in all_item_ids:
+        counts: Dict[str, int] = defaultdict(int)
+        raters_for_item = 0
+        for prediction_by_id in source:
+            label = prediction_by_id.get(example_id)
+            if is_missing_agreement_label(label):
+                continue
+            counts[label] += 1
+            raters_for_item += 1
+        if raters_for_item <= 0:
+            continue
+        rated_item_count += 1
+        if raters_for_item == len(source):
+            fully_shared_item_count += 1
+        if raters_for_item < 2:
+            continue
+
+        pairable_item_count += 1
+        total_pairable_ratings += raters_for_item
+        squared_sum = 0
+        for label, count in counts.items():
+            squared_sum += count * count
+            category_totals[label] += count
+        observed_disagreement += ((raters_for_item * raters_for_item) - squared_sum) / (
+            raters_for_item - 1
+        )
+
+    if pairable_item_count <= 0 or total_pairable_ratings <= 1:
+        return {
+            "alpha": None,
+            "pairable_item_count": pairable_item_count,
+            "rated_item_count": rated_item_count,
+            "fully_shared_item_count": fully_shared_item_count,
+            "category_count": len(category_totals),
+        }
+
+    expected_squared_sum = sum(count * count for count in category_totals.values())
+    expected_disagreement = (
+        (total_pairable_ratings * total_pairable_ratings) - expected_squared_sum
+    ) / (total_pairable_ratings - 1)
+
+    if math.isclose(expected_disagreement, 0.0, abs_tol=1e-12):
+        alpha = 1.0 if math.isclose(observed_disagreement, 0.0, abs_tol=1e-12) else None
+    else:
+        alpha = 1.0 - (observed_disagreement / expected_disagreement)
+
+    return {
+        "alpha": alpha,
+        "pairable_item_count": pairable_item_count,
+        "rated_item_count": rated_item_count,
+        "fully_shared_item_count": fully_shared_item_count,
+        "category_count": len(category_totals),
+    }
+
+
+def choose_latest_agreement_run(runs: List[AgreementRunSnapshot]) -> AgreementRunSnapshot:
+    """Choose the latest comparable run for a provider/model bucket."""
+    return max(
+        runs,
+        key=lambda item: (
+            item.timestamp_sort_key,
+            item.timestamp,
+            item.run_stem,
+        ),
+    )
+
+
+def choose_best_accuracy_agreement_run(runs: List[AgreementRunSnapshot]) -> AgreementRunSnapshot:
+    """Choose the highest-accuracy run for a provider/model bucket, falling back to latest."""
+    best_accuracy_runs = [item for item in runs if item.accuracy is not None]
+    if best_accuracy_runs:
+        return max(
+            best_accuracy_runs,
+            key=lambda item: (
+                item.accuracy if item.accuracy is not None else float("-inf"),
+                item.timestamp_sort_key,
+                item.timestamp,
+                item.run_stem,
+            ),
+        )
+    return choose_latest_agreement_run(runs)
+
+
+def get_agreement_group_task_name(runs: List[AgreementRunSnapshot]) -> str:
+    """Prefer the newest non-empty task name seen inside a comparable group."""
+    candidates = [item for item in runs if item.task_name]
+    if not candidates:
+        return ""
+    return max(
+        candidates,
+        key=lambda item: (
+            item.timestamp_sort_key,
+            item.timestamp,
+            len(item.task_name),
+            item.run_stem,
+        ),
+    ).task_name
+
+
+def get_agreement_group_tags_display(runs: List[AgreementRunSnapshot]) -> str:
+    """Prefer the newest non-empty display tag string for the comparable group."""
+    candidates = [item for item in runs if item.tags_display]
+    if not candidates:
+        return ""
+    return max(
+        candidates,
+        key=lambda item: (
+            item.timestamp_sort_key,
+            item.timestamp,
+            len(item.tags_display),
+            item.run_stem,
+        ),
+    ).tags_display
+
+
+def build_repeat_agreement_entry(
+    comparable_key: Tuple[str, str],
+    model_runs: List[AgreementRunSnapshot],
+) -> Optional[Dict[str, Any]]:
+    """Build a repeat-run agreement entry for one provider/model inside a comparable task group."""
+    if len(model_runs) < 2:
+        return None
+
+    alpha_stats = compute_nominal_krippendorff_alpha(
+        [item.prediction_by_id for item in model_runs]
+    )
+    if alpha_stats.get("alpha") is None:
+        return None
+
+    task_fingerprint, normalized_tag_key = comparable_key
+    ordered_runs = sorted(
+        model_runs,
+        key=lambda item: (item.timestamp_sort_key, item.timestamp, item.run_stem),
+        reverse=True,
+    )
+    group_id_seed = (
+        f"repeat::{task_fingerprint}::{normalized_tag_key}::{ordered_runs[0].provider}::{ordered_runs[0].model}"
+    )
+    return {
+        "group_id": hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16],
+        "task_fingerprint": task_fingerprint,
+        "normalized_tag_key": normalized_tag_key,
+        "task_name_display": get_agreement_group_task_name(ordered_runs),
+        "task_names_seen": sorted({item.task_name for item in ordered_runs if item.task_name}),
+        "tags_display": get_agreement_group_tags_display(ordered_runs),
+        "provider": ordered_runs[0].provider,
+        "model": ordered_runs[0].model,
+        "run_count": len(ordered_runs),
+        "alpha_nominal": alpha_stats.get("alpha"),
+        "pairable_item_count": alpha_stats.get("pairable_item_count"),
+        "rated_item_count": alpha_stats.get("rated_item_count"),
+        "fully_shared_item_count": alpha_stats.get("fully_shared_item_count"),
+        "category_count": alpha_stats.get("category_count"),
+        "run_stems": [item.run_stem for item in ordered_runs],
+        "metrics_files": [item.metrics_file_name for item in ordered_runs],
+        "timestamps": [item.timestamp for item in ordered_runs],
+        "accuracies": [item.accuracy for item in ordered_runs],
+    }
+
+
+def build_cross_model_agreement_entry(
+    comparable_key: Tuple[str, str],
+    comparable_runs: List[AgreementRunSnapshot],
+    policy: str,
+) -> Optional[Dict[str, Any]]:
+    """Build a cross-model agreement entry with one representative run per provider/model."""
+    if policy not in AGREEMENT_CROSS_MODEL_POLICIES:
+        return None
+
+    runs_by_model: Dict[str, List[AgreementRunSnapshot]] = defaultdict(list)
+    for item in comparable_runs:
+        runs_by_model[item.model_key].append(item)
+
+    if len(runs_by_model) < 2:
+        return None
+
+    representatives: List[AgreementRunSnapshot] = []
+    for model_runs in runs_by_model.values():
+        if policy == "best_accuracy":
+            representatives.append(choose_best_accuracy_agreement_run(model_runs))
+        else:
+            representatives.append(choose_latest_agreement_run(model_runs))
+
+    alpha_stats = compute_nominal_krippendorff_alpha(
+        [item.prediction_by_id for item in representatives]
+    )
+    if alpha_stats.get("alpha") is None:
+        return None
+
+    ordered_reps = sorted(
+        representatives,
+        key=lambda item: (
+            item.provider.casefold(),
+            item.model.casefold(),
+            -item.timestamp_sort_key,
+            item.run_stem,
+        ),
+    )
+    task_fingerprint, normalized_tag_key = comparable_key
+    group_id_seed = f"cross::{policy}::{task_fingerprint}::{normalized_tag_key}"
+    return {
+        "group_id": hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16],
+        "representative_policy": policy,
+        "task_fingerprint": task_fingerprint,
+        "normalized_tag_key": normalized_tag_key,
+        "task_name_display": get_agreement_group_task_name(comparable_runs),
+        "task_names_seen": sorted({item.task_name for item in comparable_runs if item.task_name}),
+        "tags_display": get_agreement_group_tags_display(comparable_runs),
+        "model_count": len(ordered_reps),
+        "alpha_nominal": alpha_stats.get("alpha"),
+        "pairable_item_count": alpha_stats.get("pairable_item_count"),
+        "rated_item_count": alpha_stats.get("rated_item_count"),
+        "fully_shared_item_count": alpha_stats.get("fully_shared_item_count"),
+        "category_count": alpha_stats.get("category_count"),
+        "representative_run_stems": [item.run_stem for item in ordered_reps],
+        "representatives": [
+            {
+                "provider": item.provider,
+                "model": item.model,
+                "run_stem": item.run_stem,
+                "metrics_file": item.metrics_file_name,
+                "timestamp": item.timestamp,
+                "accuracy": item.accuracy,
+            }
+            for item in ordered_reps
+        ],
+    }
+
+
+def build_agreement_summary_payload(runs: List[AgreementRunSnapshot]) -> Dict[str, Any]:
+    """Aggregate repeat-run and cross-model agreement summaries for the dashboard."""
+    comparable_groups: Dict[Tuple[str, str], List[AgreementRunSnapshot]] = defaultdict(list)
+    for item in runs:
+        comparable_groups[(item.task_fingerprint, item.normalized_tag_key)].append(item)
+
+    repeat_groups: List[Dict[str, Any]] = []
+    cross_model_groups: Dict[str, List[Dict[str, Any]]] = {
+        policy: [] for policy in AGREEMENT_CROSS_MODEL_POLICIES
+    }
+
+    for comparable_key, comparable_runs in comparable_groups.items():
+        runs_by_model: Dict[str, List[AgreementRunSnapshot]] = defaultdict(list)
+        for item in comparable_runs:
+            runs_by_model[item.model_key].append(item)
+
+        for model_runs in runs_by_model.values():
+            repeat_entry = build_repeat_agreement_entry(comparable_key, model_runs)
+            if repeat_entry is not None:
+                repeat_groups.append(repeat_entry)
+
+        for policy in AGREEMENT_CROSS_MODEL_POLICIES:
+            cross_entry = build_cross_model_agreement_entry(comparable_key, comparable_runs, policy)
+            if cross_entry is not None:
+                cross_model_groups[policy].append(cross_entry)
+
+    repeat_groups.sort(
+        key=lambda item: (
+            -(
+                item.get("alpha_nominal")
+                if item.get("alpha_nominal") is not None
+                else float("-inf")
+            ),
+            str(item.get("task_name_display") or "").casefold(),
+            str(item.get("provider") or "").casefold(),
+            str(item.get("model") or "").casefold(),
+        )
+    )
+    for policy in AGREEMENT_CROSS_MODEL_POLICIES:
+        cross_model_groups[policy].sort(
+            key=lambda item: (
+                -(
+                    item.get("alpha_nominal")
+                    if item.get("alpha_nominal") is not None
+                    else float("-inf")
+                ),
+                str(item.get("task_name_display") or "").casefold(),
+                str(item.get("tags_display") or "").casefold(),
+            )
+        )
+
+    return {
+        "version": AGREEMENT_SUMMARY_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_count": len(runs),
+        "repeat_groups": repeat_groups,
+        "cross_model": cross_model_groups,
+    }
+
+
+def refresh_agreement_summary() -> str:
+    """Rebuild the published agreement summary from all available metrics/output artifacts."""
+    ensure_data_layout()
+    snapshots: List[AgreementRunSnapshot] = []
+    for entry in sorted(os.listdir(DEFAULT_METRICS_DIR)):
+        if not entry.lower().endswith("_metrics.json"):
+            continue
+        metrics_path = os.path.join(DEFAULT_METRICS_DIR, entry)
+        snapshot = load_agreement_run_snapshot(metrics_path)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+
+    summary_payload = build_agreement_summary_payload(snapshots)
+    summary_path = os.path.join(DEFAULT_METRICS_DIR, AGREEMENT_SUMMARY_FILENAME)
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        json.dump(summary_payload, handle, indent=2, ensure_ascii=False)
+
+    logging.info(
+        "Refreshed agreement summary at %s (%d repeat groups, %d latest cross-model groups, %d best-accuracy cross-model groups).",
+        summary_path,
+        len(summary_payload.get("repeat_groups", [])),
+        len(((summary_payload.get("cross_model") or {}).get("latest") or [])),
+        len(((summary_payload.get("cross_model") or {}).get("best_accuracy") or [])),
+    )
+    return summary_path
+
+
+def refresh_agreement_summary_best_effort(reason: str) -> None:
+    """Update the collection-level agreement summary without failing the run if it breaks."""
+    try:
+        refresh_agreement_summary()
+    except Exception as exc:
+        logging.warning("Unable to refresh agreement summary after %s: %s", reason, exc)
+
+
 def is_unclassified_prediction_label(label: Optional[str]) -> bool:
     """Return True when a prediction label should be treated as unclassified."""
     return str(label or "").strip().casefold() == "unclassified"
@@ -8168,6 +8745,8 @@ def process_dataset(
             reprompt_unclassified=reprompt_unclassified,
         )
 
+    refresh_agreement_summary_best_effort(f"writing metrics for {os.path.basename(output_path)}")
+
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
 
 
@@ -8416,6 +8995,8 @@ def process_metrics_only_output(
             total_completion_tokens or "N/A",
             total_token_usage,
         )
+
+    refresh_agreement_summary_best_effort(f"metrics-only refresh for {os.path.basename(resolved_output)}")
 
     return total_prompt_tokens, total_completion_tokens, total_reported_tokens
 

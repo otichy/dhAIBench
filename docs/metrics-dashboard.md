@@ -8,6 +8,7 @@ The dashboard loads metrics files and derives a run catalogue with:
 
 - task, model, provider, timestamp, and tags
 - accuracy, Cohen's Kappa, macro F1, macro precision, macro recall, and calibration metrics
+- repeat-run Krippendorff's alpha when an agreement summary is available
 - token and request summaries
 - estimated cost and pricing metadata when available
 - links back to sibling artifacts such as the heatmap, calibration chart, prompt log, output CSV, input CSV, and raw metrics JSON
@@ -17,6 +18,7 @@ The main screen includes:
 - a filter sidebar for task, model, tags, time range, and missing-accuracy filtering
 - KPI cards for total runs, total tasks, best accuracy, and total requests
 - a leaderboard area with multiple views
+- an agreement area for repeated-run and cross-model alpha
 - a prompt token profile panel
 - a runs table
 - a run-detail modal with links and previews
@@ -49,6 +51,8 @@ In server mode the `Auto (Server)` source attempts, in order:
 2. fallback directory discovery from `../data/metrics/`
 
 The `Reload` button refreshes the current source.
+
+When `data/metrics/agreement_summary.json` is present, the dashboard loads it alongside the run metrics and enables the Agreement panel.
 
 Pricing metadata for the scatterplot and run details is loaded from `web/config_prices.js`.
 If you deploy the dashboard under a rewritten root or any setup that exposes only `web/`, make sure that file is published there as well.
@@ -168,10 +172,20 @@ The leaderboard table gives a dense sortable comparison across runs.
 
 - click a column header to sort
 - highlighted cells mark the preferred value for that metric in the current selection
+- `Repeat α` is filled only for runs that belong to a repeated same-model agreement group
 - row labels may include selected tag badges
 - clicking a row opens the run-detail modal
 
 On narrow screens or wide metric sets, the table can be scrolled horizontally.
+
+## Agreement
+
+The Agreement panel reads the precomputed `agreement_summary.json` artifact.
+
+- `Repeated Runs (Same Model)` shows Krippendorff's alpha across repeated runs of one provider/model on the same comparable task variant
+- `Cross-Model Agreement` shows Krippendorff's alpha across one representative run per provider/model on the same comparable task variant
+- `Cross-Model Rep` switches between the `Latest` and `Best Accuracy` representative policies
+- the panel only shows groups fully represented inside the current filter, so restrictive time/model filters can hide otherwise valid agreement groups
 
 ### Radar Tab
 

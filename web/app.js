@@ -1,5 +1,6 @@
 const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
 const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
+const AGREEMENT_SUMMARY_FILENAME = "agreement_summary.json";
 const METRICS_SERVER_DIR = "../data/metrics";
 const METRICS_SERVER_DIR_CANDIDATES = [METRICS_SERVER_DIR, "./metrics", "./data/metrics"];
 const DESKTOP_LAYOUT_BREAKPOINT = 1100;
@@ -42,6 +43,7 @@ const state = {
   leaderboardScatterGroupBy: "none",
   leaderboardChartBestByTask: false,
   leaderboardScatterXAxis: "price",
+  agreementRepresentativePolicy: "latest",
   scatterShowCi: true,
   timeSeriesShowLabels: false,
   timeSeriesViewport: null,
@@ -57,6 +59,12 @@ const state = {
   sourceMode: "none",
   sourceFileCount: 0,
   warnings: [],
+  agreementSummary: null,
+  repeatAgreementByRunStem: new Map(),
+  crossAgreementByPolicyAndRunStem: {
+    latest: new Map(),
+    best_accuracy: new Map(),
+  },
   activeDirectoryHandle: null,
   activeFiles: [],
   expandedLeaderboardGroups: new Set(),
@@ -117,6 +125,8 @@ const els = {
   leaderboardGroupSwitch: document.querySelector("#leaderboardGroupSwitch"),
   leaderboardChartToggle: document.querySelector("#leaderboardChartToggle"),
   leaderboardChart: document.querySelector("#leaderboardChart"),
+  agreementPolicySwitch: document.querySelector("#agreementPolicySwitch"),
+  agreementPanel: document.querySelector("#agreementPanel"),
   tokenChart: document.querySelector("#tokenChart"),
   runsTableBody: document.querySelector("#runsTableBody"),
   tableMeta: document.querySelector("#tableMeta"),
@@ -144,9 +154,11 @@ const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar"]);
 const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
 const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
 const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
+const AGREEMENT_REPRESENTATIVE_POLICY_KEYS = new Set(["latest", "best_accuracy"]);
 const LEADERBOARD_TABLE_METRICS = [
   "accuracy",
   "cohen_kappa",
+  "repeat_alpha",
   "macro_f1",
   "macro_precision",
   "macro_recall",
@@ -159,10 +171,16 @@ let leaderboardMetricsScrollCleanup = null;
 const METRIC_LABELS = {
   accuracy: "Accuracy",
   cohen_kappa: "Cohen's Kappa",
+  repeat_alpha: "Repeat α",
   macro_f1: "Macro F1",
   macro_precision: "Macro Precision",
   macro_recall: "Macro Recall",
   calibration_ece: "Calibration ECE",
+};
+
+const AGREEMENT_REPRESENTATIVE_POLICY_LABELS = {
+  latest: "Latest",
+  best_accuracy: "Best Accuracy",
 };
 
 const RADAR_AXIS_LABELS = {
@@ -1024,12 +1042,155 @@ function parseMetricText(filePath, rawText, warnings) {
   return normalizeRun(filePath, payload);
 }
 
+function normalizeAgreementRepresentative(rawRepresentative) {
+  if (!rawRepresentative || typeof rawRepresentative !== "object") {
+    return null;
+  }
+  return {
+    provider: asTrimmedString(rawRepresentative.provider),
+    model: asTrimmedString(rawRepresentative.model),
+    runStem: asTrimmedString(rawRepresentative.run_stem),
+    metricsFile: asTrimmedString(rawRepresentative.metrics_file),
+    timestamp: asTrimmedString(rawRepresentative.timestamp),
+    accuracy: safeNum(rawRepresentative.accuracy),
+  };
+}
+
+function normalizeAgreementGroupEntry(rawEntry, policy = "") {
+  if (!rawEntry || typeof rawEntry !== "object") {
+    return null;
+  }
+
+  const runStems = uniqueNonEmptyStrings(rawEntry.run_stems || rawEntry.representative_run_stems || []);
+  const representatives = Array.isArray(rawEntry.representatives)
+    ? rawEntry.representatives.map(normalizeAgreementRepresentative).filter(Boolean)
+    : [];
+
+  return {
+    groupId: asTrimmedString(rawEntry.group_id),
+    policy: asTrimmedString(rawEntry.representative_policy) || policy,
+    taskNameDisplay: asTrimmedString(rawEntry.task_name_display),
+    taskNamesSeen: uniqueNonEmptyStrings(rawEntry.task_names_seen || []),
+    tagsDisplay: asTrimmedString(rawEntry.tags_display),
+    provider: asTrimmedString(rawEntry.provider),
+    model: asTrimmedString(rawEntry.model),
+    runCount: safeNum(rawEntry.run_count),
+    modelCount: safeNum(rawEntry.model_count),
+    alphaNominal: safeNum(rawEntry.alpha_nominal),
+    pairableItemCount: safeNum(rawEntry.pairable_item_count),
+    ratedItemCount: safeNum(rawEntry.rated_item_count),
+    fullySharedItemCount: safeNum(rawEntry.fully_shared_item_count),
+    categoryCount: safeNum(rawEntry.category_count),
+    runStems,
+    representatives,
+  };
+}
+
+function normalizeAgreementSummary(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const repeatGroups = Array.isArray(payload.repeat_groups)
+    ? payload.repeat_groups.map((entry) => normalizeAgreementGroupEntry(entry)).filter(Boolean)
+    : [];
+  const crossModelRaw = payload.cross_model && typeof payload.cross_model === "object" ? payload.cross_model : {};
+  const crossModel = {};
+  AGREEMENT_REPRESENTATIVE_POLICY_KEYS.forEach((policy) => {
+    crossModel[policy] = Array.isArray(crossModelRaw[policy])
+      ? crossModelRaw[policy].map((entry) => normalizeAgreementGroupEntry(entry, policy)).filter(Boolean)
+      : [];
+  });
+
+  return {
+    generatedAt: asTrimmedString(payload.generated_at),
+    runCount: safeNum(payload.run_count),
+    repeatGroups,
+    crossModel,
+  };
+}
+
+function parseAgreementSummaryText(filePath, rawText, warnings) {
+  let payload;
+  try {
+    payload = JSON.parse(rawText);
+  } catch (error) {
+    warnings.push({
+      file: filePath,
+      message: `Agreement summary is invalid JSON (${error.message}).`,
+    });
+    return null;
+  }
+
+  const normalized = normalizeAgreementSummary(payload);
+  if (!normalized) {
+    warnings.push({
+      file: filePath,
+      message: "Agreement summary has an unexpected JSON structure.",
+    });
+    return null;
+  }
+  return normalized;
+}
+
 function dedupeRuns(runs) {
   const byFile = new Map();
   runs.forEach((run) => {
     byFile.set(run.filePath, run);
   });
   return Array.from(byFile.values());
+}
+
+function rebuildAgreementLookups(summary) {
+  const repeatAgreementByRunStem = new Map();
+  const crossAgreementByPolicyAndRunStem = {
+    latest: new Map(),
+    best_accuracy: new Map(),
+  };
+
+  if (summary && Array.isArray(summary.repeatGroups)) {
+    summary.repeatGroups.forEach((entry) => {
+      (entry.runStems || []).forEach((runStem) => {
+        repeatAgreementByRunStem.set(runStem, entry);
+      });
+    });
+  }
+
+  if (summary && summary.crossModel && typeof summary.crossModel === "object") {
+    AGREEMENT_REPRESENTATIVE_POLICY_KEYS.forEach((policy) => {
+      const bucket = crossAgreementByPolicyAndRunStem[policy];
+      (summary.crossModel[policy] || []).forEach((entry) => {
+        (entry.representatives || []).forEach((representative) => {
+          if (representative && representative.runStem) {
+            bucket.set(representative.runStem, entry);
+          }
+        });
+      });
+    });
+  }
+
+  state.repeatAgreementByRunStem = repeatAgreementByRunStem;
+  state.crossAgreementByPolicyAndRunStem = crossAgreementByPolicyAndRunStem;
+}
+
+function getRepeatAgreementForRun(run) {
+  if (!run || !run.runStem || !(state.repeatAgreementByRunStem instanceof Map)) {
+    return null;
+  }
+  return state.repeatAgreementByRunStem.get(run.runStem) || null;
+}
+
+function getCrossModelAgreementForRun(run, policy = state.agreementRepresentativePolicy) {
+  if (!run || !run.runStem || !AGREEMENT_REPRESENTATIVE_POLICY_KEYS.has(policy)) {
+    return null;
+  }
+  const bucket = state.crossAgreementByPolicyAndRunStem
+    ? state.crossAgreementByPolicyAndRunStem[policy]
+    : null;
+  if (!(bucket instanceof Map)) {
+    return null;
+  }
+  return bucket.get(run.runStem) || null;
 }
 
 function parseManifestBaseDirs(manifest) {
@@ -1212,6 +1373,39 @@ async function loadRunFromServerCandidates(rawPath, manifestBaseDirs, warnings) 
   return null;
 }
 
+async function loadAgreementSummaryFromServer(manifestBaseDirs = [], warnings = []) {
+  const candidatePaths = uniqueNonEmptyStrings([
+    ...manifestBaseDirs.map((dir) => joinPath(trimTrailingSlash(dir), AGREEMENT_SUMMARY_FILENAME)),
+    ...METRICS_SERVER_DIR_CANDIDATES.map((dir) => joinPath(trimTrailingSlash(dir), AGREEMENT_SUMMARY_FILENAME)),
+  ]);
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      const response = await fetch(candidatePath, { cache: "no-store" });
+      if (!response.ok) {
+        if (response.status !== 404) {
+          warnings.push({
+            file: candidatePath,
+            message: `Agreement summary fetch failed (HTTP ${response.status}).`,
+          });
+        }
+        continue;
+      }
+      const text = await response.text();
+      const summary = parseAgreementSummaryText(candidatePath, text, warnings);
+      if (summary) {
+        return summary;
+      }
+    } catch (error) {
+      warnings.push({
+        file: candidatePath,
+        message: `Agreement summary fetch failed (${error.message}).`,
+      });
+    }
+  }
+  return null;
+}
+
 async function loadFromServer(onProgress = null) {
   const discovery = await discoverMetricFilesFromServer();
   const files = discovery.files;
@@ -1219,6 +1413,7 @@ async function loadFromServer(onProgress = null) {
   const warnings = [];
   let runs = await loadRunsFromServerFileList(files, manifestBaseDirs, warnings, onProgress);
   let fileCount = files.length;
+  const agreementSummary = await loadAgreementSummaryFromServer(manifestBaseDirs, warnings);
 
   if (!runs.length && discovery.source === "manifest") {
     try {
@@ -1241,12 +1436,14 @@ async function loadFromServer(onProgress = null) {
     mode: "server",
     fileCount,
     runs: dedupeRuns(runs),
+    agreementSummary,
     warnings,
   };
 }
 
 async function collectMetricFilesFromDirectoryHandle(dirHandle, prefix = "") {
   const files = [];
+  let agreementSummaryFile = null;
   for await (const [name, entry] of dirHandle.entries()) {
     if (entry.kind === "file" && name.toLowerCase().endsWith("_metrics.json")) {
       files.push({
@@ -1255,21 +1452,53 @@ async function collectMetricFilesFromDirectoryHandle(dirHandle, prefix = "") {
       });
       continue;
     }
+    if (
+      entry.kind === "file" &&
+      name.toLowerCase() === AGREEMENT_SUMMARY_FILENAME &&
+      agreementSummaryFile === null
+    ) {
+      agreementSummaryFile = {
+        path: `${prefix}${name}`,
+        handle: entry,
+      };
+      continue;
+    }
     if (entry.kind === "directory") {
       const nested = await collectMetricFilesFromDirectoryHandle(entry, `${prefix}${name}/`);
-      files.push(...nested);
+      files.push(...nested.metricFiles);
+      if (!agreementSummaryFile && nested.agreementSummaryFile) {
+        agreementSummaryFile = nested.agreementSummaryFile;
+      }
     }
   }
-  return files;
+  return { metricFiles: files, agreementSummaryFile };
+}
+
+async function loadAgreementSummaryFromDirectoryHandle(summaryFileEntry, warnings) {
+  if (!summaryFileEntry || !summaryFileEntry.handle) {
+    return null;
+  }
+  try {
+    const fileObj = await summaryFileEntry.handle.getFile();
+    const text = await fileObj.text();
+    return parseAgreementSummaryText(summaryFileEntry.path, text, warnings);
+  } catch (error) {
+    warnings.push({
+      file: summaryFileEntry.path,
+      message: `Cannot read agreement summary (${error.message}).`,
+    });
+    return null;
+  }
 }
 
 async function loadFromDirectoryHandle(dirHandle, onProgress = null) {
-  const metricFiles = await collectMetricFilesFromDirectoryHandle(dirHandle);
+  const { metricFiles, agreementSummaryFile } = await collectMetricFilesFromDirectoryHandle(dirHandle);
   if (!metricFiles.length) {
     throw new Error("No *_metrics.json files found in selected folder.");
   }
 
   const warnings = [];
+  const agreementSummary = await loadAgreementSummaryFromDirectoryHandle(agreementSummaryFile, warnings);
   const runs = [];
   const total = metricFiles.length;
   if (typeof onProgress === "function") {
@@ -1302,6 +1531,7 @@ async function loadFromDirectoryHandle(dirHandle, onProgress = null) {
     mode: "folder",
     fileCount: metricFiles.length,
     runs: dedupeRuns(runs),
+    agreementSummary,
     warnings,
   };
 }
@@ -1310,12 +1540,31 @@ async function loadFromFiles(fileList, onProgress = null) {
   const files = Array.from(fileList || []).filter((file) =>
     String(file.name || "").toLowerCase().endsWith("_metrics.json")
   );
+  const agreementFile =
+    Array.from(fileList || []).find(
+      (file) => String(file.name || "").toLowerCase() === AGREEMENT_SUMMARY_FILENAME
+    ) || null;
 
   if (!files.length) {
     throw new Error("No *_metrics.json files selected.");
   }
 
   const warnings = [];
+  let agreementSummary = null;
+  if (agreementFile) {
+    try {
+      agreementSummary = parseAgreementSummaryText(
+        agreementFile.name,
+        await agreementFile.text(),
+        warnings
+      );
+    } catch (error) {
+      warnings.push({
+        file: agreementFile.name,
+        message: `Cannot read agreement summary (${error.message}).`,
+      });
+    }
+  }
   const runs = [];
   const total = files.length;
   if (typeof onProgress === "function") {
@@ -1348,6 +1597,7 @@ async function loadFromFiles(fileList, onProgress = null) {
     mode: "files",
     fileCount: files.length,
     runs: dedupeRuns(runs),
+    agreementSummary,
     warnings,
   };
 }
@@ -1386,6 +1636,7 @@ function persistUiState() {
     leaderboardScatterGroupBy: state.leaderboardScatterGroupBy,
     leaderboardChartBestByTask: state.leaderboardChartBestByTask,
     leaderboardScatterXAxis: state.leaderboardScatterXAxis,
+    agreementRepresentativePolicy: state.agreementRepresentativePolicy,
     scatterShowCi: state.scatterShowCi,
     timeSeriesShowLabels: state.timeSeriesShowLabels,
     timeSeriesViewport: state.timeSeriesViewport,
@@ -1482,6 +1733,12 @@ function restoreUiState() {
         LEADERBOARD_SCATTER_X_AXIS_KEYS.has(payload.leaderboardScatterXAxis)
       ) {
         state.leaderboardScatterXAxis = payload.leaderboardScatterXAxis;
+      }
+      if (
+        typeof payload.agreementRepresentativePolicy === "string" &&
+        AGREEMENT_REPRESENTATIVE_POLICY_KEYS.has(payload.agreementRepresentativePolicy)
+      ) {
+        state.agreementRepresentativePolicy = payload.agreementRepresentativePolicy;
       }
       if (typeof payload.scatterShowCi === "boolean") {
         state.scatterShowCi = payload.scatterShowCi;
@@ -2332,6 +2589,10 @@ function setupSourceControls() {
 function getMetricValueForRun(run, key) {
   if (key === "accuracy") return run.accuracy;
   if (key === "cohen_kappa") return run.cohenKappa;
+  if (key === "repeat_alpha") {
+    const agreement = getRepeatAgreementForRun(run);
+    return agreement ? agreement.alphaNominal : null;
+  }
   if (key === "macro_f1") return run.macroF1;
   if (key === "macro_precision") return run.macroPrecision;
   if (key === "macro_recall") return run.macroRecall;
@@ -2344,7 +2605,7 @@ function isPercentMetric(metricKey) {
 }
 
 function resolveLeaderboardBarMax(metricKey, values) {
-  if (metricKey === "cohen_kappa") {
+  if (metricKey === "cohen_kappa" || metricKey === "repeat_alpha") {
     return 1;
   }
   if (isPercentMetric(metricKey)) {
@@ -5560,6 +5821,242 @@ function renderLeaderboard(runs) {
   renderLeaderboardChart(panel, runs);
 }
 
+function setAgreementRepresentativePolicy(policy) {
+  if (!AGREEMENT_REPRESENTATIVE_POLICY_KEYS.has(policy) || state.agreementRepresentativePolicy === policy) {
+    return;
+  }
+  state.agreementRepresentativePolicy = policy;
+  persistUiState();
+  renderAgreement(state.filtered);
+  const selectedRun = findRunByPath(state.selectedRunPath);
+  if (selectedRun && els.runModal && !els.runModal.classList.contains("hidden")) {
+    fillRunDetailsContent(selectedRun);
+  }
+}
+
+function renderAgreementPolicySwitch() {
+  if (!els.agreementPolicySwitch) {
+    return;
+  }
+  els.agreementPolicySwitch.innerHTML = "";
+
+  const label = document.createElement("p");
+  label.className = "leaderboard-chart-toggle-label leaderboard-group-switch-label";
+  label.textContent = "Cross-Model Rep";
+  els.agreementPolicySwitch.appendChild(label);
+
+  els.agreementPolicySwitch.appendChild(
+    createTimeSeriesSegmentedControl("Cross-model representative policy", [
+      {
+        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.latest,
+        active: state.agreementRepresentativePolicy === "latest",
+        onClick: () => setAgreementRepresentativePolicy("latest"),
+      },
+      {
+        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.best_accuracy,
+        active: state.agreementRepresentativePolicy === "best_accuracy",
+        onClick: () => setAgreementRepresentativePolicy("best_accuracy"),
+      },
+    ])
+  );
+}
+
+function getVisibleRepeatAgreementEntries(runs) {
+  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
+  const source =
+    state.agreementSummary && Array.isArray(state.agreementSummary.repeatGroups)
+      ? state.agreementSummary.repeatGroups
+      : [];
+  return source.filter(
+    (entry) =>
+      Array.isArray(entry.runStems) &&
+      entry.runStems.length >= 2 &&
+      entry.runStems.every((runStem) => visibleRunStems.has(runStem))
+  );
+}
+
+function getVisibleCrossModelAgreementEntries(runs, policy = state.agreementRepresentativePolicy) {
+  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
+  const crossModel =
+    state.agreementSummary && state.agreementSummary.crossModel
+      ? state.agreementSummary.crossModel
+      : {};
+  const source = Array.isArray(crossModel[policy]) ? crossModel[policy] : [];
+  return source.filter(
+    (entry) =>
+      Array.isArray(entry.representatives) &&
+      entry.representatives.length >= 2 &&
+      entry.representatives.every((representative) => visibleRunStems.has(representative.runStem))
+  );
+}
+
+function createAgreementCell(label, primaryText, secondaryText = "") {
+  const cell = document.createElement("td");
+  cell.dataset.label = label;
+  const primary = document.createElement("div");
+  primary.className = "agreement-cell-primary";
+  primary.textContent = primaryText || "N/A";
+  cell.appendChild(primary);
+  if (secondaryText) {
+    const secondary = document.createElement("div");
+    secondary.className = "agreement-cell-secondary muted";
+    secondary.textContent = secondaryText;
+    cell.appendChild(secondary);
+  }
+  return cell;
+}
+
+function createAgreementMetricCell(label, value) {
+  const cell = document.createElement("td");
+  cell.dataset.label = label;
+  cell.className = "mono";
+  cell.textContent = value == null ? "N/A" : formatNum(value, 3);
+  return cell;
+}
+
+function createAgreementCountCell(label, value) {
+  const cell = document.createElement("td");
+  cell.dataset.label = label;
+  cell.className = "mono";
+  cell.textContent = value == null ? "N/A" : formatNum(value, 0);
+  return cell;
+}
+
+function buildAgreementProviderModelLabel(provider, model) {
+  const modelText = asTrimmedString(model);
+  const providerText = asTrimmedString(provider);
+  if (!providerText) {
+    return modelText || "Unknown model";
+  }
+  return `${modelText || "Unknown model"} (${providerText})`;
+}
+
+function createAgreementTable(title, entries, mode) {
+  const section = document.createElement("section");
+  section.className = "agreement-section";
+
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap agreement-table-wrap";
+  const table = document.createElement("table");
+  table.className = "agreement-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const columns =
+    mode === "repeat"
+      ? ["Task", "Model", "Runs", "Repeat α", "Pairable Items"]
+      : ["Task", "Models", "Cross-Model α", "Pairable Items", "Representatives"];
+  columns.forEach((labelText) => {
+    const th = document.createElement("th");
+    th.textContent = labelText;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  entries.forEach((entry) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(createAgreementCell("Task", entry.taskNameDisplay, entry.tagsDisplay));
+
+    if (mode === "repeat") {
+      tr.appendChild(
+        createAgreementCell(
+          "Model",
+          buildAgreementProviderModelLabel(entry.provider, entry.model),
+          entry.taskNamesSeen && entry.taskNamesSeen.length > 1
+            ? `Names seen: ${entry.taskNamesSeen.join(" | ")}`
+            : ""
+        )
+      );
+      tr.appendChild(createAgreementCountCell("Runs", entry.runCount));
+      tr.appendChild(createAgreementMetricCell("Repeat α", entry.alphaNominal));
+      tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
+    } else {
+      tr.appendChild(createAgreementCountCell("Models", entry.modelCount));
+      tr.appendChild(createAgreementMetricCell("Cross-Model α", entry.alphaNominal));
+      tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
+      tr.appendChild(
+        createAgreementCell(
+          "Representatives",
+          (entry.representatives || [])
+            .map((representative) =>
+              buildAgreementProviderModelLabel(representative.provider, representative.model)
+            )
+            .join(", "),
+          (entry.representatives || [])
+            .map((representative) => {
+              const parts = [representative.model || "Unknown model"];
+              if (representative.accuracy != null) {
+                parts.push(`${formatNum(representative.accuracy, 2)}%`);
+              }
+              if (representative.timestamp) {
+                parts.push(formatDateOnly(representative.timestamp));
+              }
+              return parts.join(" | ");
+            })
+            .join(" ; ")
+        )
+      );
+    }
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  section.appendChild(wrap);
+  return section;
+}
+
+function renderAgreement(runs) {
+  if (!els.agreementPanel) {
+    return;
+  }
+  renderAgreementPolicySwitch();
+  els.agreementPanel.innerHTML = "";
+
+  if (!state.agreementSummary) {
+    els.agreementPanel.innerHTML =
+      '<p class="muted">Agreement summary not loaded. Recalculate metrics locally so <code>agreement_summary.json</code> is published with the metrics artifacts.</p>';
+    return;
+  }
+
+  const repeatEntries = getVisibleRepeatAgreementEntries(runs);
+  const crossEntries = getVisibleCrossModelAgreementEntries(runs, state.agreementRepresentativePolicy);
+
+  const meta = document.createElement("p");
+  meta.className = "agreement-note muted";
+  const generatedText = state.agreementSummary.generatedAt
+    ? ` Generated ${formatTs(state.agreementSummary.generatedAt)}.`
+    : "";
+  meta.textContent =
+    `Repeat agreement uses all repeated runs inside a comparable task variant. Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}).${generatedText}`;
+  els.agreementPanel.appendChild(meta);
+
+  if (!repeatEntries.length && !crossEntries.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent =
+      "No agreement groups are fully represented in the current filter. Expand the visible run set or switch the representative policy.";
+    els.agreementPanel.appendChild(empty);
+    return;
+  }
+
+  if (repeatEntries.length) {
+    els.agreementPanel.appendChild(
+      createAgreementTable("Repeated Runs (Same Model)", repeatEntries, "repeat")
+    );
+  }
+  if (crossEntries.length) {
+    els.agreementPanel.appendChild(
+      createAgreementTable("Cross-Model Agreement", crossEntries, "cross")
+    );
+  }
+}
+
 function renderBestByTask(container, runs) {
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
@@ -6500,9 +6997,14 @@ function fillRunDetailsContent(run) {
     els.runModalContent.innerHTML = "";
     return;
   }
+  const repeatAgreement = getRepeatAgreementForRun(run);
+  const crossModelAgreement = getCrossModelAgreementForRun(run, state.agreementRepresentativePolicy);
   const runThinkingLevel = getConfiguredControl(run, "thinking_level");
   const runReasoningEffort =
     getConfiguredControl(run, "reasoning_effort") || getConfiguredControl(run, "effort");
+  const representativePolicyLabel =
+    AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy] ||
+    state.agreementRepresentativePolicy;
   const detailPairs = [
     ["Task", run.task],
     ["Task Description", run.taskDescription],
@@ -6513,6 +7015,15 @@ function fillRunDetailsContent(run) {
     ["Timestamp", formatTs(run.timestamp)],
     ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],
     ["Cohen's Kappa", run.cohenKappa == null ? "N/A" : formatNum(run.cohenKappa, 3)],
+    ["Repeat α", repeatAgreement && repeatAgreement.alphaNominal != null ? formatNum(repeatAgreement.alphaNominal, 3) : "N/A"],
+    ["Repeat Runs", repeatAgreement ? formatNum(repeatAgreement.runCount, 0) : "N/A"],
+    [
+      `Cross-Model α (${representativePolicyLabel})`,
+      crossModelAgreement && crossModelAgreement.alphaNominal != null
+        ? formatNum(crossModelAgreement.alphaNominal, 3)
+        : "N/A",
+    ],
+    ["Cross-Model Models", crossModelAgreement ? formatNum(crossModelAgreement.modelCount, 0) : "N/A"],
     ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
     ["Macro Precision", run.macroPrecision == null ? "N/A" : `${formatNum(run.macroPrecision, 2)}%`],
     ["Macro Recall", run.macroRecall == null ? "N/A" : `${formatNum(run.macroRecall, 2)}%`],
@@ -6631,6 +7142,7 @@ function render() {
   updateResetFiltersButton();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
+  renderAgreement(state.filtered);
   renderTokenSignals(state.filtered);
   renderTable(state.filtered);
   requestAnimationFrame(() => {
@@ -6642,6 +7154,9 @@ function renderError(message, preserveExisting = false) {
   els.heroSubtitle.innerHTML = `<span class="warn">${message}</span>`;
   if (!preserveExisting) {
     els.leaderboardChart.innerHTML = "";
+    if (els.agreementPanel) {
+      els.agreementPanel.innerHTML = "";
+    }
     els.tokenChart.innerHTML = "";
     els.runsTableBody.innerHTML = "";
     closeRunModal();
@@ -6664,6 +7179,8 @@ function applyLoadedResult(result) {
   validateLoadedResult(result);
 
   state.runs = result.runs;
+  state.agreementSummary = result.agreementSummary || null;
+  rebuildAgreementLookups(state.agreementSummary);
   state.tasks = [...new Set(result.runs.map((run) => run.task))].sort((a, b) => a.localeCompare(b));
   state.models = [...new Set(result.runs.map((run) => run.model))].sort((a, b) => a.localeCompare(b));
   state.tags = [...new Set(result.runs.flatMap((run) => run.tags || []))].sort((a, b) => a.localeCompare(b));

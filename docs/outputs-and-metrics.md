@@ -6,6 +6,7 @@ A benchmark run can create several artifacts:
 
 - predictions CSV: `data/output/<output_basename>.csv`
 - metrics JSON: `data/metrics/<output_basename>__metrics.json`
+- agreement summary JSON: `data/metrics/agreement_summary.json`
 - confusion heatmap: `data/metrics/<output_basename>__heatmap.png`
 - calibration plot: `data/metrics/<output_basename>__calibration.png`
 - prompt log: `data/logs/<output_basename>.log`
@@ -40,6 +41,19 @@ The metrics JSON includes:
 - `tags`
 
 It also includes summaries for request-control acceptance and provider-reported cache metadata when those features are used.
+
+## Agreement Summary JSON
+
+`data/metrics/agreement_summary.json` is rebuilt after normal runs and `--metrics_only`.
+
+It stores only aggregate statistics, not per-example predictions:
+
+- repeat-run Krippendorff's alpha for repeated runs of the same provider/model on the same comparable task variant
+- cross-model Krippendorff's alpha for the same task variant using one representative run per provider/model
+- both `latest` and `best_accuracy` representative policies for cross-model agreement
+- overlap counts, run/model counts, and run references needed by the dashboard
+
+Comparable task variants are matched automatically from the output rows plus normalized tags, so task renames can still be linked when the underlying data are the same.
 
 ## Charts
 
@@ -78,7 +92,7 @@ In this mode, `--output` is ignored and metrics artifacts are written to `data/m
 
 ## Dashboard Consumption
 
-The static dashboard in `web/` reads the `*_metrics.json` artifacts produced here. See [Metrics Dashboard](metrics-dashboard.md) for loading modes, navigation, and feature details.
+The static dashboard in `web/` reads the `*_metrics.json` artifacts produced here and, when available, `agreement_summary.json`. See [Metrics Dashboard](metrics-dashboard.md) for loading modes, navigation, and feature details.
 
 ## Operational Tips
 

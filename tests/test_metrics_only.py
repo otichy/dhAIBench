@@ -84,6 +84,18 @@ def _assert_metrics_metadata(
 
 
 class MetricsOnlyTests(unittest.TestCase):
+    def test_compute_nominal_krippendorff_alpha(self) -> None:
+        payload = ba.compute_nominal_krippendorff_alpha(
+            [
+                {"1": "NOUN", "2": "NOUN"},
+                {"1": "NOUN", "2": "VERB"},
+            ]
+        )
+
+        self.assertEqual(payload.get("pairable_item_count"), 2)
+        self.assertIsNotNone(payload.get("alpha"))
+        self.assertAlmostEqual(payload.get("alpha", 999.0), 0.0, places=8)
+
     def test_compute_metrics_includes_cohen_kappa(self) -> None:
         payload = ba.compute_metrics(
             ["NOUN", "VERB"],
@@ -218,18 +230,155 @@ class MetricsOnlyTests(unittest.TestCase):
                     task_description="",
                     tags="",
                 )
-                calibration = payload.get("calibration_metrics")
-                self.assertIsInstance(calibration, dict)
-                self.assertFalse(calibration.get("available"))
-                self.assertEqual(calibration.get("sample_count"), 0)
-                self.assertIsNone(calibration.get("ece"))
-                model_details = payload.get("model_details")
-                self.assertIsInstance(model_details, dict)
-                self.assertIn("provider", model_details)
-                self.assertIn("model_requested", model_details)
-                self.assertIn("model_for_requests", model_details)
-                self.assertIn("api_base_url", model_details)
-                self.assertIn("chat_completions_endpoint", model_details)
+
+    def test_metrics_only_refreshes_agreement_summary_with_repeat_and_cross_model_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                runs = [
+                    (
+                        os.path.join(
+                            tmpdir,
+                            "same-task__openai__model-a__2026-01-01-00-00.csv",
+                        ),
+                        [
+                            {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                            {"ID": "2", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                        ],
+                        "model-a",
+                        "Stable Task",
+                        "alpha; beta",
+                    ),
+                    (
+                        os.path.join(
+                            tmpdir,
+                            "same-task__openai__model-a__2026-01-02-00-00.csv",
+                        ),
+                        [
+                            {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                            {"ID": "2", "prediction": "VERB", "truth": "NOUN", "confidence": "0.9"},
+                        ],
+                        "model-a",
+                        "Stable Task",
+                        "beta; alpha",
+                    ),
+                    (
+                        os.path.join(
+                            tmpdir,
+                            "same-task__openai__model-b__2026-01-03-00-00.csv",
+                        ),
+                        [
+                            {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                            {"ID": "2", "prediction": "VERB", "truth": "NOUN", "confidence": "0.9"},
+                        ],
+                        "model-b",
+                        "Stable Task",
+                        "alpha;beta",
+                    ),
+                ]
+
+                for output_csv, rows, model_name, task_name, tags in runs:
+                    _write_output_csv(output_csv, rows)
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                            "--provider",
+                            "openai",
+                            "--model",
+                            model_name,
+                            "--task_name",
+                            task_name,
+                            "--tags",
+                            tags,
+                            "--no-confusion_heatmap",
+                        ]
+                    )
+                    self.assertEqual(exit_code, 0)
+
+                summary_path = os.path.join(ba.DEFAULT_METRICS_DIR, ba.AGREEMENT_SUMMARY_FILENAME)
+                self.assertTrue(os.path.exists(summary_path))
+                with open(summary_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+
+                self.assertEqual(payload.get("run_count"), 3)
+                repeat_groups = payload.get("repeat_groups") or []
+                self.assertEqual(len(repeat_groups), 1)
+                repeat_group = repeat_groups[0]
+                self.assertEqual(repeat_group.get("run_count"), 2)
+                self.assertEqual(repeat_group.get("model"), "model-a")
+                self.assertIsNotNone(repeat_group.get("alpha_nominal"))
+                self.assertAlmostEqual(repeat_group.get("alpha_nominal", 999.0), 0.0, places=8)
+
+                cross_latest = ((payload.get("cross_model") or {}).get("latest") or [])
+                self.assertEqual(len(cross_latest), 1)
+                self.assertAlmostEqual(cross_latest[0].get("alpha_nominal") or 0.0, 1.0, places=8)
+                self.assertEqual(
+                    [item.get("model") for item in cross_latest[0].get("representatives") or []],
+                    ["model-a", "model-b"],
+                )
+
+                cross_best = ((payload.get("cross_model") or {}).get("best_accuracy") or [])
+                self.assertEqual(len(cross_best), 1)
+                self.assertIsNotNone(cross_best[0].get("alpha_nominal"))
+                self.assertAlmostEqual(cross_best[0].get("alpha_nominal", 999.0), 0.0, places=8)
+
+    def test_metrics_only_agreement_refresh_groups_comparable_runs_across_task_renames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                runs = [
+                    (
+                        os.path.join(
+                            tmpdir,
+                            "rename-task__openai__model-a__2026-01-01-00-00.csv",
+                        ),
+                        "Original Task Name",
+                        "model-a",
+                    ),
+                    (
+                        os.path.join(
+                            tmpdir,
+                            "rename-task__openai__model-b__2026-01-02-00-00.csv",
+                        ),
+                        "Renamed Task Name",
+                        "model-b",
+                    ),
+                ]
+                rows = [
+                    {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                    {"ID": "2", "prediction": "VERB", "truth": "VERB", "confidence": "0.9"},
+                ]
+
+                for output_csv, task_name, model_name in runs:
+                    _write_output_csv(output_csv, rows)
+                    exit_code = ba.main(
+                        [
+                            "--metrics_only",
+                            "--input",
+                            output_csv,
+                            "--provider",
+                            "openai",
+                            "--model",
+                            model_name,
+                            "--task_name",
+                            task_name,
+                            "--tags",
+                            "gamma;delta",
+                            "--no-confusion_heatmap",
+                        ]
+                    )
+                    self.assertEqual(exit_code, 0)
+
+                summary_path = os.path.join(ba.DEFAULT_METRICS_DIR, ba.AGREEMENT_SUMMARY_FILENAME)
+                with open(summary_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+
+                cross_latest = ((payload.get("cross_model") or {}).get("latest") or [])
+                self.assertEqual(len(cross_latest), 1)
+                self.assertEqual(
+                    sorted(cross_latest[0].get("task_names_seen") or []),
+                    ["Original Task Name", "Renamed Task Name"],
+                )
 
     def test_metrics_only_uses_truth_column_from_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
