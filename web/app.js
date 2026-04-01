@@ -39,6 +39,7 @@ const state = {
   leaderboardTableSortKey: null,
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
+  agreementViewMode: "same_model",
   leaderboardChartGroupBy: "model",
   leaderboardScatterGroupBy: "none",
   leaderboardChartBestByTask: false,
@@ -100,6 +101,7 @@ const els = {
   addTimeRangeBtn: document.querySelector("#addTimeRangeBtn"),
   timeRangeSummary: document.querySelector("#timeRangeSummary"),
   sortSelect: document.querySelector("#sortSelect"),
+  leaderboardMetricField: document.querySelector(".leaderboard-metric-field"),
   hideNoAccuracy: document.querySelector("#hideNoAccuracy"),
   themeToggle: document.querySelector("#themeToggle"),
   tagChips: document.querySelector("#tagChips"),
@@ -125,8 +127,6 @@ const els = {
   leaderboardGroupSwitch: document.querySelector("#leaderboardGroupSwitch"),
   leaderboardChartToggle: document.querySelector("#leaderboardChartToggle"),
   leaderboardChart: document.querySelector("#leaderboardChart"),
-  agreementPolicySwitch: document.querySelector("#agreementPolicySwitch"),
-  agreementPanel: document.querySelector("#agreementPanel"),
   tokenChart: document.querySelector("#tokenChart"),
   runsTableBody: document.querySelector("#runsTableBody"),
   tableMeta: document.querySelector("#tableMeta"),
@@ -150,7 +150,8 @@ const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision"
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
-const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar", "agreement"]);
+const AGREEMENT_VIEW_MODE_KEYS = new Set(["same_model", "cross_model"]);
 const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
 const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
 const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
@@ -1632,6 +1633,7 @@ function persistUiState() {
     leaderboardTableSortKey: state.leaderboardTableSortKey,
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
+    agreementViewMode: state.agreementViewMode,
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
     leaderboardScatterGroupBy: state.leaderboardScatterGroupBy,
     leaderboardChartBestByTask: state.leaderboardChartBestByTask,
@@ -1712,6 +1714,12 @@ function restoreUiState() {
           state.leaderboardTab = "chart";
           state.leaderboardChartBestByTask = true;
         }
+      }
+      if (
+        typeof payload.agreementViewMode === "string" &&
+        AGREEMENT_VIEW_MODE_KEYS.has(payload.agreementViewMode)
+      ) {
+        state.agreementViewMode = payload.agreementViewMode;
       }
       if (
         typeof payload.leaderboardChartGroupBy === "string" &&
@@ -3371,8 +3379,12 @@ function renderLeaderboardGroupSwitch() {
   if (!els.leaderboardGroupSwitch) {
     return;
   }
+  const showsAgreementModeSwitch = state.leaderboardTab === "agreement";
   const supportsGrouping =
-    state.leaderboardTab === "chart" || state.leaderboardTab === "scatter" || state.leaderboardTab === "radar";
+    showsAgreementModeSwitch
+    || state.leaderboardTab === "chart"
+    || state.leaderboardTab === "scatter"
+    || state.leaderboardTab === "radar";
   els.leaderboardGroupSwitch.hidden = !supportsGrouping;
   els.leaderboardGroupSwitch.innerHTML = "";
   if (!supportsGrouping) {
@@ -3381,16 +3393,38 @@ function renderLeaderboardGroupSwitch() {
 
   const label = document.createElement("span");
   label.className = "leaderboard-group-switch-label";
-  label.textContent = "Group By";
+  label.textContent = showsAgreementModeSwitch ? "Agreement" : "Group By";
   els.leaderboardGroupSwitch.appendChild(label);
 
   const toggle = document.createElement("div");
   toggle.className = "leaderboard-group-toggle";
   toggle.setAttribute("role", "group");
-  toggle.setAttribute("aria-label", state.leaderboardTab === "radar" ? "Radar grouping" : "Leaderboard grouping");
+  toggle.setAttribute(
+    "aria-label",
+    showsAgreementModeSwitch
+      ? "Agreement mode"
+      : state.leaderboardTab === "radar"
+        ? "Radar grouping"
+        : "Leaderboard grouping"
+  );
 
   const options =
-    state.leaderboardTab === "radar"
+    showsAgreementModeSwitch
+      ? [
+          {
+            key: "same_model",
+            label: "Same model",
+            active: state.agreementViewMode === "same_model",
+            onClick: () => setAgreementViewMode("same_model"),
+          },
+          {
+            key: "cross_model",
+            label: "Cross-Model",
+            active: state.agreementViewMode === "cross_model",
+            onClick: () => setAgreementViewMode("cross_model"),
+          },
+        ]
+      : state.leaderboardTab === "radar"
       ? [
           { key: "task", label: "Task", active: state.radarAxis === "task", onClick: () => setRadarAxis("task") },
           { key: "tag", label: "Tag", active: state.radarAxis === "tag", onClick: () => setRadarAxis("tag") },
@@ -3422,14 +3456,48 @@ function renderLeaderboardGroupSwitch() {
   els.leaderboardGroupSwitch.appendChild(toggle);
 }
 
+function renderAgreementRepresentativeSwitch() {
+  if (!els.leaderboardChartToggle) {
+    return;
+  }
+  const shouldShow = state.leaderboardTab === "agreement" && state.agreementViewMode === "cross_model";
+  els.leaderboardChartToggle.hidden = !shouldShow;
+  els.leaderboardChartToggle.innerHTML = "";
+  if (!shouldShow) {
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = "leaderboard-group-switch-label leaderboard-chart-toggle-label";
+  label.textContent = "Cross-Model Rep";
+  els.leaderboardChartToggle.appendChild(label);
+
+  const toggle = document.createElement("div");
+  toggle.className = "leaderboard-group-toggle";
+  toggle.setAttribute("role", "group");
+  toggle.setAttribute("aria-label", "Cross-model representative policy");
+
+  Object.entries(AGREEMENT_REPRESENTATIVE_POLICY_LABELS).forEach(([key, text]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `leaderboard-group-btn${state.agreementRepresentativePolicy === key ? " active" : ""}`;
+    button.textContent = text;
+    button.setAttribute("aria-pressed", state.agreementRepresentativePolicy === key ? "true" : "false");
+    button.addEventListener("click", () => setAgreementRepresentativePolicy(key));
+    toggle.appendChild(button);
+  });
+
+  els.leaderboardChartToggle.appendChild(toggle);
+}
+
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
   }
   renderLeaderboardGroupSwitch();
-  if (els.leaderboardChartToggle) {
-    els.leaderboardChartToggle.hidden = true;
-    els.leaderboardChartToggle.innerHTML = "";
+  renderAgreementRepresentativeSwitch();
+  if (els.leaderboardMetricField) {
+    els.leaderboardMetricField.hidden = state.leaderboardTab === "agreement";
   }
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
@@ -3437,6 +3505,7 @@ function renderLeaderboardTabControls() {
     { key: "scatter", label: "Scatter" },
     { key: "table", label: "Table" },
     { key: "radar", label: "Radar" },
+    { key: "agreement", label: "Agreement" },
   ];
   tabs.forEach((tab) => {
     const button = document.createElement("button");
@@ -5809,6 +5878,10 @@ function renderLeaderboard(runs) {
     renderRadarPanel(panel, runs);
     return;
   }
+  if (state.leaderboardTab === "agreement") {
+    renderAgreement(panel, runs);
+    return;
+  }
   if (state.leaderboardTab === "chart") {
     renderChartTabControls(panel);
     if (state.leaderboardChartBestByTask) {
@@ -5827,38 +5900,20 @@ function setAgreementRepresentativePolicy(policy) {
   }
   state.agreementRepresentativePolicy = policy;
   persistUiState();
-  renderAgreement(state.filtered);
+  renderLeaderboard(state.filtered);
   const selectedRun = findRunByPath(state.selectedRunPath);
   if (selectedRun && els.runModal && !els.runModal.classList.contains("hidden")) {
     fillRunDetailsContent(selectedRun);
   }
 }
 
-function renderAgreementPolicySwitch() {
-  if (!els.agreementPolicySwitch) {
+function setAgreementViewMode(mode) {
+  if (!AGREEMENT_VIEW_MODE_KEYS.has(mode) || state.agreementViewMode === mode) {
     return;
   }
-  els.agreementPolicySwitch.innerHTML = "";
-
-  const label = document.createElement("p");
-  label.className = "leaderboard-chart-toggle-label leaderboard-group-switch-label";
-  label.textContent = "Cross-Model Rep";
-  els.agreementPolicySwitch.appendChild(label);
-
-  els.agreementPolicySwitch.appendChild(
-    createTimeSeriesSegmentedControl("Cross-model representative policy", [
-      {
-        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.latest,
-        active: state.agreementRepresentativePolicy === "latest",
-        onClick: () => setAgreementRepresentativePolicy("latest"),
-      },
-      {
-        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.best_accuracy,
-        active: state.agreementRepresentativePolicy === "best_accuracy",
-        onClick: () => setAgreementRepresentativePolicy("best_accuracy"),
-      },
-    ])
-  );
+  state.agreementViewMode = mode;
+  persistUiState();
+  renderLeaderboard(state.filtered);
 }
 
 function getVisibleRepeatAgreementEntries(runs) {
@@ -6011,21 +6066,23 @@ function createAgreementTable(title, entries, mode) {
   return section;
 }
 
-function renderAgreement(runs) {
-  if (!els.agreementPanel) {
+function renderAgreement(container, runs) {
+  if (!container) {
     return;
   }
-  renderAgreementPolicySwitch();
-  els.agreementPanel.innerHTML = "";
+  container.innerHTML = "";
 
   if (!state.agreementSummary) {
-    els.agreementPanel.innerHTML =
+    container.innerHTML =
       '<p class="muted">Agreement summary not loaded. Recalculate metrics locally so <code>agreement_summary.json</code> is published with the metrics artifacts.</p>';
     return;
   }
 
-  const repeatEntries = getVisibleRepeatAgreementEntries(runs);
-  const crossEntries = getVisibleCrossModelAgreementEntries(runs, state.agreementRepresentativePolicy);
+  const showCrossModel = state.agreementViewMode === "cross_model";
+  const repeatEntries = showCrossModel ? [] : getVisibleRepeatAgreementEntries(runs);
+  const crossEntries = showCrossModel
+    ? getVisibleCrossModelAgreementEntries(runs, state.agreementRepresentativePolicy)
+    : [];
 
   const meta = document.createElement("p");
   meta.className = "agreement-note muted";
@@ -6033,26 +6090,28 @@ function renderAgreement(runs) {
     ? ` Generated ${formatTs(state.agreementSummary.generatedAt)}.`
     : "";
   meta.textContent =
-    `Repeat agreement uses all repeated runs inside a comparable task variant. Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}).${generatedText}`;
-  els.agreementPanel.appendChild(meta);
+    showCrossModel
+      ? `Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}).${generatedText}`
+      : `Same-model agreement uses all repeated runs inside a comparable task variant.${generatedText}`;
+  container.appendChild(meta);
 
   if (!repeatEntries.length && !crossEntries.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent =
       "No agreement groups are fully represented in the current filter. Expand the visible run set or switch the representative policy.";
-    els.agreementPanel.appendChild(empty);
+    container.appendChild(empty);
     return;
   }
 
   if (repeatEntries.length) {
-    els.agreementPanel.appendChild(
-      createAgreementTable("Repeated Runs (Same Model)", repeatEntries, "repeat")
+    container.appendChild(
+      createAgreementTable("Same model", repeatEntries, "repeat")
     );
   }
   if (crossEntries.length) {
-    els.agreementPanel.appendChild(
-      createAgreementTable("Cross-Model Agreement", crossEntries, "cross")
+    container.appendChild(
+      createAgreementTable("Cross-Model", crossEntries, "cross")
     );
   }
 }
@@ -7142,7 +7201,6 @@ function render() {
   updateResetFiltersButton();
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
-  renderAgreement(state.filtered);
   renderTokenSignals(state.filtered);
   renderTable(state.filtered);
   requestAnimationFrame(() => {
@@ -7154,9 +7212,6 @@ function renderError(message, preserveExisting = false) {
   els.heroSubtitle.innerHTML = `<span class="warn">${message}</span>`;
   if (!preserveExisting) {
     els.leaderboardChart.innerHTML = "";
-    if (els.agreementPanel) {
-      els.agreementPanel.innerHTML = "";
-    }
     els.tokenChart.innerHTML = "";
     els.runsTableBody.innerHTML = "";
     closeRunModal();

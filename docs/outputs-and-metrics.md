@@ -54,6 +54,7 @@ It stores only aggregate statistics, not per-example predictions:
 - overlap counts, run/model counts, and run references needed by the dashboard
 
 Comparable task variants are matched automatically from the output rows plus normalized tags, so task renames can still be linked when the underlying data are the same.
+The comparison key ignores the `open source` tag so that publication-status variants do not split otherwise comparable runs.
 
 ## Charts
 

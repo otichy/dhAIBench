@@ -52,7 +52,7 @@ In server mode the `Auto (Server)` source attempts, in order:
 
 The `Reload` button refreshes the current source.
 
-When `data/metrics/agreement_summary.json` is present, the dashboard loads it alongside the run metrics and enables the Agreement panel.
+When `data/metrics/agreement_summary.json` is present, the dashboard loads it alongside the run metrics and enables the Agreement tab inside `Leaderboard & Agreement`.
 
 Pricing metadata for the scatterplot and run details is loaded from `web/config_prices.js`.
 If you deploy the dashboard under a rewritten root or any setup that exposes only `web/`, make sure that file is published there as well.
@@ -180,12 +180,13 @@ On narrow screens or wide metric sets, the table can be scrolled horizontally.
 
 ## Agreement
 
-The Agreement panel reads the precomputed `agreement_summary.json` artifact.
+The `Agreement` tab reads the precomputed `agreement_summary.json` artifact.
 
-- `Repeated Runs (Same Model)` shows Krippendorff's alpha across repeated runs of one provider/model on the same comparable task variant
-- `Cross-Model Agreement` shows Krippendorff's alpha across one representative run per provider/model on the same comparable task variant
-- `Cross-Model Rep` switches between the `Latest` and `Best Accuracy` representative policies
-- the panel only shows groups fully represented inside the current filter, so restrictive time/model filters can hide otherwise valid agreement groups
+- the `Agreement` switch selects `Same model` or `Cross-Model`
+- `Same model` shows Krippendorff's alpha across repeated runs of one provider/model on the same comparable task variant
+- `Cross-Model` shows Krippendorff's alpha across one representative run per provider/model on the same comparable task variant
+- `Cross-Model Rep` appears only in `Cross-Model` mode and switches between the `Latest` and `Best Accuracy` representative policies
+- the tab only shows groups fully represented inside the current filter, so restrictive time/model filters can hide otherwise valid agreement groups
 
 ### Radar Tab
 

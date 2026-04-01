@@ -104,6 +104,7 @@ TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS = 120.0
 AGREEMENT_SUMMARY_FILENAME = "agreement_summary.json"
 AGREEMENT_SUMMARY_VERSION = 1
 AGREEMENT_CROSS_MODEL_POLICIES: Tuple[str, ...] = ("latest", "best_accuracy")
+AGREEMENT_IGNORED_COMPARISON_TAGS: Tuple[str, ...] = ("open source",)
 DEFAULT_SYSTEM_PROMPT = "You are a linguistic classifier that excels at semantic disambiguation."
 RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
 OLD_RUN_BASENAME_RE = re.compile(
@@ -4358,9 +4359,18 @@ def parse_metrics_tags_for_agreement(raw_tags: Any) -> List[str]:
     return tags
 
 
+def filter_agreement_comparison_tags(tags: Iterable[str]) -> List[str]:
+    """Drop tags that should not affect agreement comparability."""
+    ignored = {tag.casefold() for tag in AGREEMENT_IGNORED_COMPARISON_TAGS}
+    return [tag for tag in tags if tag.casefold() not in ignored]
+
+
 def build_agreement_normalized_tag_key(raw_tags: Any) -> str:
     """Create a stable comparable tag key for agreement grouping."""
-    normalized_tags = sorted(tag.casefold() for tag in parse_metrics_tags_for_agreement(raw_tags))
+    normalized_tags = sorted(
+        tag.casefold()
+        for tag in filter_agreement_comparison_tags(parse_metrics_tags_for_agreement(raw_tags))
+    )
     return ";".join(normalized_tags)
 
 

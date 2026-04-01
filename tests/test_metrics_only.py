@@ -246,7 +246,7 @@ class MetricsOnlyTests(unittest.TestCase):
                         ],
                         "model-a",
                         "Stable Task",
-                        "alpha; beta",
+                        "open source; alpha; beta",
                     ),
                     (
                         os.path.join(
