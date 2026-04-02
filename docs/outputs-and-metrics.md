@@ -7,6 +7,7 @@ A benchmark run can create several artifacts:
 - predictions CSV: `data/output/<output_basename>.csv`
 - metrics JSON: `data/metrics/<output_basename>__metrics.json`
 - agreement summary JSON: `data/metrics/agreement_summary.json`
+- agreement clustering JSON: `data/metrics/agreement_clusters.json`
 - confusion heatmap: `data/metrics/<output_basename>__heatmap.png`
 - calibration plot: `data/metrics/<output_basename>__calibration.png`
 - prompt log: `data/logs/<output_basename>.log`
@@ -55,6 +56,18 @@ It stores only aggregate statistics, not per-example predictions:
 
 Comparable task variants are matched automatically from the output rows plus normalized tags, so task renames can still be linked when the underlying data are the same.
 The comparison key ignores the `open source` tag so that publication-status variants do not split otherwise comparable runs.
+
+## Agreement Clustering JSON
+
+`data/metrics/agreement_clusters.json` is rebuilt alongside the agreement summary.
+
+It stores privacy-safe cross-model similarity data for the Agreement tab:
+
+- one representative run per provider/model for each comparable task variant and representative policy
+- pairwise disagreement distances over overlapping rated items
+- average-linkage dendrogram merges for the full visible group
+
+The dashboard can use the stored pairwise distances to redraw the dendrogram for a filtered subset of visible models without requiring access to the original output CSVs.
 
 ## Charts
 

@@ -102,6 +102,7 @@ DEFAULT_TIMEOUT_PROBE_SAMPLE_SIZE = 60
 DEFAULT_TIMEOUT_PROBE_REPEATS = 2
 TIMEOUT_PROBE_RELAXED_TIMEOUT_SECONDS = 120.0
 AGREEMENT_SUMMARY_FILENAME = "agreement_summary.json"
+AGREEMENT_CLUSTERS_FILENAME = "agreement_clusters.json"
 AGREEMENT_SUMMARY_VERSION = 1
 AGREEMENT_CROSS_MODEL_POLICIES: Tuple[str, ...] = ("latest", "best_accuracy")
 AGREEMENT_IGNORED_COMPARISON_TAGS: Tuple[str, ...] = ("open source",)
@@ -4304,6 +4305,7 @@ class AgreementRunSnapshot:
     timestamp: str
     timestamp_sort_key: float
     accuracy: Optional[float]
+    cohen_kappa: Optional[float]
     prediction_by_id: Dict[str, str]
     rated_item_count: int
 
@@ -4456,6 +4458,11 @@ def load_agreement_run_snapshot(metrics_path: str) -> Optional[AgreementRunSnaps
         return None
 
     normalized_metrics = ensure_metrics_metadata_fields(copy.deepcopy(payload), metrics_path)
+    restored_label_metrics = restore_label_metrics_from_existing_payload(normalized_metrics)
+    if normalized_metrics.get("accuracy") is None and restored_label_metrics.get("accuracy") is not None:
+        normalized_metrics["accuracy"] = restored_label_metrics.get("accuracy")
+    if normalized_metrics.get("cohen_kappa") is None and restored_label_metrics.get("cohen_kappa") is not None:
+        normalized_metrics["cohen_kappa"] = restored_label_metrics.get("cohen_kappa")
     run_config = normalized_metrics.get("run_config") if isinstance(normalized_metrics.get("run_config"), dict) else {}
     model_details = (
         normalized_metrics.get("model_details")
@@ -4521,6 +4528,7 @@ def load_agreement_run_snapshot(metrics_path: str) -> Optional[AgreementRunSnaps
             run_stem,
         ),
         accuracy=parse_optional_float(normalized_metrics.get("accuracy")),
+        cohen_kappa=parse_optional_float(normalized_metrics.get("cohen_kappa")),
         prediction_by_id=prediction_by_id,
         rated_item_count=rated_item_count,
     )
@@ -4631,6 +4639,39 @@ def choose_best_accuracy_agreement_run(runs: List[AgreementRunSnapshot]) -> Agre
     return choose_latest_agreement_run(runs)
 
 
+def select_cross_model_representatives(
+    comparable_runs: List[AgreementRunSnapshot],
+    policy: str,
+) -> List[AgreementRunSnapshot]:
+    """Choose one representative run per provider/model for cross-model comparisons."""
+    if policy not in AGREEMENT_CROSS_MODEL_POLICIES:
+        return []
+
+    runs_by_model: Dict[str, List[AgreementRunSnapshot]] = defaultdict(list)
+    for item in comparable_runs:
+        runs_by_model[item.model_key].append(item)
+
+    if len(runs_by_model) < 2:
+        return []
+
+    representatives: List[AgreementRunSnapshot] = []
+    for model_runs in runs_by_model.values():
+        if policy == "best_accuracy":
+            representatives.append(choose_best_accuracy_agreement_run(model_runs))
+        else:
+            representatives.append(choose_latest_agreement_run(model_runs))
+
+    return sorted(
+        representatives,
+        key=lambda item: (
+            item.provider.casefold(),
+            item.model.casefold(),
+            -item.timestamp_sort_key,
+            item.run_stem,
+        ),
+    )
+
+
 def get_agreement_group_task_name(runs: List[AgreementRunSnapshot]) -> str:
     """Prefer the newest non-empty task name seen inside a comparable group."""
     candidates = [item for item in runs if item.task_name]
@@ -4714,38 +4755,14 @@ def build_cross_model_agreement_entry(
     policy: str,
 ) -> Optional[Dict[str, Any]]:
     """Build a cross-model agreement entry with one representative run per provider/model."""
-    if policy not in AGREEMENT_CROSS_MODEL_POLICIES:
+    ordered_reps = select_cross_model_representatives(comparable_runs, policy)
+    if len(ordered_reps) < 2:
         return None
 
-    runs_by_model: Dict[str, List[AgreementRunSnapshot]] = defaultdict(list)
-    for item in comparable_runs:
-        runs_by_model[item.model_key].append(item)
-
-    if len(runs_by_model) < 2:
-        return None
-
-    representatives: List[AgreementRunSnapshot] = []
-    for model_runs in runs_by_model.values():
-        if policy == "best_accuracy":
-            representatives.append(choose_best_accuracy_agreement_run(model_runs))
-        else:
-            representatives.append(choose_latest_agreement_run(model_runs))
-
-    alpha_stats = compute_nominal_krippendorff_alpha(
-        [item.prediction_by_id for item in representatives]
-    )
+    alpha_stats = compute_nominal_krippendorff_alpha([item.prediction_by_id for item in ordered_reps])
     if alpha_stats.get("alpha") is None:
         return None
 
-    ordered_reps = sorted(
-        representatives,
-        key=lambda item: (
-            item.provider.casefold(),
-            item.model.casefold(),
-            -item.timestamp_sort_key,
-            item.run_stem,
-        ),
-    )
     task_fingerprint, normalized_tag_key = comparable_key
     group_id_seed = f"cross::{policy}::{task_fingerprint}::{normalized_tag_key}"
     return {
@@ -4771,9 +4788,163 @@ def build_cross_model_agreement_entry(
                 "metrics_file": item.metrics_file_name,
                 "timestamp": item.timestamp,
                 "accuracy": item.accuracy,
+                "cohen_kappa": item.cohen_kappa,
             }
             for item in ordered_reps
         ],
+    }
+
+
+def compute_pairwise_prediction_distance(
+    prediction_a: Dict[str, str],
+    prediction_b: Dict[str, str],
+) -> Dict[str, Any]:
+    """Measure nominal disagreement between two runs over their overlapping rated items."""
+    overlap_ids = sorted(set(prediction_a.keys()) & set(prediction_b.keys()))
+    overlap_count = len(overlap_ids)
+    if overlap_count <= 0:
+        return {
+            "distance": None,
+            "overlap_count": 0,
+            "agreement_count": 0,
+            "disagreement_count": 0,
+        }
+
+    disagreement_count = sum(1 for example_id in overlap_ids if prediction_a[example_id] != prediction_b[example_id])
+    agreement_count = overlap_count - disagreement_count
+    return {
+        "distance": float(disagreement_count) / float(overlap_count),
+        "overlap_count": overlap_count,
+        "agreement_count": agreement_count,
+        "disagreement_count": disagreement_count,
+    }
+
+
+def compute_average_linkage_from_pairwise_distances(
+    leaf_count: int,
+    pairwise_distances: Dict[Tuple[int, int], float],
+) -> Optional[List[List[Any]]]:
+    """Build an average-linkage dendrogram from a leaf-distance matrix."""
+    if leaf_count < 2:
+        return []
+
+    active_cluster_ids: List[int] = list(range(leaf_count))
+    cluster_members: Dict[int, List[int]] = {cluster_id: [cluster_id] for cluster_id in active_cluster_ids}
+    next_cluster_id = leaf_count
+    linkage: List[List[Any]] = []
+
+    def get_cluster_distance(left_cluster_id: int, right_cluster_id: int) -> Optional[float]:
+        distances: List[float] = []
+        for left_leaf in cluster_members.get(left_cluster_id, []):
+            for right_leaf in cluster_members.get(right_cluster_id, []):
+                key = (left_leaf, right_leaf) if left_leaf < right_leaf else (right_leaf, left_leaf)
+                distance = pairwise_distances.get(key)
+                if distance is None:
+                    continue
+                distances.append(distance)
+        if not distances:
+            return None
+        return sum(distances) / float(len(distances))
+
+    while len(active_cluster_ids) > 1:
+        best_pair: Optional[Tuple[int, int]] = None
+        best_sort_key: Optional[Tuple[float, int, int]] = None
+        for left_index, left_cluster_id in enumerate(active_cluster_ids):
+            for right_cluster_id in active_cluster_ids[left_index + 1 :]:
+                distance = get_cluster_distance(left_cluster_id, right_cluster_id)
+                if distance is None:
+                    continue
+                sort_key = (distance, min(left_cluster_id, right_cluster_id), max(left_cluster_id, right_cluster_id))
+                if best_sort_key is None or sort_key < best_sort_key:
+                    best_sort_key = sort_key
+                    best_pair = (left_cluster_id, right_cluster_id)
+
+        if best_pair is None or best_sort_key is None:
+            return None
+
+        left_cluster_id, right_cluster_id = best_pair
+        merged_members = sorted(cluster_members[left_cluster_id] + cluster_members[right_cluster_id])
+        linkage.append([left_cluster_id, right_cluster_id, best_sort_key[0], len(merged_members)])
+        cluster_members[next_cluster_id] = merged_members
+        active_cluster_ids = [
+            cluster_id
+            for cluster_id in active_cluster_ids
+            if cluster_id not in {left_cluster_id, right_cluster_id}
+        ]
+        active_cluster_ids.append(next_cluster_id)
+        next_cluster_id += 1
+
+    return linkage
+
+
+def build_cross_model_cluster_entry(
+    comparable_key: Tuple[str, str],
+    comparable_runs: List[AgreementRunSnapshot],
+    policy: str,
+) -> Optional[Dict[str, Any]]:
+    """Build a cross-model similarity payload with pairwise distances and linkage."""
+    ordered_reps = select_cross_model_representatives(comparable_runs, policy)
+    if len(ordered_reps) < 2:
+        return None
+
+    pairwise_entries: List[Dict[str, Any]] = []
+    pairwise_distance_lookup: Dict[Tuple[int, int], float] = {}
+    comparable_pair_count = 0
+    for left_index in range(len(ordered_reps)):
+        for right_index in range(left_index + 1, len(ordered_reps)):
+            pairwise_stats = compute_pairwise_prediction_distance(
+                ordered_reps[left_index].prediction_by_id,
+                ordered_reps[right_index].prediction_by_id,
+            )
+            distance = pairwise_stats.get("distance")
+            if distance is not None:
+                pairwise_distance_lookup[(left_index, right_index)] = float(distance)
+                comparable_pair_count += 1
+            pairwise_entries.append(
+                {
+                    "a": left_index,
+                    "b": right_index,
+                    "distance": distance,
+                    "overlap_count": pairwise_stats.get("overlap_count"),
+                    "agreement_count": pairwise_stats.get("agreement_count"),
+                    "disagreement_count": pairwise_stats.get("disagreement_count"),
+                }
+            )
+
+    if comparable_pair_count <= 0:
+        return None
+
+    linkage = compute_average_linkage_from_pairwise_distances(len(ordered_reps), pairwise_distance_lookup)
+    task_fingerprint, normalized_tag_key = comparable_key
+    group_id_seed = f"cross::{policy}::{task_fingerprint}::{normalized_tag_key}"
+    return {
+        "group_id": hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16],
+        "representative_policy": policy,
+        "task_fingerprint": task_fingerprint,
+        "normalized_tag_key": normalized_tag_key,
+        "task_name_display": get_agreement_group_task_name(comparable_runs),
+        "task_names_seen": sorted({item.task_name for item in comparable_runs if item.task_name}),
+        "tags_display": get_agreement_group_tags_display(comparable_runs),
+        "model_count": len(ordered_reps),
+        "distance_metric": "nominal_disagreement_rate",
+        "linkage_method": "average",
+        "comparable_pair_count": comparable_pair_count,
+        "representative_run_stems": [item.run_stem for item in ordered_reps],
+        "representatives": [
+            {
+                "provider": item.provider,
+                "model": item.model,
+                "run_stem": item.run_stem,
+                "metrics_file": item.metrics_file_name,
+                "timestamp": item.timestamp,
+                "accuracy": item.accuracy,
+                "cohen_kappa": item.cohen_kappa,
+            }
+            for item in ordered_reps
+        ],
+        "pairwise": pairwise_entries,
+        "linkage": linkage or [],
+        "linkage_complete": bool(linkage) and len(linkage) == max(len(ordered_reps) - 1, 0),
     }
 
 
@@ -4837,6 +5008,39 @@ def build_agreement_summary_payload(runs: List[AgreementRunSnapshot]) -> Dict[st
     }
 
 
+def build_agreement_clusters_payload(runs: List[AgreementRunSnapshot]) -> Dict[str, Any]:
+    """Aggregate cross-model similarity trees for the dashboard."""
+    comparable_groups: Dict[Tuple[str, str], List[AgreementRunSnapshot]] = defaultdict(list)
+    for item in runs:
+        comparable_groups[(item.task_fingerprint, item.normalized_tag_key)].append(item)
+
+    cross_model_groups: Dict[str, List[Dict[str, Any]]] = {
+        policy: [] for policy in AGREEMENT_CROSS_MODEL_POLICIES
+    }
+
+    for comparable_key, comparable_runs in comparable_groups.items():
+        for policy in AGREEMENT_CROSS_MODEL_POLICIES:
+            cluster_entry = build_cross_model_cluster_entry(comparable_key, comparable_runs, policy)
+            if cluster_entry is not None:
+                cross_model_groups[policy].append(cluster_entry)
+
+    for policy in AGREEMENT_CROSS_MODEL_POLICIES:
+        cross_model_groups[policy].sort(
+            key=lambda item: (
+                str(item.get("task_name_display") or "").casefold(),
+                str(item.get("tags_display") or "").casefold(),
+                -int(item.get("model_count") or 0),
+            )
+        )
+
+    return {
+        "version": AGREEMENT_SUMMARY_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_count": len(runs),
+        "cross_model": cross_model_groups,
+    }
+
+
 def refresh_agreement_summary() -> str:
     """Rebuild the published agreement summary from all available metrics/output artifacts."""
     ensure_data_layout()
@@ -4850,16 +5054,23 @@ def refresh_agreement_summary() -> str:
             snapshots.append(snapshot)
 
     summary_payload = build_agreement_summary_payload(snapshots)
+    clusters_payload = build_agreement_clusters_payload(snapshots)
     summary_path = os.path.join(DEFAULT_METRICS_DIR, AGREEMENT_SUMMARY_FILENAME)
     with open(summary_path, "w", encoding="utf-8") as handle:
         json.dump(summary_payload, handle, indent=2, ensure_ascii=False)
+    clusters_path = os.path.join(DEFAULT_METRICS_DIR, AGREEMENT_CLUSTERS_FILENAME)
+    with open(clusters_path, "w", encoding="utf-8") as handle:
+        json.dump(clusters_payload, handle, indent=2, ensure_ascii=False)
 
     logging.info(
-        "Refreshed agreement summary at %s (%d repeat groups, %d latest cross-model groups, %d best-accuracy cross-model groups).",
+        "Refreshed agreement summary at %s and clustering at %s (%d repeat groups, %d latest cross-model groups, %d best-accuracy cross-model groups, %d latest trees, %d best-accuracy trees).",
         summary_path,
+        clusters_path,
         len(summary_payload.get("repeat_groups", [])),
         len(((summary_payload.get("cross_model") or {}).get("latest") or [])),
         len(((summary_payload.get("cross_model") or {}).get("best_accuracy") or [])),
+        len(((clusters_payload.get("cross_model") or {}).get("latest") or [])),
+        len(((clusters_payload.get("cross_model") or {}).get("best_accuracy") or [])),
     )
     return summary_path
 

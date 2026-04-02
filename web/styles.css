@@ -1400,12 +1400,104 @@ select[multiple] option.is-selected {
   font-size: 0.88rem;
 }
 
+.agreement-clusters-section {
+  gap: 0.65rem;
+}
+
+.agreement-cluster-card {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+}
+
+.agreement-cluster-card h4 {
+  margin: 0;
+}
+
+.agreement-cluster-subtitle {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.agreement-cluster-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.agreement-cluster-branch {
+  stroke: color-mix(in srgb, var(--accent) 28%, var(--line-strong));
+  stroke-width: 1.6;
+  fill: none;
+}
+
+.agreement-cluster-merge-dot {
+  fill: color-mix(in srgb, var(--paper-strong) 90%, white 10%);
+  stroke: color-mix(in srgb, var(--accent) 60%, var(--line-strong));
+  stroke-width: 1.6;
+  cursor: help;
+}
+
+.agreement-cluster-merge-dot:hover,
+.agreement-cluster-merge-dot:focus-visible {
+  fill: color-mix(in srgb, var(--accent) 16%, var(--paper-strong));
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.agreement-cluster-grid {
+  stroke: color-mix(in srgb, var(--line-strong) 30%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+
+.agreement-cluster-leaf-dot {
+  stroke: color-mix(in srgb, var(--paper-strong) 72%, white 28%);
+  stroke-width: 1.1;
+}
+
+.agreement-cluster-label {
+  fill: var(--ink);
+  font-size: 11px;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+
+.agreement-cluster-axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.agreement-cluster-tick-label {
+  fill: color-mix(in srgb, var(--ink) 78%, var(--muted) 22%);
+  font-size: 10px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.agreement-tree-btn {
+  margin-inline: auto;
+  color: color-mix(in srgb, var(--ink) 82%, var(--accent) 18%);
+}
+
+.agreement-tree-btn:hover,
+.agreement-tree-btn:focus-visible {
+  color: var(--accent);
+}
+
 .agreement-table-wrap {
   margin-top: 0.1rem;
 }
 
 .agreement-table {
   min-width: 720px;
+}
+
+.agreement-table .agreement-tree-col {
+  text-align: center;
 }
 
 .agreement-cell-primary {
@@ -1434,6 +1526,15 @@ select[multiple] option.is-selected {
   content: "->";
   font-family: "IBM Plex Mono", monospace;
   animation: scroll-hint-nudge 1.25s ease-in-out infinite;
+}
+
+.cluster-modal-card {
+  width: min(1320px, 98vw);
+}
+
+.cluster-modal-content {
+  display: grid;
+  gap: 0.7rem;
 }
 
 .leaderboard-run-cell {

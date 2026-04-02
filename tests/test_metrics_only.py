@@ -323,6 +323,45 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertIsNotNone(cross_best[0].get("alpha_nominal"))
                 self.assertAlmostEqual(cross_best[0].get("alpha_nominal", 999.0), 0.0, places=8)
 
+                clusters_path = os.path.join(ba.DEFAULT_METRICS_DIR, ba.AGREEMENT_CLUSTERS_FILENAME)
+                self.assertTrue(os.path.exists(clusters_path))
+                with open(clusters_path, "r", encoding="utf-8") as handle:
+                    clusters_payload = json.load(handle)
+
+                cross_latest_clusters = ((clusters_payload.get("cross_model") or {}).get("latest") or [])
+                self.assertEqual(len(cross_latest_clusters), 1)
+                latest_cluster = cross_latest_clusters[0]
+                self.assertEqual(latest_cluster.get("model_count"), 2)
+                self.assertEqual(latest_cluster.get("distance_metric"), "nominal_disagreement_rate")
+                self.assertEqual(latest_cluster.get("linkage_method"), "average")
+                latest_representatives = latest_cluster.get("representatives") or []
+                self.assertEqual(len(latest_representatives), 2)
+                self.assertEqual(
+                    sorted(item.get("cohen_kappa") for item in latest_representatives),
+                    [0.0, 0.0],
+                )
+                latest_pairwise = latest_cluster.get("pairwise") or []
+                self.assertEqual(len(latest_pairwise), 1)
+                self.assertEqual(latest_pairwise[0].get("overlap_count"), 2)
+                self.assertEqual(latest_pairwise[0].get("disagreement_count"), 0)
+                self.assertIsNotNone(latest_pairwise[0].get("distance"))
+                self.assertAlmostEqual(latest_pairwise[0].get("distance"), 0.0, places=8)
+                self.assertEqual(latest_cluster.get("linkage"), [[0, 1, 0.0, 2]])
+
+                cross_best_clusters = ((clusters_payload.get("cross_model") or {}).get("best_accuracy") or [])
+                self.assertEqual(len(cross_best_clusters), 1)
+                best_representatives = cross_best_clusters[0].get("representatives") or []
+                self.assertEqual(len(best_representatives), 2)
+                self.assertEqual(
+                    sorted(item.get("cohen_kappa") for item in best_representatives),
+                    [0.0, 1.0],
+                )
+                best_pairwise = (cross_best_clusters[0].get("pairwise") or [])[0]
+                self.assertEqual(best_pairwise.get("overlap_count"), 2)
+                self.assertEqual(best_pairwise.get("disagreement_count"), 1)
+                self.assertIsNotNone(best_pairwise.get("distance"))
+                self.assertAlmostEqual(best_pairwise.get("distance"), 0.5, places=8)
+
     def test_metrics_only_agreement_refresh_groups_comparable_runs_across_task_renames(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):

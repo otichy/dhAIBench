@@ -1,6 +1,7 @@
 const STORAGE_KEY = "dhAIBench.metricsDashboard.state.v1";
 const METRICS_MANIFEST_PATH = "./metrics-manifest.json";
 const AGREEMENT_SUMMARY_FILENAME = "agreement_summary.json";
+const AGREEMENT_CLUSTERS_FILENAME = "agreement_clusters.json";
 const METRICS_SERVER_DIR = "../data/metrics";
 const METRICS_SERVER_DIR_CANDIDATES = [METRICS_SERVER_DIR, "./metrics", "./data/metrics"];
 const DESKTOP_LAYOUT_BREAKPOINT = 1100;
@@ -61,6 +62,7 @@ const state = {
   sourceFileCount: 0,
   warnings: [],
   agreementSummary: null,
+  agreementClusters: null,
   repeatAgreementByRunStem: new Map(),
   crossAgreementByPolicyAndRunStem: {
     latest: new Map(),
@@ -135,6 +137,11 @@ const els = {
   runModalMeta: document.querySelector("#runModalMeta"),
   runModalContent: document.querySelector("#runModalContent"),
   runModalClose: document.querySelector("#runModalClose"),
+  clusterModal: document.querySelector("#clusterModal"),
+  clusterModalTitle: document.querySelector("#clusterModalTitle"),
+  clusterModalMeta: document.querySelector("#clusterModalMeta"),
+  clusterModalContent: document.querySelector("#clusterModalContent"),
+  clusterModalClose: document.querySelector("#clusterModalClose"),
   barRowTemplate: document.querySelector("#barRowTemplate"),
 };
 
@@ -1054,6 +1061,7 @@ function normalizeAgreementRepresentative(rawRepresentative) {
     metricsFile: asTrimmedString(rawRepresentative.metrics_file),
     timestamp: asTrimmedString(rawRepresentative.timestamp),
     accuracy: safeNum(rawRepresentative.accuracy),
+    cohenKappa: safeNum(rawRepresentative.cohen_kappa),
   };
 }
 
@@ -1111,6 +1119,96 @@ function normalizeAgreementSummary(payload) {
   };
 }
 
+function normalizeAgreementClusterPair(rawPair) {
+  if (!rawPair || typeof rawPair !== "object") {
+    return null;
+  }
+  const left = safeNum(rawPair.a);
+  const right = safeNum(rawPair.b);
+  if (!Number.isInteger(left) || !Number.isInteger(right) || left < 0 || right < 0 || left === right) {
+    return null;
+  }
+  return {
+    a: left,
+    b: right,
+    distance: safeNum(rawPair.distance),
+    overlapCount: safeNum(rawPair.overlap_count),
+    agreementCount: safeNum(rawPair.agreement_count),
+    disagreementCount: safeNum(rawPair.disagreement_count),
+  };
+}
+
+function normalizeAgreementClusterLinkageStep(rawStep) {
+  if (!Array.isArray(rawStep) || rawStep.length < 4) {
+    return null;
+  }
+  const left = safeNum(rawStep[0]);
+  const right = safeNum(rawStep[1]);
+  const distance = safeNum(rawStep[2]);
+  const count = safeNum(rawStep[3]);
+  if (
+    !Number.isInteger(left) ||
+    !Number.isInteger(right) ||
+    !Number.isFinite(distance) ||
+    !Number.isInteger(count)
+  ) {
+    return null;
+  }
+  return [left, right, distance, count];
+}
+
+function normalizeAgreementClusterEntry(rawEntry, policy = "") {
+  if (!rawEntry || typeof rawEntry !== "object") {
+    return null;
+  }
+
+  const representatives = Array.isArray(rawEntry.representatives)
+    ? rawEntry.representatives.map(normalizeAgreementRepresentative).filter(Boolean)
+    : [];
+  const pairwise = Array.isArray(rawEntry.pairwise)
+    ? rawEntry.pairwise.map(normalizeAgreementClusterPair).filter(Boolean)
+    : [];
+  const linkage = Array.isArray(rawEntry.linkage)
+    ? rawEntry.linkage.map(normalizeAgreementClusterLinkageStep).filter(Boolean)
+    : [];
+
+  return {
+    groupId: asTrimmedString(rawEntry.group_id),
+    policy: asTrimmedString(rawEntry.representative_policy) || policy,
+    taskNameDisplay: asTrimmedString(rawEntry.task_name_display),
+    taskNamesSeen: uniqueNonEmptyStrings(rawEntry.task_names_seen || []),
+    tagsDisplay: asTrimmedString(rawEntry.tags_display),
+    modelCount: safeNum(rawEntry.model_count),
+    distanceMetric: asTrimmedString(rawEntry.distance_metric),
+    linkageMethod: asTrimmedString(rawEntry.linkage_method),
+    comparablePairCount: safeNum(rawEntry.comparable_pair_count),
+    linkageComplete: Boolean(rawEntry.linkage_complete),
+    representatives,
+    pairwise,
+    linkage,
+  };
+}
+
+function normalizeAgreementClusters(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const crossModelRaw = payload.cross_model && typeof payload.cross_model === "object" ? payload.cross_model : {};
+  const crossModel = {};
+  AGREEMENT_REPRESENTATIVE_POLICY_KEYS.forEach((policy) => {
+    crossModel[policy] = Array.isArray(crossModelRaw[policy])
+      ? crossModelRaw[policy].map((entry) => normalizeAgreementClusterEntry(entry, policy)).filter(Boolean)
+      : [];
+  });
+
+  return {
+    generatedAt: asTrimmedString(payload.generated_at),
+    runCount: safeNum(payload.run_count),
+    crossModel,
+  };
+}
+
 function parseAgreementSummaryText(filePath, rawText, warnings) {
   let payload;
   try {
@@ -1128,6 +1226,29 @@ function parseAgreementSummaryText(filePath, rawText, warnings) {
     warnings.push({
       file: filePath,
       message: "Agreement summary has an unexpected JSON structure.",
+    });
+    return null;
+  }
+  return normalized;
+}
+
+function parseAgreementClustersText(filePath, rawText, warnings) {
+  let payload;
+  try {
+    payload = JSON.parse(rawText);
+  } catch (error) {
+    warnings.push({
+      file: filePath,
+      message: `Agreement clusters are invalid JSON (${error.message}).`,
+    });
+    return null;
+  }
+
+  const normalized = normalizeAgreementClusters(payload);
+  if (!normalized) {
+    warnings.push({
+      file: filePath,
+      message: "Agreement clusters have an unexpected JSON structure.",
     });
     return null;
   }
@@ -1407,6 +1528,39 @@ async function loadAgreementSummaryFromServer(manifestBaseDirs = [], warnings = 
   return null;
 }
 
+async function loadAgreementClustersFromServer(manifestBaseDirs = [], warnings = []) {
+  const candidatePaths = uniqueNonEmptyStrings([
+    ...manifestBaseDirs.map((dir) => joinPath(trimTrailingSlash(dir), AGREEMENT_CLUSTERS_FILENAME)),
+    ...METRICS_SERVER_DIR_CANDIDATES.map((dir) => joinPath(trimTrailingSlash(dir), AGREEMENT_CLUSTERS_FILENAME)),
+  ]);
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      const response = await fetch(candidatePath, { cache: "no-store" });
+      if (!response.ok) {
+        if (response.status !== 404) {
+          warnings.push({
+            file: candidatePath,
+            message: `Agreement clusters fetch failed (HTTP ${response.status}).`,
+          });
+        }
+        continue;
+      }
+      const text = await response.text();
+      const clusters = parseAgreementClustersText(candidatePath, text, warnings);
+      if (clusters) {
+        return clusters;
+      }
+    } catch (error) {
+      warnings.push({
+        file: candidatePath,
+        message: `Agreement clusters fetch failed (${error.message}).`,
+      });
+    }
+  }
+  return null;
+}
+
 async function loadFromServer(onProgress = null) {
   const discovery = await discoverMetricFilesFromServer();
   const files = discovery.files;
@@ -1415,6 +1569,7 @@ async function loadFromServer(onProgress = null) {
   let runs = await loadRunsFromServerFileList(files, manifestBaseDirs, warnings, onProgress);
   let fileCount = files.length;
   const agreementSummary = await loadAgreementSummaryFromServer(manifestBaseDirs, warnings);
+  const agreementClusters = await loadAgreementClustersFromServer(manifestBaseDirs, warnings);
 
   if (!runs.length && discovery.source === "manifest") {
     try {
@@ -1438,6 +1593,7 @@ async function loadFromServer(onProgress = null) {
     fileCount,
     runs: dedupeRuns(runs),
     agreementSummary,
+    agreementClusters,
     warnings,
   };
 }
@@ -1445,6 +1601,7 @@ async function loadFromServer(onProgress = null) {
 async function collectMetricFilesFromDirectoryHandle(dirHandle, prefix = "") {
   const files = [];
   let agreementSummaryFile = null;
+  let agreementClustersFile = null;
   for await (const [name, entry] of dirHandle.entries()) {
     if (entry.kind === "file" && name.toLowerCase().endsWith("_metrics.json")) {
       files.push({
@@ -1464,15 +1621,29 @@ async function collectMetricFilesFromDirectoryHandle(dirHandle, prefix = "") {
       };
       continue;
     }
+    if (
+      entry.kind === "file" &&
+      name.toLowerCase() === AGREEMENT_CLUSTERS_FILENAME &&
+      agreementClustersFile === null
+    ) {
+      agreementClustersFile = {
+        path: `${prefix}${name}`,
+        handle: entry,
+      };
+      continue;
+    }
     if (entry.kind === "directory") {
       const nested = await collectMetricFilesFromDirectoryHandle(entry, `${prefix}${name}/`);
       files.push(...nested.metricFiles);
       if (!agreementSummaryFile && nested.agreementSummaryFile) {
         agreementSummaryFile = nested.agreementSummaryFile;
       }
+      if (!agreementClustersFile && nested.agreementClustersFile) {
+        agreementClustersFile = nested.agreementClustersFile;
+      }
     }
   }
-  return { metricFiles: files, agreementSummaryFile };
+  return { metricFiles: files, agreementSummaryFile, agreementClustersFile };
 }
 
 async function loadAgreementSummaryFromDirectoryHandle(summaryFileEntry, warnings) {
@@ -1492,14 +1663,32 @@ async function loadAgreementSummaryFromDirectoryHandle(summaryFileEntry, warning
   }
 }
 
+async function loadAgreementClustersFromDirectoryHandle(clustersFileEntry, warnings) {
+  if (!clustersFileEntry || !clustersFileEntry.handle) {
+    return null;
+  }
+  try {
+    const fileObj = await clustersFileEntry.handle.getFile();
+    const text = await fileObj.text();
+    return parseAgreementClustersText(clustersFileEntry.path, text, warnings);
+  } catch (error) {
+    warnings.push({
+      file: clustersFileEntry.path,
+      message: `Cannot read agreement clusters (${error.message}).`,
+    });
+    return null;
+  }
+}
+
 async function loadFromDirectoryHandle(dirHandle, onProgress = null) {
-  const { metricFiles, agreementSummaryFile } = await collectMetricFilesFromDirectoryHandle(dirHandle);
+  const { metricFiles, agreementSummaryFile, agreementClustersFile } = await collectMetricFilesFromDirectoryHandle(dirHandle);
   if (!metricFiles.length) {
     throw new Error("No *_metrics.json files found in selected folder.");
   }
 
   const warnings = [];
   const agreementSummary = await loadAgreementSummaryFromDirectoryHandle(agreementSummaryFile, warnings);
+  const agreementClusters = await loadAgreementClustersFromDirectoryHandle(agreementClustersFile, warnings);
   const runs = [];
   const total = metricFiles.length;
   if (typeof onProgress === "function") {
@@ -1533,6 +1722,7 @@ async function loadFromDirectoryHandle(dirHandle, onProgress = null) {
     fileCount: metricFiles.length,
     runs: dedupeRuns(runs),
     agreementSummary,
+    agreementClusters,
     warnings,
   };
 }
@@ -1545,6 +1735,10 @@ async function loadFromFiles(fileList, onProgress = null) {
     Array.from(fileList || []).find(
       (file) => String(file.name || "").toLowerCase() === AGREEMENT_SUMMARY_FILENAME
     ) || null;
+  const agreementClustersFile =
+    Array.from(fileList || []).find(
+      (file) => String(file.name || "").toLowerCase() === AGREEMENT_CLUSTERS_FILENAME
+    ) || null;
 
   if (!files.length) {
     throw new Error("No *_metrics.json files selected.");
@@ -1552,6 +1746,7 @@ async function loadFromFiles(fileList, onProgress = null) {
 
   const warnings = [];
   let agreementSummary = null;
+  let agreementClusters = null;
   if (agreementFile) {
     try {
       agreementSummary = parseAgreementSummaryText(
@@ -1563,6 +1758,20 @@ async function loadFromFiles(fileList, onProgress = null) {
       warnings.push({
         file: agreementFile.name,
         message: `Cannot read agreement summary (${error.message}).`,
+      });
+    }
+  }
+  if (agreementClustersFile) {
+    try {
+      agreementClusters = parseAgreementClustersText(
+        agreementClustersFile.name,
+        await agreementClustersFile.text(),
+        warnings
+      );
+    } catch (error) {
+      warnings.push({
+        file: agreementClustersFile.name,
+        message: `Cannot read agreement clusters (${error.message}).`,
       });
     }
   }
@@ -1599,6 +1808,7 @@ async function loadFromFiles(fileList, onProgress = null) {
     fileCount: files.length,
     runs: dedupeRuns(runs),
     agreementSummary,
+    agreementClusters,
     warnings,
   };
 }
@@ -5892,6 +6102,159 @@ function getVisibleCrossModelAgreementEntries(runs, policy = state.agreementRepr
   );
 }
 
+function getVisibleCrossModelClusterEntries(runs, policy = state.agreementRepresentativePolicy) {
+  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
+  const crossModel =
+    state.agreementClusters && state.agreementClusters.crossModel
+      ? state.agreementClusters.crossModel
+      : {};
+  const source = Array.isArray(crossModel[policy]) ? crossModel[policy] : [];
+  return source
+    .map((entry) => {
+      const indexMap = new Map();
+      const visibleRepresentatives = [];
+      (entry.representatives || []).forEach((representative, originalIndex) => {
+        if (!representative || !visibleRunStems.has(representative.runStem)) {
+          return;
+        }
+        indexMap.set(originalIndex, visibleRepresentatives.length);
+        visibleRepresentatives.push({
+          ...representative,
+          originalIndex,
+        });
+      });
+
+      if (visibleRepresentatives.length < 2) {
+        return null;
+      }
+
+      const visiblePairwise = (entry.pairwise || [])
+        .filter(
+          (pair) =>
+            pair &&
+            indexMap.has(pair.a) &&
+            indexMap.has(pair.b) &&
+            typeof pair.distance === "number" &&
+            Number.isFinite(pair.distance)
+        )
+        .map((pair) => ({
+          ...pair,
+          a: indexMap.get(pair.a),
+          b: indexMap.get(pair.b),
+        }));
+
+      return {
+        ...entry,
+        visibleRepresentatives,
+        visiblePairwise,
+        visibleModelCount: visibleRepresentatives.length,
+        fullVisible: visibleRepresentatives.length === (entry.representatives || []).length,
+      };
+    })
+    .filter(Boolean);
+}
+
+function computeAverageLinkageDendrogram(leafCount, pairwiseEntries) {
+  if (!Number.isInteger(leafCount) || leafCount < 2) {
+    return [];
+  }
+
+  const distanceLookup = new Map();
+  (pairwiseEntries || []).forEach((pair) => {
+    if (
+      !pair ||
+      !Number.isInteger(pair.a) ||
+      !Number.isInteger(pair.b) ||
+      pair.a < 0 ||
+      pair.b < 0 ||
+      pair.a === pair.b ||
+      typeof pair.distance !== "number" ||
+      !Number.isFinite(pair.distance)
+    ) {
+      return;
+    }
+    const left = Math.min(pair.a, pair.b);
+    const right = Math.max(pair.a, pair.b);
+    distanceLookup.set(`${left}|${right}`, pair.distance);
+  });
+
+  const activeClusterIds = [];
+  const clusterMembers = new Map();
+  for (let leafIndex = 0; leafIndex < leafCount; leafIndex += 1) {
+    activeClusterIds.push(leafIndex);
+    clusterMembers.set(leafIndex, [leafIndex]);
+  }
+
+  const linkage = [];
+  let nextClusterId = leafCount;
+
+  const getClusterDistance = (leftClusterId, rightClusterId) => {
+    const distances = [];
+    const leftLeaves = clusterMembers.get(leftClusterId) || [];
+    const rightLeaves = clusterMembers.get(rightClusterId) || [];
+    leftLeaves.forEach((leftLeaf) => {
+      rightLeaves.forEach((rightLeaf) => {
+        const left = Math.min(leftLeaf, rightLeaf);
+        const right = Math.max(leftLeaf, rightLeaf);
+        const distance = distanceLookup.get(`${left}|${right}`);
+        if (typeof distance === "number" && Number.isFinite(distance)) {
+          distances.push(distance);
+        }
+      });
+    });
+    if (!distances.length) {
+      return null;
+    }
+    return distances.reduce((sum, value) => sum + value, 0) / distances.length;
+  };
+
+  while (activeClusterIds.length > 1) {
+    let bestPair = null;
+    let bestSortKey = null;
+
+    for (let leftIndex = 0; leftIndex < activeClusterIds.length; leftIndex += 1) {
+      const leftClusterId = activeClusterIds[leftIndex];
+      for (let rightIndex = leftIndex + 1; rightIndex < activeClusterIds.length; rightIndex += 1) {
+        const rightClusterId = activeClusterIds[rightIndex];
+        const distance = getClusterDistance(leftClusterId, rightClusterId);
+        if (distance == null) {
+          continue;
+        }
+        const sortKey = [distance, Math.min(leftClusterId, rightClusterId), Math.max(leftClusterId, rightClusterId)];
+        if (
+          !bestSortKey ||
+          sortKey[0] < bestSortKey[0] ||
+          (sortKey[0] === bestSortKey[0] &&
+            (sortKey[1] < bestSortKey[1] || (sortKey[1] === bestSortKey[1] && sortKey[2] < bestSortKey[2])))
+        ) {
+          bestSortKey = sortKey;
+          bestPair = [leftClusterId, rightClusterId];
+        }
+      }
+    }
+
+    if (!bestPair || !bestSortKey) {
+      return null;
+    }
+
+    const [leftClusterId, rightClusterId] = bestPair;
+    const mergedMembers = [...(clusterMembers.get(leftClusterId) || []), ...(clusterMembers.get(rightClusterId) || [])]
+      .slice()
+      .sort((a, b) => a - b);
+    linkage.push([leftClusterId, rightClusterId, bestSortKey[0], mergedMembers.length]);
+    clusterMembers.set(nextClusterId, mergedMembers);
+    for (let index = activeClusterIds.length - 1; index >= 0; index -= 1) {
+      if (activeClusterIds[index] === leftClusterId || activeClusterIds[index] === rightClusterId) {
+        activeClusterIds.splice(index, 1);
+      }
+    }
+    activeClusterIds.push(nextClusterId);
+    nextClusterId += 1;
+  }
+
+  return linkage;
+}
+
 function createAgreementCell(label, primaryText, secondaryText = "") {
   const cell = document.createElement("td");
   cell.dataset.label = label;
@@ -5933,7 +6296,311 @@ function buildAgreementProviderModelLabel(provider, model) {
   return `${modelText || "Unknown model"} (${providerText})`;
 }
 
-function createAgreementTable(title, entries, mode) {
+function getAgreementClusterLeafOrder(leafCount, linkage) {
+  if (!Number.isInteger(leafCount) || leafCount <= 0) {
+    return [];
+  }
+  if (!Array.isArray(linkage) || !linkage.length) {
+    return Array.from({ length: leafCount }, (_, index) => index);
+  }
+
+  const childrenByClusterId = new Map();
+  linkage.forEach((step, index) => {
+    if (!Array.isArray(step) || step.length < 4) {
+      return;
+    }
+    childrenByClusterId.set(leafCount + index, {
+      left: step[0],
+      right: step[1],
+    });
+  });
+
+  const rootClusterId = leafCount + linkage.length - 1;
+  const orderedLeaves = [];
+  const visit = (clusterId) => {
+    if (clusterId < leafCount) {
+      orderedLeaves.push(clusterId);
+      return;
+    }
+    const children = childrenByClusterId.get(clusterId);
+    if (!children) {
+      return;
+    }
+    visit(children.left);
+    visit(children.right);
+  };
+  visit(rootClusterId);
+  if (orderedLeaves.length !== leafCount) {
+    return Array.from({ length: leafCount }, (_, index) => index);
+  }
+  return orderedLeaves;
+}
+
+function createAgreementClusterSvg(entry, linkage, options = {}) {
+  const leafCount = Array.isArray(entry.visibleRepresentatives) ? entry.visibleRepresentatives.length : 0;
+  if (!leafCount || !Array.isArray(linkage) || linkage.length !== leafCount - 1) {
+    return null;
+  }
+
+  const orderedLeafIndices = getAgreementClusterLeafOrder(leafCount, linkage);
+  const leafYByIndex = new Map();
+  const branchXByClusterId = new Map();
+  const branchYByClusterId = new Map();
+
+  const top = Number.isFinite(options.top) ? options.top : 20;
+  const bottom = Number.isFinite(options.bottom) ? options.bottom : 42;
+  const rowGap = Number.isFinite(options.rowGap) ? options.rowGap : 26;
+  const width = Number.isFinite(options.width) ? options.width : 980;
+  const leftLabelWidth = Number.isFinite(options.leftLabelWidth) ? options.leftLabelWidth : 370;
+  const rightPadding = Number.isFinite(options.rightPadding) ? options.rightPadding : 32;
+  const tickSteps = Number.isInteger(options.tickSteps) && options.tickSteps > 0 ? options.tickSteps : 4;
+  const branchStartX = leftLabelWidth + 16;
+  const branchWidth = Math.max(220, width - branchStartX - rightPadding);
+  const labelOffsetX = 12;
+  const labelX = branchStartX - labelOffsetX;
+  const height = top + bottom + Math.max(leafCount - 1, 0) * rowGap;
+  const maxDistance = linkage.reduce((max, step) => Math.max(max, safeNum(step[2]) || 0), 0);
+  const normalizedMaxDistance = maxDistance > 0 ? maxDistance : 1;
+  const toBranchX = (distance) => branchStartX + (Math.max(0, distance) / normalizedMaxDistance) * branchWidth;
+
+  orderedLeafIndices.forEach((leafIndex, orderIndex) => {
+    const y = top + orderIndex * rowGap;
+    leafYByIndex.set(leafIndex, y);
+    branchXByClusterId.set(leafIndex, branchStartX);
+    branchYByClusterId.set(leafIndex, y);
+  });
+
+  const svg = createSvgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "agreement-cluster-svg",
+    "aria-label": `${entry.taskNameDisplay || "Agreement"} similarity tree`,
+  });
+  const leafAreaBottomY = top + Math.max(leafCount - 1, 0) * rowGap;
+  const tickLabelY = leafAreaBottomY + 16;
+
+  for (let stepIndex = 0; stepIndex <= tickSteps; stepIndex += 1) {
+    const tickDistance = (maxDistance * stepIndex) / tickSteps;
+    const tickX = toBranchX(tickDistance);
+    const similarity = Math.max(0, 1 - tickDistance);
+
+    svg.appendChild(
+      createSvgNode("line", {
+        x1: tickX,
+        x2: tickX,
+        y1: top - 6,
+        y2: leafAreaBottomY + 4,
+        class: "agreement-cluster-grid",
+      })
+    );
+
+    const tickLabel = createSvgNode("text", {
+      x: tickX,
+      y: tickLabelY,
+      "text-anchor": "middle",
+      class: "agreement-cluster-tick-label",
+    });
+    tickLabel.textContent = `${formatNum(similarity * 100, 0)}%`;
+    svg.appendChild(tickLabel);
+  }
+
+  linkage.forEach((step, mergeIndex) => {
+    const [leftClusterId, rightClusterId, distance, mergedLeafCount] = step;
+    const clusterId = leafCount + mergeIndex;
+    const leftX = branchXByClusterId.get(leftClusterId);
+    const rightX = branchXByClusterId.get(rightClusterId);
+    const leftY = branchYByClusterId.get(leftClusterId);
+    const rightY = branchYByClusterId.get(rightClusterId);
+    if (
+      typeof leftX !== "number" ||
+      typeof rightX !== "number" ||
+      typeof leftY !== "number" ||
+      typeof rightY !== "number"
+    ) {
+      return;
+    }
+
+    const mergeX = toBranchX(distance);
+    const mergeTopY = Math.min(leftY, rightY);
+    const mergeBottomY = Math.max(leftY, rightY);
+    const mergeY = (leftY + rightY) / 2;
+
+    svg.appendChild(
+      createSvgNode("line", {
+        x1: mergeX,
+        x2: mergeX,
+        y1: mergeTopY,
+        y2: mergeBottomY,
+        class: "agreement-cluster-branch",
+      })
+    );
+    svg.appendChild(
+      createSvgNode("line", {
+        x1: leftX,
+        x2: mergeX,
+        y1: leftY,
+        y2: leftY,
+        class: "agreement-cluster-branch",
+      })
+    );
+    svg.appendChild(
+      createSvgNode("line", {
+        x1: rightX,
+        x2: mergeX,
+        y1: rightY,
+        y2: rightY,
+        class: "agreement-cluster-branch",
+      })
+    );
+
+    const mergeSimilarity = Math.max(0, 1 - Math.max(0, distance));
+    const mergeDot = createSvgNode("circle", {
+      cx: mergeX,
+      cy: mergeY,
+      r: 5.6,
+      class: "agreement-cluster-merge-dot",
+      tabindex: "0",
+    });
+    const mergeTitle = createSvgNode("title");
+    mergeTitle.textContent = [
+      `Merge similarity: ${formatNum(mergeSimilarity * 100, 1)}%`,
+      `Disagreement distance: ${formatNum(distance, 3)}`,
+      `Merged representatives: ${formatNum(mergedLeafCount, 0)}`,
+    ].join("\n");
+    mergeDot.appendChild(mergeTitle);
+    svg.appendChild(mergeDot);
+
+    branchXByClusterId.set(clusterId, mergeX);
+    branchYByClusterId.set(clusterId, mergeY);
+  });
+
+  orderedLeafIndices.forEach((leafIndex) => {
+    const representative = entry.visibleRepresentatives[leafIndex];
+    const y = leafYByIndex.get(leafIndex);
+    const style = getModelSeriesStyle(representative.model);
+    svg.appendChild(
+      createSvgNode("circle", {
+        cx: branchStartX,
+        cy: y,
+        r: 4.5,
+        class: "agreement-cluster-leaf-dot",
+        fill: style.color,
+      })
+    );
+
+    const label = createSvgNode("text", {
+      x: labelX,
+      y: y + 4,
+      "text-anchor": "end",
+      class: "agreement-cluster-label",
+    });
+    const labelParts = [buildAgreementProviderModelLabel(representative.provider, representative.model)];
+    if (representative.cohenKappa != null) {
+      labelParts.push(`κ ${formatNum(representative.cohenKappa, 3)}`);
+    }
+    label.textContent = labelParts.join(" | ");
+    svg.appendChild(label);
+  });
+
+  const axisLabel = createSvgNode("text", {
+    x: branchStartX + branchWidth / 2,
+    y: height - 4,
+    "text-anchor": "middle",
+    class: "agreement-cluster-axis-label",
+  });
+  axisLabel.textContent = "Similarity at cut (1 - disagreement distance)";
+  svg.appendChild(axisLabel);
+
+  return svg;
+}
+
+function createCrossModelClusterCard(entry) {
+  const card = document.createElement("section");
+  card.className = "agreement-cluster-card";
+
+  const heading = document.createElement("h4");
+  heading.textContent = entry.taskNameDisplay || "Cross-Model Similarity";
+  card.appendChild(heading);
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "agreement-cluster-subtitle muted";
+  const subsetNote = entry.fullVisible
+    ? `${formatNum(entry.visibleModelCount, 0)} visible model(s).`
+    : `Recomputed from ${formatNum(entry.visibleModelCount, 0)} visible of ${formatNum(entry.modelCount, 0)} total models.`;
+  subtitle.textContent = [
+    entry.tagsDisplay,
+    subsetNote,
+    "Distance = disagreement rate on overlapping rated items.",
+    "Cut labels show similarity at that threshold.",
+    "Hover merge dots for exact merge similarity.",
+    "Label suffix = representative run Cohen's kappa."
+  ]
+    .filter(Boolean)
+    .join(" ");
+  card.appendChild(subtitle);
+
+  const linkage = computeAverageLinkageDendrogram(entry.visibleRepresentatives.length, entry.visiblePairwise);
+  if (!Array.isArray(linkage) || linkage.length !== entry.visibleRepresentatives.length - 1) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Unable to build a similarity tree for the visible representatives because the pairwise distance graph is incomplete.";
+    card.appendChild(empty);
+    return card;
+  }
+
+  const svg = createAgreementClusterSvg(entry, linkage);
+  if (!svg) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Unable to build a similarity tree for this group.";
+    card.appendChild(empty);
+    return card;
+  }
+  card.appendChild(svg);
+  return card;
+}
+
+function createAgreementTreeButton(clusterEntry) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn icon-btn agreement-tree-btn";
+  button.title = "Open similarity tree";
+  button.setAttribute("aria-label", "Open similarity tree");
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 4v8"></path>
+      <path d="M6 12h6"></path>
+      <path d="M12 12v8"></path>
+      <path d="M12 20h6"></path>
+      <circle cx="6" cy="4" r="1.7"></circle>
+      <circle cx="6" cy="12" r="1.7"></circle>
+      <circle cx="12" cy="20" r="1.7"></circle>
+      <circle cx="18" cy="20" r="1.7"></circle>
+    </svg>
+  `;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openAgreementClusterModal(clusterEntry);
+  });
+  return button;
+}
+
+function createCrossModelClustersSection(entries) {
+  const section = document.createElement("section");
+  section.className = "agreement-section agreement-clusters-section";
+
+  const heading = document.createElement("h4");
+  heading.textContent = "Similarity Trees";
+  section.appendChild(heading);
+
+  entries.forEach((entry) => {
+    section.appendChild(createCrossModelClusterCard(entry));
+  });
+
+  return section;
+}
+
+function createAgreementTable(title, entries, mode, options = {}) {
   const section = document.createElement("section");
   section.className = "agreement-section";
 
@@ -5951,9 +6618,15 @@ function createAgreementTable(title, entries, mode) {
     mode === "repeat"
       ? ["Task", "Model", "Runs", "Repeat α", "Pairable Items"]
       : ["Task", "Models", "Cross-Model α", "Pairable Items", "Representatives"];
+  if (mode !== "repeat") {
+    columns.push("Tree");
+  }
   columns.forEach((labelText) => {
     const th = document.createElement("th");
     th.textContent = labelText;
+    if (labelText === "Tree") {
+      th.className = "agreement-tree-col";
+    }
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
@@ -5978,6 +6651,112 @@ function createAgreementTable(title, entries, mode) {
       tr.appendChild(createAgreementMetricCell("Repeat α", entry.alphaNominal));
       tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
     } else {
+      const clusterEntry =
+        options.clusterEntriesByGroupId instanceof Map ? options.clusterEntriesByGroupId.get(entry.groupId) || null : null;
+      tr.appendChild(createAgreementCountCell("Models", entry.modelCount));
+      tr.appendChild(createAgreementMetricCell("Cross-Model α", entry.alphaNominal));
+      tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
+      tr.appendChild(
+        createAgreementCell(
+          "Representatives",
+          (entry.representatives || [])
+            .map((representative) =>
+              buildAgreementProviderModelLabel(representative.provider, representative.model)
+            )
+            .join(", "),
+          (entry.representatives || [])
+            .map((representative) => {
+              const parts = [representative.model || "Unknown model"];
+              if (representative.accuracy != null) {
+                parts.push(`${formatNum(representative.accuracy, 2)}%`);
+              }
+              if (representative.timestamp) {
+                parts.push(formatDateOnly(representative.timestamp));
+              }
+              return parts.join(" | ");
+            })
+            .join(" ; ")
+        )
+      );
+      const actionCell = document.createElement("td");
+      actionCell.className = "agreement-tree-col";
+      actionCell.dataset.label = "Tree";
+      if (clusterEntry) {
+        actionCell.appendChild(createAgreementTreeButton(clusterEntry));
+      } else {
+        actionCell.innerHTML = '<span class="muted">N/A</span>';
+      }
+      tr.appendChild(actionCell);
+    }
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  section.appendChild(wrap);
+  return section;
+}
+
+function createAgreementTableV2(title, entries, mode, options = {}) {
+  const section = document.createElement("section");
+  section.className = "agreement-section";
+
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap agreement-table-wrap";
+  const table = document.createElement("table");
+  table.className = "agreement-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const columns =
+    mode === "repeat"
+      ? ["Task", "Model", "Runs", "Repeat α", "Pairable Items"]
+      : ["Tree", "Task", "Models", "Cross-Model α", "Pairable Items", "Representatives"];
+  columns.forEach((labelText) => {
+    const th = document.createElement("th");
+    th.textContent = labelText;
+    if (labelText === "Tree") {
+      th.className = "agreement-tree-col";
+    }
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  entries.forEach((entry) => {
+    const tr = document.createElement("tr");
+
+    if (mode === "repeat") {
+      tr.appendChild(createAgreementCell("Task", entry.taskNameDisplay, entry.tagsDisplay));
+      tr.appendChild(
+        createAgreementCell(
+          "Model",
+          buildAgreementProviderModelLabel(entry.provider, entry.model),
+          entry.taskNamesSeen && entry.taskNamesSeen.length > 1
+            ? `Names seen: ${entry.taskNamesSeen.join(" | ")}`
+            : ""
+        )
+      );
+      tr.appendChild(createAgreementCountCell("Runs", entry.runCount));
+      tr.appendChild(createAgreementMetricCell("Repeat α", entry.alphaNominal));
+      tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
+    } else {
+      const clusterEntry =
+        options.clusterEntriesByGroupId instanceof Map ? options.clusterEntriesByGroupId.get(entry.groupId) || null : null;
+      const actionCell = document.createElement("td");
+      actionCell.className = "agreement-tree-col";
+      actionCell.dataset.label = "Tree";
+      if (clusterEntry) {
+        actionCell.appendChild(createAgreementTreeButton(clusterEntry));
+      } else {
+        actionCell.innerHTML = '<span class="muted">N/A</span>';
+      }
+      tr.appendChild(actionCell);
+      tr.appendChild(createAgreementCell("Task", entry.taskNameDisplay, entry.tagsDisplay));
       tr.appendChild(createAgreementCountCell("Models", entry.modelCount));
       tr.appendChild(createAgreementMetricCell("Cross-Model α", entry.alphaNominal));
       tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
@@ -6082,6 +6861,10 @@ function renderAgreement(container, runs) {
   const crossEntries = showCrossModel
     ? getVisibleCrossModelAgreementEntries(runs, state.agreementRepresentativePolicy)
     : [];
+  const clusterEntries = showCrossModel
+    ? getVisibleCrossModelClusterEntries(runs, state.agreementRepresentativePolicy)
+    : [];
+  const clusterEntriesByGroupId = new Map((clusterEntries || []).map((entry) => [entry.groupId, entry]));
 
   const meta = document.createElement("p");
   meta.className = "agreement-note muted";
@@ -6090,11 +6873,11 @@ function renderAgreement(container, runs) {
     : "";
   meta.textContent =
     showCrossModel
-      ? `Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}).${generatedText}`
+      ? `Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}). Similarity trees are recomputed from the currently visible representatives.${generatedText}`
       : `Same-model agreement uses all repeated runs inside a comparable task variant.${generatedText}`;
   container.appendChild(meta);
 
-  if (!repeatEntries.length && !crossEntries.length) {
+  if (!repeatEntries.length && !crossEntries.length && !clusterEntries.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent =
@@ -6105,13 +6888,23 @@ function renderAgreement(container, runs) {
 
   if (repeatEntries.length) {
     container.appendChild(
-      createAgreementTable("Same model", repeatEntries, "repeat")
+      createAgreementTableV2("Same model", repeatEntries, "repeat")
     );
   }
   if (crossEntries.length) {
     container.appendChild(
-      createAgreementTable("Cross-Model", crossEntries, "cross")
+      createAgreementTableV2("Cross-Model", crossEntries, "cross", { clusterEntriesByGroupId })
     );
+  }
+  if (showCrossModel && !crossEntries.length && clusterEntries.length) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent =
+      "No full cross-model alpha groups are fully represented in the current filter. The similarity trees below still use the visible representatives.";
+    container.appendChild(note);
+  }
+  if (clusterEntries.length) {
+    container.appendChild(createCrossModelClustersSection(clusterEntries));
   }
 }
 
@@ -6476,6 +7269,14 @@ function truncateAxisLabel(label, maxChars = 14) {
   return `${text.slice(0, maxChars - 1)}...`;
 }
 
+function truncateRadarAxisLabel(label, maxChars = 22) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars - 1)}...`;
+}
+
 function getRadarSeriesColor(index, totalCount) {
   if (totalCount <= RADAR_COLORS.length) {
     return RADAR_COLORS[index % RADAR_COLORS.length];
@@ -6656,7 +7457,10 @@ function buildRadarSvg(tasks, seriesRows, metricKey, scaleMode, colorCount = ser
     text.setAttribute("x", String(lx));
     text.setAttribute("y", String(ly));
     text.setAttribute("text-anchor", lx >= center + 8 ? "start" : lx <= center - 8 ? "end" : "middle");
-    text.textContent = truncateAxisLabel(task);
+    text.textContent = truncateRadarAxisLabel(task);
+    const title = document.createElementNS(ns, "title");
+    title.textContent = String(task || "");
+    text.appendChild(title);
     svg.appendChild(text);
   });
 
@@ -7174,6 +7978,70 @@ function closeRunModal() {
   els.runModal.classList.add("hidden");
 }
 
+function fillAgreementClusterModalContent(entry) {
+  if (!entry) {
+    els.clusterModalTitle.textContent = "Similarity Tree";
+    els.clusterModalMeta.textContent = "No cluster selected.";
+    els.clusterModalContent.innerHTML = "";
+    return;
+  }
+
+  const linkage = computeAverageLinkageDendrogram(entry.visibleRepresentatives.length, entry.visiblePairwise);
+  const subsetNote = entry.fullVisible
+    ? `${formatNum(entry.visibleModelCount, 0)} visible model(s).`
+    : `Recomputed from ${formatNum(entry.visibleModelCount, 0)} visible of ${formatNum(entry.modelCount, 0)} total models.`;
+
+  els.clusterModalTitle.textContent = entry.taskNameDisplay || "Similarity Tree";
+  els.clusterModalMeta.textContent = [entry.tagsDisplay, subsetNote].filter(Boolean).join(" ");
+  els.clusterModalContent.innerHTML = "";
+
+  const note = document.createElement("p");
+  note.className = "muted";
+  note.textContent =
+    "Branch distance is disagreement rate on overlapping rated items. Vertical cut labels show similarity as 1 minus that disagreement distance. Hover the merge dots for exact merge similarity. The κ value next to each run is that representative run's Cohen's kappa against ground truth.";
+  els.clusterModalContent.appendChild(note);
+
+  if (!Array.isArray(linkage) || linkage.length !== entry.visibleRepresentatives.length - 1) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent =
+      "Unable to build a similarity tree for the visible representatives because the pairwise distance graph is incomplete.";
+    els.clusterModalContent.appendChild(empty);
+    return;
+  }
+
+  const svg = createAgreementClusterSvg(entry, linkage, {
+    width: 1280,
+    leftLabelWidth: 520,
+    rightPadding: 36,
+    rowGap: 30,
+    bottom: 48,
+  });
+  if (!svg) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Unable to build a similarity tree for this group.";
+    els.clusterModalContent.appendChild(empty);
+    return;
+  }
+  els.clusterModalContent.appendChild(svg);
+}
+
+function openAgreementClusterModal(entry) {
+  if (!entry || !els.clusterModal) {
+    return;
+  }
+  fillAgreementClusterModalContent(entry);
+  els.clusterModal.classList.remove("hidden");
+}
+
+function closeAgreementClusterModal() {
+  if (!els.clusterModal) {
+    return;
+  }
+  els.clusterModal.classList.add("hidden");
+}
+
 function setupModalControls() {
   els.runModalClose.addEventListener("click", closeRunModal);
   els.runModal.addEventListener("click", (event) => {
@@ -7181,9 +8049,22 @@ function setupModalControls() {
       closeRunModal();
     }
   });
+  if (els.clusterModalClose) {
+    els.clusterModalClose.addEventListener("click", closeAgreementClusterModal);
+  }
+  if (els.clusterModal) {
+    els.clusterModal.addEventListener("click", (event) => {
+      if (event.target === els.clusterModal) {
+        closeAgreementClusterModal();
+      }
+    });
+  }
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.runModal.classList.contains("hidden")) {
       closeRunModal();
+    }
+    if (event.key === "Escape" && els.clusterModal && !els.clusterModal.classList.contains("hidden")) {
+      closeAgreementClusterModal();
     }
   });
 }
@@ -7234,6 +8115,7 @@ function applyLoadedResult(result) {
 
   state.runs = result.runs;
   state.agreementSummary = result.agreementSummary || null;
+  state.agreementClusters = result.agreementClusters || null;
   rebuildAgreementLookups(state.agreementSummary);
   state.tasks = [...new Set(result.runs.map((run) => run.task))].sort((a, b) => a.localeCompare(b));
   state.models = [...new Set(result.runs.map((run) => run.model))].sort((a, b) => a.localeCompare(b));
