@@ -4502,7 +4502,9 @@ def load_agreement_run_snapshot(metrics_path: str) -> Optional[AgreementRunSnaps
         provider = str(parsed_basename.get("provider") or "").strip()
     if not model:
         model = str(parsed_basename.get("model") or "").strip()
-    tags_display = "; ".join(parse_metrics_tags_for_agreement(run_config.get("tags")))
+    tags_display = "; ".join(
+        filter_agreement_comparison_tags(parse_metrics_tags_for_agreement(run_config.get("tags")))
+    )
     return AgreementRunSnapshot(
         run_stem=run_stem,
         metrics_file_name=os.path.basename(metrics_path),

@@ -1312,6 +1312,31 @@ select[multiple] option.is-selected {
   font-size: 0.74rem;
 }
 
+.agreement-controls {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.agreement-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.agreement-control-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agreement-mode-toggle {
+  flex-wrap: nowrap;
+  gap: 0;
+}
+
 .agreement-section {
   display: grid;
   gap: 0.38rem;

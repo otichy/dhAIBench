@@ -3379,10 +3379,8 @@ function renderLeaderboardGroupSwitch() {
   if (!els.leaderboardGroupSwitch) {
     return;
   }
-  const showsAgreementModeSwitch = state.leaderboardTab === "agreement";
   const supportsGrouping =
-    showsAgreementModeSwitch
-    || state.leaderboardTab === "chart"
+    state.leaderboardTab === "chart"
     || state.leaderboardTab === "scatter"
     || state.leaderboardTab === "radar";
   els.leaderboardGroupSwitch.hidden = !supportsGrouping;
@@ -3393,38 +3391,16 @@ function renderLeaderboardGroupSwitch() {
 
   const label = document.createElement("span");
   label.className = "leaderboard-group-switch-label";
-  label.textContent = showsAgreementModeSwitch ? "Agreement" : "Group By";
+  label.textContent = "Group By";
   els.leaderboardGroupSwitch.appendChild(label);
 
   const toggle = document.createElement("div");
   toggle.className = "leaderboard-group-toggle";
   toggle.setAttribute("role", "group");
-  toggle.setAttribute(
-    "aria-label",
-    showsAgreementModeSwitch
-      ? "Agreement mode"
-      : state.leaderboardTab === "radar"
-        ? "Radar grouping"
-        : "Leaderboard grouping"
-  );
+  toggle.setAttribute("aria-label", state.leaderboardTab === "radar" ? "Radar grouping" : "Leaderboard grouping");
 
   const options =
-    showsAgreementModeSwitch
-      ? [
-          {
-            key: "same_model",
-            label: "Same model",
-            active: state.agreementViewMode === "same_model",
-            onClick: () => setAgreementViewMode("same_model"),
-          },
-          {
-            key: "cross_model",
-            label: "Cross-Model",
-            active: state.agreementViewMode === "cross_model",
-            onClick: () => setAgreementViewMode("cross_model"),
-          },
-        ]
-      : state.leaderboardTab === "radar"
+    state.leaderboardTab === "radar"
       ? [
           { key: "task", label: "Task", active: state.radarAxis === "task", onClick: () => setRadarAxis("task") },
           { key: "tag", label: "Tag", active: state.radarAxis === "tag", onClick: () => setRadarAxis("tag") },
@@ -3456,46 +3432,15 @@ function renderLeaderboardGroupSwitch() {
   els.leaderboardGroupSwitch.appendChild(toggle);
 }
 
-function renderAgreementRepresentativeSwitch() {
-  if (!els.leaderboardChartToggle) {
-    return;
-  }
-  const shouldShow = state.leaderboardTab === "agreement" && state.agreementViewMode === "cross_model";
-  els.leaderboardChartToggle.hidden = !shouldShow;
-  els.leaderboardChartToggle.innerHTML = "";
-  if (!shouldShow) {
-    return;
-  }
-
-  const label = document.createElement("span");
-  label.className = "leaderboard-group-switch-label leaderboard-chart-toggle-label";
-  label.textContent = "Cross-Model Rep";
-  els.leaderboardChartToggle.appendChild(label);
-
-  const toggle = document.createElement("div");
-  toggle.className = "leaderboard-group-toggle";
-  toggle.setAttribute("role", "group");
-  toggle.setAttribute("aria-label", "Cross-model representative policy");
-
-  Object.entries(AGREEMENT_REPRESENTATIVE_POLICY_LABELS).forEach(([key, text]) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `leaderboard-group-btn${state.agreementRepresentativePolicy === key ? " active" : ""}`;
-    button.textContent = text;
-    button.setAttribute("aria-pressed", state.agreementRepresentativePolicy === key ? "true" : "false");
-    button.addEventListener("click", () => setAgreementRepresentativePolicy(key));
-    toggle.appendChild(button);
-  });
-
-  els.leaderboardChartToggle.appendChild(toggle);
-}
-
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
   }
   renderLeaderboardGroupSwitch();
-  renderAgreementRepresentativeSwitch();
+  if (els.leaderboardChartToggle) {
+    els.leaderboardChartToggle.hidden = true;
+    els.leaderboardChartToggle.innerHTML = "";
+  }
   if (els.leaderboardMetricField) {
     els.leaderboardMetricField.hidden = state.leaderboardTab === "agreement";
   }
@@ -6066,6 +6011,63 @@ function createAgreementTable(title, entries, mode) {
   return section;
 }
 
+function renderAgreementControls(container) {
+  if (!container) {
+    return;
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "agreement-controls";
+
+  const modeControls = document.createElement("div");
+  modeControls.className = "agreement-control-group";
+  const modeLabel = document.createElement("span");
+  modeLabel.className = "agreement-control-label";
+  modeLabel.textContent = "Agreement";
+  modeControls.appendChild(modeLabel);
+  const modeToggle = createTimeSeriesSegmentedControl("Agreement mode", [
+    {
+      label: "Same model",
+      active: state.agreementViewMode === "same_model",
+      onClick: () => setAgreementViewMode("same_model"),
+    },
+    {
+      label: "Cross-Model",
+      active: state.agreementViewMode === "cross_model",
+      onClick: () => setAgreementViewMode("cross_model"),
+    },
+  ]);
+  modeToggle.classList.add("agreement-mode-toggle");
+  modeControls.appendChild(modeToggle);
+  controls.appendChild(modeControls);
+
+  if (state.agreementViewMode === "cross_model") {
+    const representativeControls = document.createElement("div");
+    representativeControls.className = "agreement-control-group";
+    const representativeLabel = document.createElement("span");
+    representativeLabel.className = "agreement-control-label";
+    representativeLabel.textContent = "Cross-Model Rep";
+    representativeControls.appendChild(representativeLabel);
+    const representativeToggle = createTimeSeriesSegmentedControl("Cross-model representative policy", [
+      {
+        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.latest,
+        active: state.agreementRepresentativePolicy === "latest",
+        onClick: () => setAgreementRepresentativePolicy("latest"),
+      },
+      {
+        label: AGREEMENT_REPRESENTATIVE_POLICY_LABELS.best_accuracy,
+        active: state.agreementRepresentativePolicy === "best_accuracy",
+        onClick: () => setAgreementRepresentativePolicy("best_accuracy"),
+      },
+    ]);
+    representativeToggle.classList.add("agreement-mode-toggle");
+    representativeControls.appendChild(representativeToggle);
+    controls.appendChild(representativeControls);
+  }
+
+  container.appendChild(controls);
+}
+
 function renderAgreement(container, runs) {
   if (!container) {
     return;
@@ -6077,6 +6079,8 @@ function renderAgreement(container, runs) {
       '<p class="muted">Agreement summary not loaded. Recalculate metrics locally so <code>agreement_summary.json</code> is published with the metrics artifacts.</p>';
     return;
   }
+
+  renderAgreementControls(container);
 
   const showCrossModel = state.agreementViewMode === "cross_model";
   const repeatEntries = showCrossModel ? [] : getVisibleRepeatAgreementEntries(runs);
