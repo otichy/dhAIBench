@@ -242,37 +242,45 @@
           <div id="leaderboardTabs" class="leaderboard-tabs"></div>
           <div id="leaderboardChart" class="chart"></div>
         </article>
-        <article class="card card-wide">
-          <h3>Prompt Token Profile</h3>
-          <div id="tokenChart" class="chart"></div>
-        </article>
+        <details class="card card-wide collapsible-card">
+          <summary class="collapsible-card-summary">
+            <h3>Prompt Token Profile</h3>
+          </summary>
+          <div class="collapsible-card-body">
+            <div id="tokenChart" class="chart"></div>
+          </div>
+        </details>
       </section>
 
-      <section class="card">
-        <div class="table-head">
-          <h3>Runs</h3>
-          <p id="tableMeta"></p>
+      <details class="card collapsible-card">
+        <summary class="collapsible-card-summary">
+          <div class="table-head">
+            <h3>Runs</h3>
+            <p id="tableMeta"></p>
+          </div>
+        </summary>
+        <div class="collapsible-card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Model</th>
+                  <th>Timestamp</th>
+                  <th>Accuracy</th>
+                  <th>Cohen's Kappa</th>
+                  <th>Macro F1</th>
+                  <th>Calibration ECE</th>
+                  <th>Requests</th>
+                  <th>Cached Input Tokens</th>
+                  <th>File</th>
+                </tr>
+              </thead>
+              <tbody id="runsTableBody"></tbody>
+            </table>
+          </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Model</th>
-                <th>Timestamp</th>
-                <th>Accuracy</th>
-                <th>Cohen's Kappa</th>
-                <th>Macro F1</th>
-                <th>Calibration ECE</th>
-                <th>Requests</th>
-                <th>Cached Input Tokens</th>
-                <th>File</th>
-              </tr>
-            </thead>
-            <tbody id="runsTableBody"></tbody>
-          </table>
-        </div>
-      </section>
+      </details>
 
       <footer class="dashboard-footer">
         <p>

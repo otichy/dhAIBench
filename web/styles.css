@@ -1313,8 +1313,10 @@ select[multiple] option.is-selected {
 }
 
 .agreement-controls {
-  display: grid;
-  gap: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
   margin-bottom: 0.55rem;
 }
 
@@ -1335,6 +1337,57 @@ select[multiple] option.is-selected {
 .agreement-mode-toggle {
   flex-wrap: nowrap;
   gap: 0;
+}
+
+.collapsible-card {
+  overflow: hidden;
+}
+
+.collapsible-card-summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+}
+
+.collapsible-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-card-summary::marker {
+  content: "";
+}
+
+.collapsible-card-summary h3,
+.collapsible-card-summary .table-head {
+  margin: 0;
+}
+
+.collapsible-card-summary > h3,
+.collapsible-card-summary > .table-head {
+  position: relative;
+  padding-right: 1.6rem;
+}
+
+.collapsible-card-summary > h3::after,
+.collapsible-card-summary > .table-head::after {
+  content: "+";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.collapsible-card[open] .collapsible-card-summary > h3::after,
+.collapsible-card[open] .collapsible-card-summary > .table-head::after {
+  content: "-";
+}
+
+.collapsible-card-body {
+  margin-top: 0.7rem;
 }
 
 .agreement-section {

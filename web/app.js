@@ -3442,7 +3442,9 @@ function renderLeaderboardTabControls() {
     els.leaderboardChartToggle.innerHTML = "";
   }
   if (els.leaderboardMetricField) {
-    els.leaderboardMetricField.hidden = state.leaderboardTab === "agreement";
+    const hideMetricField = state.leaderboardTab === "agreement";
+    els.leaderboardMetricField.hidden = hideMetricField;
+    els.leaderboardMetricField.style.display = hideMetricField ? "none" : "";
   }
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
@@ -6019,12 +6021,6 @@ function renderAgreementControls(container) {
   const controls = document.createElement("div");
   controls.className = "agreement-controls";
 
-  const modeControls = document.createElement("div");
-  modeControls.className = "agreement-control-group";
-  const modeLabel = document.createElement("span");
-  modeLabel.className = "agreement-control-label";
-  modeLabel.textContent = "Agreement";
-  modeControls.appendChild(modeLabel);
   const modeToggle = createTimeSeriesSegmentedControl("Agreement mode", [
     {
       label: "Same model",
@@ -6038,15 +6034,14 @@ function renderAgreementControls(container) {
     },
   ]);
   modeToggle.classList.add("agreement-mode-toggle");
-  modeControls.appendChild(modeToggle);
-  controls.appendChild(modeControls);
+  controls.appendChild(modeToggle);
 
   if (state.agreementViewMode === "cross_model") {
     const representativeControls = document.createElement("div");
     representativeControls.className = "agreement-control-group";
     const representativeLabel = document.createElement("span");
     representativeLabel.className = "agreement-control-label";
-    representativeLabel.textContent = "Cross-Model Rep";
+    representativeLabel.textContent = "Compare by";
     representativeControls.appendChild(representativeLabel);
     const representativeToggle = createTimeSeriesSegmentedControl("Cross-model representative policy", [
       {
