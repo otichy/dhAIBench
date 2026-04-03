@@ -988,19 +988,36 @@ select[multiple] option.is-selected {
 }
 
 .leaderboard-tabs {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 0.18rem;
-  margin-bottom: 0.68rem;
-  padding: 0.28rem 0.32rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line-strong));
+  display: flex;
+  align-items: stretch;
+  gap: 0.42rem;
+  width: 100%;
+  margin-bottom: 0.82rem;
+  padding: 0.42rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line-strong));
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--accent) 8%, var(--paper-strong)),
-      color-mix(in srgb, var(--paper) 96%, transparent)
+      color-mix(in srgb, var(--accent) 12%, var(--paper-strong)),
+      color-mix(in srgb, var(--accent-3) 7%, var(--paper))
     );
-  border-radius: 16px 16px 0 0;
+  border-radius: 18px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 22%, transparent),
+    0 12px 26px color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.leaderboard-tabs::-webkit-scrollbar {
+  height: 8px;
+}
+
+.leaderboard-tabs::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 22%, var(--line-strong));
+  border-radius: 999px;
 }
 
 .leaderboard-head {
@@ -1151,21 +1168,30 @@ select[multiple] option.is-selected {
 
 .leaderboard-tab-btn {
   position: relative;
-  border: 1px solid transparent;
-  border-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.52rem;
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 0.66rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--surface-soft) 90%, var(--paper-strong)),
-      color-mix(in srgb, var(--surface-input) 94%, var(--paper))
+      color-mix(in srgb, var(--surface-soft) 88%, var(--paper-strong)),
+      color-mix(in srgb, var(--surface-input) 90%, var(--paper))
     );
   color: color-mix(in srgb, var(--ink) 82%, var(--muted));
-  border-radius: 12px 12px 0 0;
-  padding: 0.48rem 0.88rem 0.44rem;
-  font-size: 0.76rem;
+  border-radius: 14px;
+  font-size: 0.84rem;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+    0 8px 18px color-mix(in srgb, var(--accent) 8%, transparent);
+  scroll-snap-align: start;
   transition:
     transform 160ms ease,
     background 160ms ease,
@@ -1177,37 +1203,66 @@ select[multiple] option.is-selected {
 .leaderboard-tab-btn:hover {
   transform: translateY(-1px);
   color: var(--ink);
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--line-strong));
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line-strong));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 11%, var(--surface-hover)),
+      color-mix(in srgb, var(--accent-3) 8%, var(--surface-input))
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 22%, transparent),
+    0 12px 24px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .leaderboard-tab-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 12px 24px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .leaderboard-tab-btn.active {
-  transform: translateY(1px);
+  transform: translateY(-1px);
   background:
     linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--paper-strong) 98%, white 2%),
-      color-mix(in srgb, var(--paper) 96%, var(--surface-input))
+      135deg,
+      color-mix(in srgb, var(--accent) 90%, white 10%),
+      color-mix(in srgb, var(--accent-3) 44%, var(--accent))
     );
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
-  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 70%, white 14%);
+  color: #031017;
   box-shadow:
-    0 -1px 0 color-mix(in srgb, white 14%, transparent) inset,
-    0 14px 24px color-mix(in srgb, var(--accent) 10%, transparent);
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
+    0 14px 28px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .leaderboard-tab-btn.active::after {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--paper);
+  left: 0.85rem;
+  right: 0.85rem;
+  bottom: 0.38rem;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #031017 68%, white 32%);
+  opacity: 0.22;
+}
+
+.leaderboard-tab-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.leaderboard-tab-label {
+  line-height: 1;
 }
 
 .leaderboard-panel {
@@ -2957,10 +3012,20 @@ tbody tr.selected-row {
   }
 
   .source-actions,
-  .leaderboard-tabs,
   .radar-control-group,
   .radar-mode-toggle {
     flex-wrap: wrap;
+  }
+
+  .leaderboard-tabs {
+    gap: 0.34rem;
+    padding: 0.34rem;
+  }
+
+  .leaderboard-tab-btn {
+    min-height: 42px;
+    padding: 0.58rem 0.88rem;
+    font-size: 0.8rem;
   }
 
   .leaderboard-head {

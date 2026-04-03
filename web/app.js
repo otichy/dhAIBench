@@ -3642,6 +3642,63 @@ function renderLeaderboardGroupSwitch() {
   els.leaderboardGroupSwitch.appendChild(toggle);
 }
 
+function createLeaderboardTabIcon(tabKey) {
+  const svg = createSvgNode("svg", {
+    viewBox: "0 0 24 24",
+    "aria-hidden": "true",
+    class: "leaderboard-tab-icon",
+  });
+  const append = (...nodes) => nodes.forEach((node) => svg.appendChild(node));
+  switch (tabKey) {
+    case "chart":
+      append(
+        createSvgNode("line", { x1: 4, y1: 19.5, x2: 20, y2: 19.5 }),
+        createSvgNode("rect", { x: 5, y: 10.5, width: 3.25, height: 9, rx: 1 }),
+        createSvgNode("rect", { x: 10.4, y: 7.5, width: 3.25, height: 12, rx: 1 }),
+        createSvgNode("rect", { x: 15.8, y: 5, width: 3.25, height: 14.5, rx: 1 })
+      );
+      break;
+    case "scatter":
+      append(
+        createSvgNode("polyline", { points: "5,16.5 10,11.5 14,14 19,7.5" }),
+        createSvgNode("circle", { cx: 5, cy: 16.5, r: 1.4 }),
+        createSvgNode("circle", { cx: 10, cy: 11.5, r: 1.4 }),
+        createSvgNode("circle", { cx: 14, cy: 14, r: 1.4 }),
+        createSvgNode("circle", { cx: 19, cy: 7.5, r: 1.4 })
+      );
+      break;
+    case "table":
+      append(
+        createSvgNode("rect", { x: 4.5, y: 5.5, width: 15, height: 13, rx: 2 }),
+        createSvgNode("line", { x1: 9.5, y1: 5.5, x2: 9.5, y2: 18.5 }),
+        createSvgNode("line", { x1: 14.5, y1: 5.5, x2: 14.5, y2: 18.5 }),
+        createSvgNode("line", { x1: 4.5, y1: 10.2, x2: 19.5, y2: 10.2 }),
+        createSvgNode("line", { x1: 4.5, y1: 14.1, x2: 19.5, y2: 14.1 })
+      );
+      break;
+    case "radar":
+      append(
+        createSvgNode("polygon", { points: "12,4.5 18.3,8.3 16.2,16.8 7.8,16.8 5.7,8.3" }),
+        createSvgNode("polygon", { points: "12,8.1 15.2,10 14.1,14.1 9.9,14.1 8.8,10" }),
+        createSvgNode("line", { x1: 12, y1: 4.5, x2: 12, y2: 19 }),
+        createSvgNode("line", { x1: 5.7, y1: 8.3, x2: 18.3, y2: 8.3 }),
+        createSvgNode("line", { x1: 7.8, y1: 16.8, x2: 16.2, y2: 16.8 })
+      );
+      break;
+    case "agreement":
+      append(
+        createSvgNode("circle", { cx: 9.2, cy: 10, r: 4.3 }),
+        createSvgNode("circle", { cx: 14.8, cy: 10, r: 4.3 }),
+        createSvgNode("path", { d: "M8.6 15.4l3 3.1 3.8-4.2" })
+      );
+      break;
+    default:
+      append(createSvgNode("circle", { cx: 12, cy: 12, r: 5 }));
+      break;
+  }
+  return svg;
+}
+
 function renderLeaderboardTabControls() {
   if (!els.leaderboardTabs) {
     return;
@@ -3656,6 +3713,7 @@ function renderLeaderboardTabControls() {
     els.leaderboardMetricField.hidden = hideMetricField;
     els.leaderboardMetricField.style.display = hideMetricField ? "none" : "";
   }
+  els.leaderboardTabs.setAttribute("aria-label", "Leaderboard views");
   els.leaderboardTabs.innerHTML = "";
   const tabs = [
     { key: "chart", label: "Chart" },
@@ -3668,8 +3726,13 @@ function renderLeaderboardTabControls() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `leaderboard-tab-btn${state.leaderboardTab === tab.key ? " active" : ""}`;
-    button.textContent = tab.label;
+    button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-pressed", state.leaderboardTab === tab.key ? "true" : "false");
+    button.appendChild(createLeaderboardTabIcon(tab.key));
+    const label = document.createElement("span");
+    label.className = "leaderboard-tab-label";
+    label.textContent = tab.label;
+    button.appendChild(label);
     button.addEventListener("click", () => setLeaderboardTab(tab.key));
     els.leaderboardTabs.appendChild(button);
   });
