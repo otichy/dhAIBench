@@ -173,7 +173,11 @@ class PromptLogNdjsonTests(unittest.TestCase):
                 "validator_result": {
                     "action": "retry",
                     "reason": "bad label",
-                    "retry": {"allowed_labels": ["X", "Y"], "instruction": "try again"},
+                    "retry": {
+                        "allowed_labels": ["X", "Y"],
+                        "instruction": "try again",
+                        "message": "previous label rejected",
+                    },
                 },
             }
         ]
@@ -183,6 +187,7 @@ class PromptLogNdjsonTests(unittest.TestCase):
         self.assertIn("response", compact[0])
         self.assertNotIn("text", compact[0]["response"])
         self.assertEqual(compact[0]["validator_result"]["retry_allowed_labels_count"], 2)
+        self.assertEqual(compact[0]["validator_result"]["retry_message_preview"], "previous label rejected")
 
     def test_resume_migrates_legacy_prompt_log_to_ndjson(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

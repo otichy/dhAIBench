@@ -8,6 +8,7 @@ The agent can delegate post-checks to an external NDJSON validator that can:
 
 - accept a prediction, optionally normalizing it
 - request a retry and provide a smaller `allowed_labels` set
+- provide a custom retry message that is appended on top of the rebuilt base prompt
 - abort the run with a clear reason
 
 ## Protocol
@@ -16,6 +17,7 @@ The agent can delegate post-checks to an external NDJSON validator that can:
 - The agent sends one JSON object per attempt over stdin.
 - The validator must return one JSON object on stdout.
 - Validators must reserve stdout for protocol messages and write logs to stderr.
+- Retries rebuild the original prompt from scratch, then append the validator retry message as an extra user message.
 
 If `--validator_cmd` points to a `.py` file, the agent runs it with the current Python interpreter.
 
@@ -56,10 +58,12 @@ python benchmark_agent.py \
 - `--validator_cmd`: enable validator-driven checking
 - `--validator_args`: extra validator arguments as one quoted string
 - `--validator_timeout`: timeout per validator roundtrip
-- `--validator_prompt_max_candidates`: cap rendered retry candidates
+- `--validator_prompt_max_candidates`: cap rendered retry candidates after any validator-side limit such as `--max_suggestions`
 - `--validator_prompt_max_chars`: cap retry-instruction size
 - `--validator_exhausted_policy`: choose the outcome when retries are exhausted
 - `--validator_debug`: log raw NDJSON send/receive payloads at `DEBUG`
+
+Validator-side candidate limits such as `--max_suggestions` control how many labels the validator returns in `retry.allowed_labels`. The benchmark-side `--validator_prompt_max_candidates` then controls how many of those returned labels are actually rendered into the retry prompt.
 
 ## Output Impact
 

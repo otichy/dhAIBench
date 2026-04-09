@@ -203,9 +203,11 @@
     confusion_heatmap: "Generate a confusion heatmap when label-based metrics are available.",
     validator_enable: "Enable external validator roundtrip and retry logic.",
     validator_cmd: "Executable or .py script path used for label validation.",
-    validator_args: "Raw argument string passed to validator via --validator_args.",
+    validator_args:
+      "Raw argument string passed to the validator, for example --max_suggestions 30. Validator-side --max_suggestions limits how many labels the validator returns; Max prompt candidates limits how many of those returned labels are shown to the model.",
     validator_timeout: "Timeout in seconds for each validator invocation.",
-    validator_prompt_max_candidates: "Max candidate labels shown in validator retry prompts.",
+    validator_prompt_max_candidates:
+      "Benchmark-side cap for how many validator-returned labels are shown in the retry prompt. This can be lower than the validator's own --max_suggestions limit.",
     validator_prompt_max_chars: "Hard cap for validator retry prompt character length.",
     validator_exhausted_policy: "Action when validator retries are exhausted.",
     validator_debug: "Emit verbose validator payload logging (DEBUG mode).",

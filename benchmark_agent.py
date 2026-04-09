@@ -1582,6 +1582,7 @@ def render_validator_retry_message(
     instruction: str,
     max_candidates: int,
     max_chars: int,
+    retry_message: str = "",
 ) -> str:
     """Build a deterministic retry instruction appended as an extra user message."""
     cleaned: List[str] = []
@@ -1597,6 +1598,12 @@ def render_validator_retry_message(
         cleaned = cleaned[:max_candidates]
 
     base_instruction = (instruction or "").strip() or "Choose the correct label from allowed_labels."
+    custom_retry_message = (retry_message or "").strip()
+
+    def build_preamble() -> str:
+        if custom_retry_message:
+            return custom_retry_message
+        return "External validator rejected the previous label.\n\n" + base_instruction
 
     def build_text(labels: List[str], truncated_from: Optional[int] = None) -> str:
         note = ""
@@ -1604,8 +1611,7 @@ def render_validator_retry_message(
             note = f"\n\n(Note: allowed_labels truncated from {truncated_from} to {len(labels)} item(s) to fit limits.)"
         serialized = json.dumps(labels, ensure_ascii=False, indent=2)
         return (
-            "External validator rejected the previous label.\n\n"
-            f"{base_instruction}\n\n"
+            f"{build_preamble()}\n\n"
             'You MUST set "label" to exactly one item in allowed_labels (case-sensitive). '
             'If none fit, return "unclassified".\n\n'
             f"allowed_labels:\n{serialized}{note}"
@@ -1628,8 +1634,7 @@ def render_validator_retry_message(
 
     # Fall back to a compact format (no indentation) if still too large.
     compact = (
-        "External validator rejected the previous label.\n\n"
-        f"{base_instruction}\n\n"
+        f"{build_preamble()}\n\n"
         'You MUST set "label" to exactly one item in allowed_labels (case-sensitive). '
         'If none fit, return "unclassified".\n\n'
         f"allowed_labels: {json.dumps(labels, ensure_ascii=False)}"
@@ -2720,6 +2725,9 @@ def _summarize_validator_result(validator_result: Any) -> Optional[Dict[str, Any
         retry_instruction = str(retry_payload.get("instruction", "")).strip()
         if retry_instruction:
             summary["retry_instruction_preview"] = retry_instruction[:200]
+        retry_message = str(retry_payload.get("message", "")).strip()
+        if retry_message:
+            summary["retry_message_preview"] = retry_message[:200]
     return summary
 
 
@@ -7763,6 +7771,7 @@ def classify_example(
                     retry_payload = validator_result.get("retry") or {}
                     allowed_labels = retry_payload.get("allowed_labels") or []
                     retry_instruction = str(retry_payload.get("instruction", "")).strip()
+                    custom_retry_message = str(retry_payload.get("message", "")).strip()
                     if attempt >= max_retries:
                         if validator_exhausted_policy == "accept_blank_confidence":
                             confidence = None
@@ -7787,6 +7796,7 @@ def classify_example(
                             instruction=retry_instruction,
                             max_candidates=validator_prompt_max_candidates,
                             max_chars=validator_prompt_max_chars,
+                            retry_message=custom_retry_message,
                         )
                         validator_patch_message = {"role": "user", "content": retry_message}
                         log_entry["parsed_payload"] = payload
@@ -9743,7 +9753,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         default="",
         help=(
             "Optional extra arguments passed to the validator command as a single string "
-            "(supports quoting). Example: \"--lexicon data/lemmas.txt --max_distance 2\"."
+            "(supports quoting). Example: \"--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30\". "
+            "Validator-side --max_suggestions caps how many labels the validator returns; "
+            "--validator_prompt_max_candidates caps how many of those returned labels are rendered into the "
+            "retry prompt."
         ),
     )
     parser.add_argument(
@@ -9756,7 +9769,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--validator_prompt_max_candidates",
         type=int,
         default=50,
-        help="Maximum number of allowed_labels candidates rendered into a validator retry prompt.",
+        help=(
+            "Maximum number of allowed_labels candidates rendered into a validator retry prompt. "
+            "This is a benchmark-side cap applied after any validator-side limit such as --max_suggestions."
+        ),
     )
     parser.add_argument(
         "--validator_prompt_max_chars",

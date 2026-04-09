@@ -275,6 +275,14 @@ def handle_validate(
             if len(suggestions) >= max_suggestions:
                 break
 
+    message_parts = [f'The previous lemma "{label}" was rejected by the validator.']
+    if pos:
+        message_parts.append(f'Expected POS bucket: "{pos}".')
+    if suggestions:
+        message_parts.append("Choose the best lemma from allowed_labels.")
+    else:
+        message_parts.append("No lexicon suggestions were found within the configured distance threshold.")
+
     return {
         "type": "result",
         "schema_version": 1,
@@ -283,6 +291,7 @@ def handle_validate(
         "reason": "not_in_lexicon_pos" if effective_terms is not None else "not_in_lexicon",
         "retry": {
             "allowed_labels": suggestions,
+            "message": "\n".join(message_parts),
             "instruction": "Choose the correct lemma from allowed_labels.",
         },
     }
@@ -292,7 +301,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NDJSON lemmatization validator.")
     parser.add_argument("--lexicon", required=True, help="Path to lemma lexicon (one lemma per line).")
     parser.add_argument("--max_distance", type=int, default=2, help="Max edit distance for suggestions.")
-    parser.add_argument("--max_suggestions", type=int, default=30, help="Max suggestions to return.")
+    parser.add_argument(
+        "--max_suggestions",
+        type=int,
+        default=30,
+        help=(
+            "Maximum number of candidate labels returned by the validator in retry.allowed_labels. "
+            "The benchmark's --validator_prompt_max_candidates can still render fewer of them."
+        ),
+    )
     parser.add_argument("--lowercase", action="store_true", help="Lowercase labels before lookup.")
     parser.add_argument("--strip_punct", action="store_true", help="Strip punctuation before lookup.")
     parser.add_argument(
