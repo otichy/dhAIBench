@@ -82,6 +82,54 @@ LEGACY_DATA_ROOT_DIR = "/data"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def resolve_gcloud_shell_command(command: Optional[str]) -> Optional[str]:
+    """Expand a leading 'gcloud' token to a concrete executable path when possible."""
+    normalized = (command or "").strip()
+    if not normalized:
+        return command
+    match = re.match(r"(?i)gcloud(?=\s|$)", normalized)
+    if not match:
+        return command
+
+    gcloud_executable = shutil.which("gcloud") or shutil.which("gcloud.cmd")
+    if not gcloud_executable and os.name == "nt":
+        candidates = (
+            os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "Google",
+                "Cloud SDK",
+                "google-cloud-sdk",
+                "bin",
+                "gcloud.cmd",
+            ),
+            os.path.join(
+                os.environ.get("ProgramFiles", ""),
+                "Google",
+                "Cloud SDK",
+                "google-cloud-sdk",
+                "bin",
+                "gcloud.cmd",
+            ),
+            os.path.join(
+                os.environ.get("USERPROFILE", ""),
+                "AppData",
+                "Local",
+                "Google",
+                "Cloud SDK",
+                "google-cloud-sdk",
+                "bin",
+                "gcloud.cmd",
+            ),
+        )
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                gcloud_executable = candidate
+                break
+    if not gcloud_executable:
+        return command
+    return f'"{gcloud_executable}"{normalized[match.end():]}'
+
+
 def detect_data_root_dir() -> str:
     """Resolve the data root directory for this environment."""
     configured_root = os.environ.get("DHAIBENCH_DATA_ROOT", "").strip()
@@ -1155,12 +1203,14 @@ class VertexAccessTokenProvider:
             (refresh_command or VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND).strip()
             or VERTEX_DEFAULT_ACCESS_TOKEN_COMMAND
         )
+        self._refresh_command = resolve_gcloud_shell_command(self._refresh_command) or self._refresh_command
         self._refresh_interval_seconds = max(60, int(refresh_interval_seconds))
         self._auto_adc_login = bool(auto_adc_login)
         self._adc_login_command = (
             (adc_login_command or VERTEX_DEFAULT_ADC_LOGIN_COMMAND).strip()
             or VERTEX_DEFAULT_ADC_LOGIN_COMMAND
         )
+        self._adc_login_command = resolve_gcloud_shell_command(self._adc_login_command) or self._adc_login_command
         self._attempted_adc_login = False
         self._warned_static_fallback = False
         self._lock = threading.Lock()
