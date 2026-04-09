@@ -97,6 +97,11 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         )
         self.assertIn('<div data-mode-visible="run resume">', html)
 
+    def test_execution_section_includes_max_retries(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn('id="max_retries"', html)
+        self.assertIn('id="retry_delay"', html)
+
     def test_model_provider_layout_matches_provider_first_refresh_right(self) -> None:
         html = _load_main_gui_html()
         self.assertIn('class="model-provider-layout"', html)

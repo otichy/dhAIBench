@@ -58,6 +58,8 @@
     flush_rows: "100",
     flush_seconds: "2.0",
     request_timeout_seconds: "30.0",
+    max_retries: "3",
+    retry_delay: "5.0",
     few_shot_examples: "0",
     prompt_layout: "standard",
     cache_pad_target_tokens: "0",
@@ -220,6 +222,10 @@
     validator_prompt_max_chars: "Hard cap for validator retry prompt character length.",
     validator_exhausted_policy: "Action when validator retries are exhausted.",
     validator_debug: "Emit verbose validator payload logging (DEBUG mode).",
+    max_retries:
+      "Maximum number of retry attempts per example on API errors and validator-driven retries.",
+    retry_delay:
+      "Delay in seconds between retry attempts after API errors or validator-driven retries.",
   };
 
   const cliFlagReferenceSections = [
@@ -331,6 +337,16 @@
         {
           flags: ["--request_timeout_seconds"],
           helpId: "request_timeout_seconds",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--max_retries"],
+          helpId: "max_retries",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--retry_delay"],
+          helpId: "retry_delay",
           modes: ["Run", "Run & Validate"],
         },
         {
@@ -2086,6 +2102,14 @@
     if (requestTimeoutSeconds && requestTimeoutSeconds !== defaultValues.request_timeout_seconds) {
       command.pushFlag("--request_timeout_seconds", requestTimeoutSeconds);
     }
+    const maxRetries = data.get("max_retries")?.toString().trim() ?? "";
+    if (maxRetries && maxRetries !== defaultValues.max_retries) {
+      command.pushFlag("--max_retries", maxRetries);
+    }
+    const retryDelay = data.get("retry_delay")?.toString().trim() ?? "";
+    if (retryDelay && retryDelay !== defaultValues.retry_delay) {
+      command.pushFlag("--retry_delay", retryDelay);
+    }
 
     const serviceTier = data.get("service_tier");
     if (serviceTier && serviceTier !== defaultValues.service_tier) {
@@ -2372,6 +2396,14 @@
       const requestTimeoutSeconds = data.get("request_timeout_seconds")?.toString().trim() ?? "";
       if (requestTimeoutSeconds && requestTimeoutSeconds !== defaultValues.request_timeout_seconds) {
         command.pushFlag("--request_timeout_seconds", requestTimeoutSeconds);
+      }
+      const maxRetries = data.get("max_retries")?.toString().trim() ?? "";
+      if (maxRetries && maxRetries !== defaultValues.max_retries) {
+        command.pushFlag("--max_retries", maxRetries);
+      }
+      const retryDelay = data.get("retry_delay")?.toString().trim() ?? "";
+      if (retryDelay && retryDelay !== defaultValues.retry_delay) {
+        command.pushFlag("--retry_delay", retryDelay);
       }
       if (data.get("logprobs")) {
         command.pushFlag("--logprobs");

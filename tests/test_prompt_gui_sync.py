@@ -99,6 +99,8 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn('"--no-confusion_heatmap"', shared_js)
         self.assertIn('"--create_gemini_cache"', shared_js)
         self.assertIn('"--no-gemini_cache_ttl_autoupdate"', shared_js)
+        self.assertIn('"--max_retries"', shared_js)
+        self.assertIn('"--retry_delay"', shared_js)
         self.assertIn('"--validator_exhausted_policy"', shared_js)
         self.assertIn("renderCliFlagReference(ctx);", shared_js)
 
