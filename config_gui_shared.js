@@ -80,6 +80,9 @@
     validator_enable: false,
     validator_cmd: "",
     validator_args: "",
+    validator_lexicon: "",
+    validator_max_distance: "",
+    validator_max_suggestions: "30",
     validator_timeout: "5.0",
     validator_prompt_max_candidates: "50",
     validator_prompt_max_chars: "8000",
@@ -204,7 +207,13 @@
     validator_enable: "Enable external validator roundtrip and retry logic.",
     validator_cmd: "Executable or .py script path used for label validation.",
     validator_args:
-      "Raw argument string passed to the validator, for example --max_suggestions 30. Validator-side --max_suggestions limits how many labels the validator returns; Max prompt candidates limits how many of those returned labels are shown to the model.",
+      "The GUI synthesizes --validator_args from the dedicated validator lexicon, max distance, and max suggestions fields.",
+    validator_lexicon:
+      "Optional value passed to the validator as --lexicon. Leave blank to let the validator script use its own default lexicon.",
+    validator_max_distance:
+      "Optional value passed to the validator as --max_distance. This is the validator-side matching threshold.",
+    validator_max_suggestions:
+      "Optional value passed to the validator as --max_suggestions. It caps how many labels the validator returns before the benchmark-side Max prompt candidates cap is applied.",
     validator_timeout: "Timeout in seconds for each validator invocation.",
     validator_prompt_max_candidates:
       "Benchmark-side cap for how many validator-returned labels are shown in the retry prompt. This can be lower than the validator's own --max_suggestions limit.",
@@ -834,6 +843,26 @@
     }
     const escaped = stringValue.replace(/"/g, '""');
     return `"${escaped}"`;
+  }
+
+  function buildValidatorArgsValue(data) {
+    const parts = [];
+    const validatorLexicon = data.get("validator_lexicon")?.toString().trim() ?? "";
+    if (validatorLexicon) {
+      parts.push("--lexicon", shellQuote(validatorLexicon));
+    }
+    const validatorMaxDistance = data.get("validator_max_distance")?.toString().trim() ?? "";
+    if (validatorMaxDistance) {
+      parts.push("--max_distance", validatorMaxDistance);
+    }
+    const validatorMaxSuggestions = data.get("validator_max_suggestions")?.toString().trim() ?? "";
+    if (
+      validatorMaxSuggestions &&
+      validatorMaxSuggestions !== defaultValues.validator_max_suggestions
+    ) {
+      parts.push("--max_suggestions", validatorMaxSuggestions);
+    }
+    return parts.join(" ").trim();
   }
 
   function escapeHtml(value) {
@@ -2171,7 +2200,7 @@
       const validatorCmd = data.get("validator_cmd")?.toString().trim() ?? "";
       if (validatorCmd) {
         command.pushFlag("--validator_cmd", shellQuote(validatorCmd));
-        const validatorArgs = data.get("validator_args")?.toString().trim() ?? "";
+        const validatorArgs = buildValidatorArgsValue(data);
         if (validatorArgs) {
           command.pushFlag("--validator_args", shellQuote(validatorArgs));
         }
@@ -2420,7 +2449,7 @@
         const validatorCmd = data.get("validator_cmd")?.toString().trim() ?? "";
         if (validatorCmd) {
           command.pushFlag("--validator_cmd", shellQuote(validatorCmd));
-          const validatorArgs = data.get("validator_args")?.toString().trim() ?? "";
+          const validatorArgs = buildValidatorArgsValue(data);
           if (validatorArgs) {
             command.pushFlag("--validator_args", shellQuote(validatorArgs));
           }

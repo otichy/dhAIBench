@@ -102,6 +102,13 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn('"--validator_exhausted_policy"', shared_js)
         self.assertIn("renderCliFlagReference(ctx);", shared_js)
 
+    def test_gui_builds_validator_args_from_dedicated_fields(self) -> None:
+        shared_js = _load_file("config_gui_shared.js")
+        self.assertIn("function buildValidatorArgsValue(data)", shared_js)
+        self.assertIn('data.get("validator_lexicon")', shared_js)
+        self.assertIn('data.get("validator_max_distance")', shared_js)
+        self.assertIn('data.get("validator_max_suggestions")', shared_js)
+
     def test_metrics_mode_disables_logprobs_control(self) -> None:
         shared_js = _load_file("config_gui_shared.js")
         self.assertIn('logprobsInput: document.getElementById("logprobs")', shared_js)

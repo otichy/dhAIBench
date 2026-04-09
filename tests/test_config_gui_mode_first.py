@@ -53,6 +53,13 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         self.assertNotIn('id="api_base_var"', html)
         self.assertNotIn('name="api_base_var"', html)
 
+    def test_validator_setup_uses_dedicated_validator_arg_fields(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn('id="validator_lexicon"', html)
+        self.assertIn('id="validator_max_distance"', html)
+        self.assertIn('id="validator_max_suggestions"', html)
+        self.assertNotIn('id="validator_args"', html)
+
     def test_provider_specific_controls_are_badged(self) -> None:
         html = _load_main_gui_html()
         self.assertIn('class="field-tag">OpenAI<', html)
