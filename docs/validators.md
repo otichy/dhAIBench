@@ -30,7 +30,7 @@ python benchmark_agent.py \
   --input data/input.csv \
   --model gpt-4o-mini \
   --validator_cmd validators/lemmatization_validator.py \
-  --validator_args "--lexicon data/lemmata.txt --max_distance 2 --max_suggestions 30"
+  --validator_args "--lexicon data/lemmata.txt --max_distance 2 --max_distance_per_retry 1 --max_suggestions 30"
 ```
 
 ## Using `info` Metadata
@@ -62,6 +62,7 @@ python benchmark_agent.py \
 - `--validator_prompt_max_chars`: cap retry-instruction size
 - `--validator_exhausted_policy`: choose the outcome when retries are exhausted
 - `--validator_debug`: log raw NDJSON send/receive payloads at `DEBUG`
+- validator-side `--max_distance_per_retry`: increase the validator threshold by a fixed amount starting with the second retry, so the third overall attempt is the first one with a higher threshold
 
 Validator-side candidate limits such as `--max_suggestions` control how many labels the validator returns in `retry.allowed_labels`. The benchmark-side `--validator_prompt_max_candidates` then controls how many of those returned labels are actually rendered into the retry prompt.
 

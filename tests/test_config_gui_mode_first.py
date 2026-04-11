@@ -57,6 +57,7 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         html = _load_main_gui_html()
         self.assertIn('id="validator_lexicon"', html)
         self.assertIn('id="validator_max_distance"', html)
+        self.assertIn('id="validator_max_distance_per_retry"', html)
         self.assertIn('id="validator_max_suggestions"', html)
         self.assertNotIn('id="validator_args"', html)
 

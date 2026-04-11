@@ -84,6 +84,7 @@
     validator_args: "",
     validator_lexicon: "",
     validator_max_distance: "",
+    validator_max_distance_per_retry: "",
     validator_max_suggestions: "30",
     validator_timeout: "5.0",
     validator_prompt_max_candidates: "50",
@@ -209,11 +210,13 @@
     validator_enable: "Enable external validator roundtrip and retry logic.",
     validator_cmd: "Executable or .py script path used for label validation.",
     validator_args:
-      "The GUI synthesizes --validator_args from the dedicated validator lexicon, max distance, and max suggestions fields.",
+      "The GUI synthesizes --validator_args from the dedicated validator lexicon, max distance, distance increment per retry, and max suggestions fields.",
     validator_lexicon:
       "Optional value passed to the validator as --lexicon. Leave blank to let the validator script use its own default lexicon.",
     validator_max_distance:
       "Optional value passed to the validator as --max_distance. This is the validator-side matching threshold.",
+    validator_max_distance_per_retry:
+      "Optional value passed to the validator as --max_distance_per_retry. The increment starts only on the second retry, meaning the third overall attempt is the first one with a higher threshold. Leave blank or 0 to keep the validator threshold fixed.",
     validator_max_suggestions:
       "Optional value passed to the validator as --max_suggestions. It caps how many labels the validator returns before the benchmark-side Max prompt candidates cap is applied.",
     validator_timeout: "Timeout in seconds for each validator invocation.",
@@ -870,6 +873,11 @@
     const validatorMaxDistance = data.get("validator_max_distance")?.toString().trim() ?? "";
     if (validatorMaxDistance) {
       parts.push("--max_distance", validatorMaxDistance);
+    }
+    const validatorMaxDistancePerRetry =
+      data.get("validator_max_distance_per_retry")?.toString().trim() ?? "";
+    if (validatorMaxDistancePerRetry) {
+      parts.push("--max_distance_per_retry", validatorMaxDistancePerRetry);
     }
     const validatorMaxSuggestions = data.get("validator_max_suggestions")?.toString().trim() ?? "";
     if (

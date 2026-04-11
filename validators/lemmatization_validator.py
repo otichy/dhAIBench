@@ -45,6 +45,26 @@ def parse_pos_from_info(info: str, regex: re.Pattern[str], whitelist: Sequence[s
     return None
 
 
+def resolve_attempt_index(message: dict) -> int:
+    attempt = message.get("attempt") or {}
+    try:
+        attempt_index = int(attempt.get("index", 1))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, attempt_index)
+
+
+def resolve_effective_max_distance(
+    message: dict,
+    max_distance: int,
+    max_distance_per_retry: float,
+) -> int:
+    attempt_index = resolve_attempt_index(message)
+    retry_count = max(0, attempt_index - 2)
+    effective_max_distance = float(max_distance) + max(0.0, float(max_distance_per_retry)) * retry_count
+    return max(0, int(effective_max_distance))
+
+
 def split_lexicon_fields(line: str, sep: str) -> List[str]:
     raw = line.strip()
     if not raw:
@@ -202,11 +222,17 @@ def handle_validate(
     pos_unknown_policy: str,
     max_distance: int,
     max_suggestions: int,
+    max_distance_per_retry: float = 0.0,
 ) -> dict:
     request_id = str(message.get("request_id", "")).strip()
     prediction = message.get("prediction") or {}
     label = str(prediction.get("label", "")).strip()
     norm = normalize_text(label, lowercase=lowercase, strip_punct=strip_punct)
+    effective_max_distance = resolve_effective_max_distance(
+        message=message,
+        max_distance=max_distance,
+        max_distance_per_retry=max_distance_per_retry,
+    )
 
     example = message.get("example") or {}
     info = str(example.get("info", "") or "")
@@ -259,7 +285,7 @@ def handle_validate(
             },
         }
 
-    matches = tree.search(norm, max_distance=max_distance)
+    matches = tree.search(norm, max_distance=effective_max_distance)
     matches.sort(key=lambda pair: (pair[0], pair[1]))
     suggestions: List[str] = []
     effective_terms: Optional[set[str]] = pos_set if pos_set is not None else None
@@ -301,6 +327,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NDJSON lemmatization validator.")
     parser.add_argument("--lexicon", required=True, help="Path to lemma lexicon (one lemma per line).")
     parser.add_argument("--max_distance", type=int, default=2, help="Max edit distance for suggestions.")
+    parser.add_argument(
+        "--max_distance_per_retry",
+        type=float,
+        default=0.0,
+        help="Increase max_distance by this amount starting with the second retry (the third overall attempt).",
+    )
     parser.add_argument(
         "--max_suggestions",
         type=int,
@@ -429,6 +461,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     pos_unknown_policy=str(args.pos_unknown_policy),
                     max_distance=max(0, args.max_distance),
                     max_suggestions=max(0, args.max_suggestions),
+                    max_distance_per_retry=max(0.0, float(args.max_distance_per_retry)),
                 )
             except Exception as exc:  # noqa: BLE001
                 eprint(f"Error handling request_id={request_id}: {exc}")

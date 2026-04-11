@@ -109,6 +109,7 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn("function buildValidatorArgsValue(data)", shared_js)
         self.assertIn('data.get("validator_lexicon")', shared_js)
         self.assertIn('data.get("validator_max_distance")', shared_js)
+        self.assertIn('data.get("validator_max_distance_per_retry")', shared_js)
         self.assertIn('data.get("validator_max_suggestions")', shared_js)
 
     def test_metrics_mode_disables_logprobs_control(self) -> None:

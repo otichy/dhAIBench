@@ -17,6 +17,9 @@ FINAL_E_COST = 0.2
 DOUBLED_LETTER_COST = 0.25
 GE_PREFIX_COST = 0.3
 VARIANT_COST = 0.35
+VOWEL_SUBSTITUTION_COST = 1.0
+X_CS_SUBSTITUTION_COST = 0.35
+DENTAL_VARIANT_COST = 0.5
 DEFAULT_MAX_DISTANCE = 1.25
 
 
@@ -46,6 +49,25 @@ def normalize_pos(value: str) -> str:
         if separator in text:
             text = text.split(separator, 1)[0]
     return text.strip()
+
+
+def resolve_attempt_index(message: dict) -> int:
+    attempt = message.get("attempt") or {}
+    try:
+        attempt_index = int(attempt.get("index", 1))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, attempt_index)
+
+
+def resolve_effective_max_distance(
+    message: dict,
+    max_distance: float,
+    max_distance_per_retry: float,
+) -> float:
+    attempt_index = resolve_attempt_index(message)
+    retry_count = max(0, attempt_index - 2)
+    return max(0.0, float(max_distance) + max(0.0, float(max_distance_per_retry)) * retry_count)
 
 
 def strip_ne_prefix(value: str) -> str:
@@ -98,7 +120,19 @@ def build_variant_pairs() -> set[Tuple[str, str]]:
     return pairs
 
 
+def build_dental_pairs() -> set[Tuple[str, str]]:
+    segments = ("d", "t", "ð", "þ", "th")
+    pairs: set[Tuple[str, str]] = set()
+    for left in segments:
+        for right in segments:
+            if left != right:
+                pairs.add((left, right))
+    return pairs
+
+
 LOW_COST_VARIANT_PAIRS = build_variant_pairs()
+DENTAL_VARIANT_PAIRS = build_dental_pairs()
+VOWEL_SEGMENTS = {"a", "e", "i", "o", "u", "y", "æ", "ae", "ea", "eo", "io", "ie"}
 
 
 def segment_substitution_cost(left: str, right: str) -> Optional[float]:
@@ -106,8 +140,14 @@ def segment_substitution_cost(left: str, right: str) -> Optional[float]:
         return 0.0
     if {left, right} == {"ð", "þ"}:
         return 0.0
+    if {left, right} == {"x", "cs"}:
+        return X_CS_SUBSTITUTION_COST
     if (left, right) in LOW_COST_VARIANT_PAIRS:
         return VARIANT_COST
+    if (left, right) in DENTAL_VARIANT_PAIRS:
+        return DENTAL_VARIANT_COST
+    if left in VOWEL_SEGMENTS and right in VOWEL_SEGMENTS:
+        return VOWEL_SUBSTITUTION_COST
     return None
 
 
@@ -237,6 +277,7 @@ def handle_validate(
     lexicon: Lexicon,
     max_distance: float,
     max_suggestions: int,
+    max_distance_per_retry: float = 0.0,
 ) -> dict:
     request_id = str(message.get("request_id", "")).strip()
     prediction = message.get("prediction") or {}
@@ -269,6 +310,11 @@ def handle_validate(
 
     pos_candidates = lexicon.lemmas_by_pos.get(pos)
     candidate_pool = pos_candidates if pos_candidates else lexicon.all_lemmas
+    effective_max_distance = resolve_effective_max_distance(
+        message=message,
+        max_distance=max_distance,
+        max_distance_per_retry=max_distance_per_retry,
+    )
 
     if label in candidate_pool:
         return {
@@ -283,7 +329,7 @@ def handle_validate(
     suggestions = collect_candidates(
         prediction=label,
         candidates=candidate_pool,
-        max_distance=max_distance,
+        max_distance=effective_max_distance,
         max_suggestions=max_suggestions,
     )
     if suggestions and suggestions[0].distance == 0.0:
@@ -323,6 +369,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=float,
         default=DEFAULT_MAX_DISTANCE,
         help="Maximum weighted edit distance for suggestions.",
+    )
+    parser.add_argument(
+        "--max_distance_per_retry",
+        type=float,
+        default=0.0,
+        help="Increase max_distance by this amount starting with the second retry (the third overall attempt).",
     )
     parser.add_argument(
         "--max_suggestions",
@@ -380,6 +432,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     lexicon=lexicon,
                     max_distance=max(0.0, float(args.max_distance)),
                     max_suggestions=max(0, int(args.max_suggestions)),
+                    max_distance_per_retry=max(0.0, float(args.max_distance_per_retry)),
                 )
             except Exception as exc:  # noqa: BLE001
                 eprint(f"Error handling request_id={request_id}: {exc}")
