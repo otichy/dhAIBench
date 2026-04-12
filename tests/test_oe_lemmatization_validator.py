@@ -79,6 +79,25 @@ class OELemmatizationValidatorTests(unittest.TestCase):
         self.assertEqual(result["action"], "accept")
         self.assertEqual(result["normalized"]["label"], "ne_habban")
 
+    def test_handle_validate_accepts_ne_prefixed_prediction_not_in_lexicon(self) -> None:
+        lexicon = oe.Lexicon(
+            all_lemmas={"habban": "habban"},
+            lemmas_by_pos={"VB": {"habban": "habban"}},
+        )
+        result = oe.handle_validate(
+            message={
+                "request_id": "1",
+                "prediction": {"label": "ne_habban"},
+                "example": {"info": "VB^X"},
+            },
+            lexicon=lexicon,
+            max_distance=oe.DEFAULT_MAX_DISTANCE,
+            max_suggestions=30,
+        )
+        self.assertEqual(result["action"], "accept")
+        self.assertEqual(result["reason"], "accepted_negated_form")
+        self.assertEqual(result["normalized"]["label"], "ne_habban")
+
     def test_handle_validate_retries_with_pos_restricted_suggestions(self) -> None:
         lexicon = oe.Lexicon(
             all_lemmas={"habban": "habban", "hatan": "hatan"},

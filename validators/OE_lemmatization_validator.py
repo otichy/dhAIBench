@@ -88,6 +88,12 @@ def is_ne_prefix_only_difference(a: str, b: str) -> bool:
     return thorn_eth_fold(a_core) == thorn_eth_fold(b_core)
 
 
+def matches_missing_ne_prefixed_lexicon_form(label: str, candidates: Dict[str, str]) -> bool:
+    if not label.startswith("ne_"):
+        return False
+    return any(is_ne_prefix_only_difference(label, candidate) for candidate in candidates)
+
+
 def is_ge_prefix_only_difference(a: str, b: str) -> bool:
     if a.startswith("ge") and a[2:] == b:
         return True
@@ -324,6 +330,16 @@ def handle_validate(
             "action": "accept",
             "reason": "in_lexicon_pos" if pos_candidates else "in_lexicon",
             "normalized": {"label": candidate_pool[label]},
+        }
+
+    if matches_missing_ne_prefixed_lexicon_form(label, candidate_pool):
+        return {
+            "type": "result",
+            "schema_version": 1,
+            "request_id": request_id,
+            "action": "accept",
+            "reason": "accepted_negated_form",
+            "normalized": {"label": label},
         }
 
     suggestions = collect_candidates(
