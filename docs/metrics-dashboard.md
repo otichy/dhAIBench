@@ -52,7 +52,7 @@ In server mode the `Auto (Server)` source attempts, in order:
 
 The `Reload` button refreshes the current source.
 
-When `data/metrics/agreement_summary.json` is present, the dashboard loads it alongside the run metrics and enables the Agreement tab inside `Leaderboard & Agreement`. When `data/metrics/agreement_clusters.json` is also present, the Agreement tab can render cross-model similarity trees.
+When `data/metrics/agreement_summary.json` is present, the dashboard loads it alongside the run metrics and enables the Agreement tab inside `Leaderboard & Agreement`. When `data/metrics/agreement_clusters.json` is also present, the Agreement tab can render same-model and cross-model similarity trees.
 
 Pricing metadata for the scatterplot and run details is loaded from `web/config_prices.js`.
 If you deploy the dashboard under a rewritten root or any setup that exposes only `web/`, make sure that file is published there as well.
@@ -187,8 +187,9 @@ The `Agreement` tab reads the precomputed `agreement_summary.json` artifact.
 - `Cross-Model` shows Krippendorff's alpha across one representative run per provider/model on the same comparable task variant
 - `Compare by` appears only in `Cross-Model` mode and switches between the `Latest` and `Best Accuracy` representative policies
 - the tab only shows groups fully represented inside the current filter, so restrictive time/model filters can hide otherwise valid agreement groups
-- when `agreement_clusters.json` is present, `Cross-Model` also shows similarity trees built from pairwise disagreement distances
-- those trees are recomputed in the browser for the currently visible representative models, so model filters can redraw the clustering even when the full-group alpha row is hidden
+- when `agreement_clusters.json` is present, both `Same model` and `Cross-Model` also show similarity trees built from pairwise disagreement distances
+- same-model trees cluster repeated runs of one provider/model on the same comparable task variant
+- cross-model trees cluster one representative run per provider/model, and they are recomputed in the browser for the currently visible representative models so filters can redraw the clustering even when the full-group alpha row is hidden
 
 ### Radar Tab
 

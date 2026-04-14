@@ -4782,11 +4782,8 @@ def build_repeat_agreement_entry(
         key=lambda item: (item.timestamp_sort_key, item.timestamp, item.run_stem),
         reverse=True,
     )
-    group_id_seed = (
-        f"repeat::{task_fingerprint}::{normalized_tag_key}::{ordered_runs[0].provider}::{ordered_runs[0].model}"
-    )
     return {
-        "group_id": hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16],
+        "group_id": build_repeat_agreement_group_id(comparable_key, ordered_runs),
         "task_fingerprint": task_fingerprint,
         "normalized_tag_key": normalized_tag_key,
         "task_name_display": get_agreement_group_task_name(ordered_runs),
@@ -4804,6 +4801,31 @@ def build_repeat_agreement_entry(
         "metrics_files": [item.metrics_file_name for item in ordered_runs],
         "timestamps": [item.timestamp for item in ordered_runs],
         "accuracies": [item.accuracy for item in ordered_runs],
+    }
+
+
+def build_repeat_agreement_group_id(
+    comparable_key: Tuple[str, str],
+    ordered_runs: List[AgreementRunSnapshot],
+) -> str:
+    """Return the stable repeat-run agreement group identifier."""
+    task_fingerprint, normalized_tag_key = comparable_key
+    group_id_seed = (
+        f"repeat::{task_fingerprint}::{normalized_tag_key}::{ordered_runs[0].provider}::{ordered_runs[0].model}"
+    )
+    return hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16]
+
+
+def serialize_agreement_representative(item: AgreementRunSnapshot) -> Dict[str, Any]:
+    """Serialize one run snapshot for agreement summary or clustering payloads."""
+    return {
+        "provider": item.provider,
+        "model": item.model,
+        "run_stem": item.run_stem,
+        "metrics_file": item.metrics_file_name,
+        "timestamp": item.timestamp,
+        "accuracy": item.accuracy,
+        "cohen_kappa": item.cohen_kappa,
     }
 
 
@@ -4838,18 +4860,7 @@ def build_cross_model_agreement_entry(
         "fully_shared_item_count": alpha_stats.get("fully_shared_item_count"),
         "category_count": alpha_stats.get("category_count"),
         "representative_run_stems": [item.run_stem for item in ordered_reps],
-        "representatives": [
-            {
-                "provider": item.provider,
-                "model": item.model,
-                "run_stem": item.run_stem,
-                "metrics_file": item.metrics_file_name,
-                "timestamp": item.timestamp,
-                "accuracy": item.accuracy,
-                "cohen_kappa": item.cohen_kappa,
-            }
-            for item in ordered_reps
-        ],
+        "representatives": [serialize_agreement_representative(item) for item in ordered_reps],
     }
 
 
@@ -4935,24 +4946,18 @@ def compute_average_linkage_from_pairwise_distances(
     return linkage
 
 
-def build_cross_model_cluster_entry(
-    comparable_key: Tuple[str, str],
-    comparable_runs: List[AgreementRunSnapshot],
-    policy: str,
+def build_similarity_cluster_payload(
+    ordered_runs: List[AgreementRunSnapshot],
 ) -> Optional[Dict[str, Any]]:
-    """Build a cross-model similarity payload with pairwise distances and linkage."""
-    ordered_reps = select_cross_model_representatives(comparable_runs, policy)
-    if len(ordered_reps) < 2:
-        return None
-
+    """Build a pairwise-distance and linkage payload for a fixed ordered run list."""
     pairwise_entries: List[Dict[str, Any]] = []
     pairwise_distance_lookup: Dict[Tuple[int, int], float] = {}
     comparable_pair_count = 0
-    for left_index in range(len(ordered_reps)):
-        for right_index in range(left_index + 1, len(ordered_reps)):
+    for left_index in range(len(ordered_runs)):
+        for right_index in range(left_index + 1, len(ordered_runs)):
             pairwise_stats = compute_pairwise_prediction_distance(
-                ordered_reps[left_index].prediction_by_id,
-                ordered_reps[right_index].prediction_by_id,
+                ordered_runs[left_index].prediction_by_id,
+                ordered_runs[right_index].prediction_by_id,
             )
             distance = pairwise_stats.get("distance")
             if distance is not None:
@@ -4972,11 +4977,71 @@ def build_cross_model_cluster_entry(
     if comparable_pair_count <= 0:
         return None
 
-    linkage = compute_average_linkage_from_pairwise_distances(len(ordered_reps), pairwise_distance_lookup)
+    linkage = compute_average_linkage_from_pairwise_distances(len(ordered_runs), pairwise_distance_lookup)
+    return {
+        "comparable_pair_count": comparable_pair_count,
+        "representatives": [serialize_agreement_representative(item) for item in ordered_runs],
+        "pairwise": pairwise_entries,
+        "linkage": linkage or [],
+        "linkage_complete": bool(linkage) and len(linkage) == max(len(ordered_runs) - 1, 0),
+    }
+
+
+def build_repeat_cluster_entry(
+    comparable_key: Tuple[str, str],
+    model_runs: List[AgreementRunSnapshot],
+) -> Optional[Dict[str, Any]]:
+    """Build a same-model repeat-run similarity payload for the dashboard."""
+    if len(model_runs) < 2:
+        return None
+
+    ordered_runs = sorted(
+        model_runs,
+        key=lambda item: (item.timestamp_sort_key, item.timestamp, item.run_stem),
+        reverse=True,
+    )
+    cluster_payload = build_similarity_cluster_payload(ordered_runs)
+    if cluster_payload is None:
+        return None
+
+    task_fingerprint, normalized_tag_key = comparable_key
+    return {
+        "group_id": build_repeat_agreement_group_id(comparable_key, ordered_runs),
+        "cluster_scope": "repeat",
+        "task_fingerprint": task_fingerprint,
+        "normalized_tag_key": normalized_tag_key,
+        "task_name_display": get_agreement_group_task_name(ordered_runs),
+        "task_names_seen": sorted({item.task_name for item in ordered_runs if item.task_name}),
+        "tags_display": get_agreement_group_tags_display(ordered_runs),
+        "provider": ordered_runs[0].provider,
+        "model": ordered_runs[0].model,
+        "run_count": len(ordered_runs),
+        "run_stems": [item.run_stem for item in ordered_runs],
+        "distance_metric": "nominal_disagreement_rate",
+        "linkage_method": "average",
+        **cluster_payload,
+    }
+
+
+def build_cross_model_cluster_entry(
+    comparable_key: Tuple[str, str],
+    comparable_runs: List[AgreementRunSnapshot],
+    policy: str,
+) -> Optional[Dict[str, Any]]:
+    """Build a cross-model similarity payload with pairwise distances and linkage."""
+    ordered_reps = select_cross_model_representatives(comparable_runs, policy)
+    if len(ordered_reps) < 2:
+        return None
+
+    cluster_payload = build_similarity_cluster_payload(ordered_reps)
+    if cluster_payload is None:
+        return None
+
     task_fingerprint, normalized_tag_key = comparable_key
     group_id_seed = f"cross::{policy}::{task_fingerprint}::{normalized_tag_key}"
     return {
         "group_id": hashlib.sha256(group_id_seed.encode("utf-8")).hexdigest()[:16],
+        "cluster_scope": "cross_model",
         "representative_policy": policy,
         "task_fingerprint": task_fingerprint,
         "normalized_tag_key": normalized_tag_key,
@@ -4986,23 +5051,8 @@ def build_cross_model_cluster_entry(
         "model_count": len(ordered_reps),
         "distance_metric": "nominal_disagreement_rate",
         "linkage_method": "average",
-        "comparable_pair_count": comparable_pair_count,
         "representative_run_stems": [item.run_stem for item in ordered_reps],
-        "representatives": [
-            {
-                "provider": item.provider,
-                "model": item.model,
-                "run_stem": item.run_stem,
-                "metrics_file": item.metrics_file_name,
-                "timestamp": item.timestamp,
-                "accuracy": item.accuracy,
-                "cohen_kappa": item.cohen_kappa,
-            }
-            for item in ordered_reps
-        ],
-        "pairwise": pairwise_entries,
-        "linkage": linkage or [],
-        "linkage_complete": bool(linkage) and len(linkage) == max(len(ordered_reps) - 1, 0),
+        **cluster_payload,
     }
 
 
@@ -5067,21 +5117,40 @@ def build_agreement_summary_payload(runs: List[AgreementRunSnapshot]) -> Dict[st
 
 
 def build_agreement_clusters_payload(runs: List[AgreementRunSnapshot]) -> Dict[str, Any]:
-    """Aggregate cross-model similarity trees for the dashboard."""
+    """Aggregate repeat-run and cross-model similarity trees for the dashboard."""
     comparable_groups: Dict[Tuple[str, str], List[AgreementRunSnapshot]] = defaultdict(list)
     for item in runs:
         comparable_groups[(item.task_fingerprint, item.normalized_tag_key)].append(item)
 
+    repeat_groups: List[Dict[str, Any]] = []
     cross_model_groups: Dict[str, List[Dict[str, Any]]] = {
         policy: [] for policy in AGREEMENT_CROSS_MODEL_POLICIES
     }
 
     for comparable_key, comparable_runs in comparable_groups.items():
+        runs_by_model: Dict[str, List[AgreementRunSnapshot]] = defaultdict(list)
+        for item in comparable_runs:
+            runs_by_model[item.model_key].append(item)
+
+        for model_runs in runs_by_model.values():
+            cluster_entry = build_repeat_cluster_entry(comparable_key, model_runs)
+            if cluster_entry is not None:
+                repeat_groups.append(cluster_entry)
+
         for policy in AGREEMENT_CROSS_MODEL_POLICIES:
             cluster_entry = build_cross_model_cluster_entry(comparable_key, comparable_runs, policy)
             if cluster_entry is not None:
                 cross_model_groups[policy].append(cluster_entry)
 
+    repeat_groups.sort(
+        key=lambda item: (
+            str(item.get("task_name_display") or "").casefold(),
+            str(item.get("tags_display") or "").casefold(),
+            str(item.get("provider") or "").casefold(),
+            str(item.get("model") or "").casefold(),
+            -int(item.get("run_count") or 0),
+        )
+    )
     for policy in AGREEMENT_CROSS_MODEL_POLICIES:
         cross_model_groups[policy].sort(
             key=lambda item: (
@@ -5095,6 +5164,7 @@ def build_agreement_clusters_payload(runs: List[AgreementRunSnapshot]) -> Dict[s
         "version": AGREEMENT_SUMMARY_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "run_count": len(runs),
+        "repeat_groups": repeat_groups,
         "cross_model": cross_model_groups,
     }
 
@@ -5121,10 +5191,11 @@ def refresh_agreement_summary() -> str:
         json.dump(clusters_payload, handle, indent=2, ensure_ascii=False)
 
     logging.info(
-        "Refreshed agreement summary at %s and clustering at %s (%d repeat groups, %d latest cross-model groups, %d best-accuracy cross-model groups, %d latest trees, %d best-accuracy trees).",
+        "Refreshed agreement summary at %s and clustering at %s (%d repeat groups, %d repeat trees, %d latest cross-model groups, %d best-accuracy cross-model groups, %d latest trees, %d best-accuracy trees).",
         summary_path,
         clusters_path,
         len(summary_payload.get("repeat_groups", [])),
+        len(clusters_payload.get("repeat_groups", [])),
         len(((summary_payload.get("cross_model") or {}).get("latest") or [])),
         len(((summary_payload.get("cross_model") or {}).get("best_accuracy") or [])),
         len(((clusters_payload.get("cross_model") or {}).get("latest") or [])),
@@ -9802,8 +9873,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--validator_args",
         default="",
         help=(
-            "Optional extra arguments passed to the validator command as a single string "
+            "Optional extra arguments passed to the validator executable/script as a single string "
             "(supports quoting). Example: \"--lexicon data/lemmas.txt --max_distance 2 --max_suggestions 30\". "
+            "For the bundled lemmatization validators, validator-side --max_distance 0 disables the distance threshold. "
             "Validator-side --max_suggestions caps how many labels the validator returns; "
             "--validator_prompt_max_candidates caps how many of those returned labels are rendered into the "
             "retry prompt."
@@ -10488,7 +10560,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             validator_command = build_validator_command(args.validator_cmd, args.validator_args)
         except ValueError as exc:
-            logging.error("Unable to build validator command: %s", exc)
+            logging.error("Unable to build validator path/argv: %s", exc)
             return 1
         validator_client = ValidatorClient(
             command=validator_command,

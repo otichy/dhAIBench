@@ -21,6 +21,8 @@ The agent can delegate post-checks to an external NDJSON validator that can:
 
 If `--validator_cmd` points to a `.py` file, the agent runs it with the current Python interpreter.
 
+In the bundled lemmatization validators, validator-side `--max_distance 0` disables the distance threshold. Returned candidates are still capped by the lexicon and any validator-side `--max_suggestions` limit.
+
 ## Example: Lemmatization Validator
 
 This repository includes `validators/lemmatization_validator.py`.

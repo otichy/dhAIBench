@@ -328,9 +328,43 @@ class MetricsOnlyTests(unittest.TestCase):
                 with open(clusters_path, "r", encoding="utf-8") as handle:
                     clusters_payload = json.load(handle)
 
+                repeat_clusters = clusters_payload.get("repeat_groups") or []
+                self.assertEqual(len(repeat_clusters), 1)
+                repeat_cluster = repeat_clusters[0]
+                self.assertEqual(repeat_cluster.get("cluster_scope"), "repeat")
+                self.assertEqual(repeat_cluster.get("provider"), "openai")
+                self.assertEqual(repeat_cluster.get("model"), "model-a")
+                self.assertEqual(repeat_cluster.get("run_count"), 2)
+                self.assertEqual(
+                    repeat_cluster.get("run_stems"),
+                    [
+                        "same-task__openai__model-a__2026-01-02-00-00",
+                        "same-task__openai__model-a__2026-01-01-00-00",
+                    ],
+                )
+                self.assertEqual(repeat_cluster.get("distance_metric"), "nominal_disagreement_rate")
+                self.assertEqual(repeat_cluster.get("linkage_method"), "average")
+                repeat_representatives = repeat_cluster.get("representatives") or []
+                self.assertEqual(len(repeat_representatives), 2)
+                self.assertEqual(
+                    [item.get("run_stem") for item in repeat_representatives],
+                    [
+                        "same-task__openai__model-a__2026-01-02-00-00",
+                        "same-task__openai__model-a__2026-01-01-00-00",
+                    ],
+                )
+                repeat_pairwise = repeat_cluster.get("pairwise") or []
+                self.assertEqual(len(repeat_pairwise), 1)
+                self.assertEqual(repeat_pairwise[0].get("overlap_count"), 2)
+                self.assertEqual(repeat_pairwise[0].get("disagreement_count"), 1)
+                self.assertIsNotNone(repeat_pairwise[0].get("distance"))
+                self.assertAlmostEqual(repeat_pairwise[0].get("distance"), 0.5, places=8)
+                self.assertEqual(repeat_cluster.get("linkage"), [[0, 1, 0.5, 2]])
+
                 cross_latest_clusters = ((clusters_payload.get("cross_model") or {}).get("latest") or [])
                 self.assertEqual(len(cross_latest_clusters), 1)
                 latest_cluster = cross_latest_clusters[0]
+                self.assertEqual(latest_cluster.get("cluster_scope"), "cross_model")
                 self.assertEqual(latest_cluster.get("model_count"), 2)
                 self.assertEqual(latest_cluster.get("distance_metric"), "nominal_disagreement_rate")
                 self.assertEqual(latest_cluster.get("linkage_method"), "average")

@@ -59,6 +59,8 @@ def resolve_effective_max_distance(
     max_distance: int,
     max_distance_per_retry: float,
 ) -> int:
+    if float(max_distance) <= 0.0:
+        return 0
     attempt_index = resolve_attempt_index(message)
     retry_count = max(0, attempt_index - 2)
     effective_max_distance = float(max_distance) + max(0.0, float(max_distance_per_retry)) * retry_count
@@ -153,6 +155,13 @@ class BKTree:
             return []
         results: List[Tuple[int, str]] = []
         to_visit: List[BKNode] = [self._root]
+        if max_distance <= 0:
+            while to_visit:
+                node = to_visit.pop()
+                dist = levenshtein_bounded(query, node.term, max(len(query), len(node.term)))
+                results.append((dist, node.term))
+                to_visit.extend(node.children.values())
+            return results
         while to_visit:
             node = to_visit.pop()
             dist = levenshtein_bounded(query, node.term, max_distance)
@@ -326,7 +335,15 @@ def handle_validate(
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NDJSON lemmatization validator.")
     parser.add_argument("--lexicon", required=True, help="Path to lemma lexicon (one lemma per line).")
-    parser.add_argument("--max_distance", type=int, default=2, help="Max edit distance for suggestions.")
+    parser.add_argument(
+        "--max_distance",
+        type=int,
+        default=2,
+        help=(
+            "Max edit distance for suggestions. Set to 0 to disable the distance threshold; "
+            "returned candidates are then limited by the lexicon and --max_suggestions."
+        ),
+    )
     parser.add_argument(
         "--max_distance_per_retry",
         type=float,

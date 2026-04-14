@@ -111,6 +111,14 @@ class PromptGuiSyncTests(unittest.TestCase):
         self.assertIn('data.get("validator_max_distance")', shared_js)
         self.assertIn('data.get("validator_max_distance_per_retry")', shared_js)
         self.assertIn('data.get("validator_max_suggestions")', shared_js)
+        self.assertIn("0 disables the distance threshold", shared_js)
+
+    def test_gui_adds_clickable_field_help_affordances(self) -> None:
+        shared_js = _load_file("config_gui_shared.js")
+        self.assertIn("function enhanceFieldHelp(label, element, helpText)", shared_js)
+        self.assertIn('button.className = "field-help-button"', shared_js)
+        self.assertIn('popover.className = "field-help-popover"', shared_js)
+        self.assertIn("bindFieldHelpDismissListeners(ctx);", shared_js)
 
     def test_metrics_mode_disables_logprobs_control(self) -> None:
         shared_js = _load_file("config_gui_shared.js")

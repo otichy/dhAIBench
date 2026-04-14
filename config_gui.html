@@ -218,6 +218,14 @@
         gap: 0.4rem;
         font-weight: 700;
       }
+      .field-help-heading {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        width: 100%;
+        font-weight: 700;
+      }
       .field-tags {
         display: inline-flex;
         align-items: center;
@@ -235,6 +243,53 @@
         font-size: 0.72rem;
         font-weight: 700;
         letter-spacing: 0.02em;
+      }
+      .field-help-button {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.35rem;
+        min-width: 1.35rem;
+        height: 1.35rem;
+        min-height: 1.35rem;
+        margin-left: auto;
+        padding: 0;
+        border: 1px solid #bdd1e5;
+        border-radius: 999px;
+        background: #eef6fd;
+        color: var(--accent);
+        font-size: 0.82rem;
+        font-weight: 800;
+        line-height: 1;
+        box-shadow: none;
+      }
+      .field-help-button:hover,
+      .field-help-button:focus-visible {
+        background: #dcecff;
+        border-color: #98bad9;
+        outline: none;
+      }
+      .field-help-popover {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0.35rem 0 0.1rem;
+        padding: 0.65rem 0.75rem;
+        border: 1px solid #d5e2ef;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #f8fbff 0%, #eef5fb 100%);
+        color: #35516d;
+        font-size: 0.9rem;
+        font-weight: 400;
+        line-height: 1.45;
+        box-shadow: 0 10px 24px rgba(22, 37, 58, 0.08);
+      }
+      label.inline {
+        flex-wrap: wrap;
+      }
+      label.inline .field-help-popover {
+        flex-basis: 100%;
+        margin-left: 1.5rem;
       }
       .provider-subheading {
         margin: 0.2rem 0 0.8rem;
@@ -557,10 +612,10 @@
           <details class="section-card" data-mode-visible="validator">
             <summary>Validator Setup</summary>
             <div class="section-card-body">
-              <p class="section-lead">Validator flags are emitted only when a validator command is set.</p>
+              <p class="section-lead">Validator flags are emitted only when a validator path is set.</p>
               <p class="section-lead">Retry message text comes from the validator script itself. The GUI does not expose a separate retry-message field because that text is returned by the validator, not passed as a benchmark flag.</p>
               <div class="grid">
-                <label>Validator command<input type="text" id="validator_cmd" name="validator_cmd" placeholder="validators/lemmatization_validator.py" /></label>
+                <label>Validator path<input type="text" id="validator_cmd" name="validator_cmd" placeholder="validators/lemmatization_validator.py" /></label>
                 <label>Validator lexicon<input type="text" id="validator_lexicon" name="validator_lexicon" placeholder="validators/OE_lemmatization_validator_lexicon.csv" /></label>
                 <label>Validator max distance<input type="number" step="0.01" min="0" id="validator_max_distance" name="validator_max_distance" placeholder="1.25" /></label>
                 <label>Distance increment from 3rd try<input type="number" step="0.01" min="0" id="validator_max_distance_per_retry" name="validator_max_distance_per_retry" placeholder="0.25" /></label>

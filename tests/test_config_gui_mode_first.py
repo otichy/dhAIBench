@@ -55,6 +55,8 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
 
     def test_validator_setup_uses_dedicated_validator_arg_fields(self) -> None:
         html = _load_main_gui_html()
+        self.assertIn("Validator path", html)
+        self.assertNotIn("Validator command", html)
         self.assertIn('id="validator_lexicon"', html)
         self.assertIn('id="validator_max_distance"', html)
         self.assertIn('id="validator_max_distance_per_retry"', html)
@@ -122,6 +124,11 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         self.assertIn(">Optional<", html)
         self.assertIn('id="output-path-mode-hint"', html)
         self.assertEqual(html.count("<span>Output CSV Path</span>"), 1)
+
+    def test_field_help_styles_are_present(self) -> None:
+        html = _load_main_gui_html()
+        self.assertIn(".field-help-button {", html)
+        self.assertIn(".field-help-popover {", html)
 
     def test_hidden_attribute_has_explicit_css_support(self) -> None:
         html = _load_main_gui_html()

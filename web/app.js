@@ -1157,7 +1157,7 @@ function normalizeAgreementClusterLinkageStep(rawStep) {
   return [left, right, distance, count];
 }
 
-function normalizeAgreementClusterEntry(rawEntry, policy = "") {
+function normalizeAgreementClusterEntry(rawEntry, policy = "", scope = "") {
   if (!rawEntry || typeof rawEntry !== "object") {
     return null;
   }
@@ -1174,10 +1174,14 @@ function normalizeAgreementClusterEntry(rawEntry, policy = "") {
 
   return {
     groupId: asTrimmedString(rawEntry.group_id),
+    clusterScope: asTrimmedString(rawEntry.cluster_scope) || scope,
     policy: asTrimmedString(rawEntry.representative_policy) || policy,
     taskNameDisplay: asTrimmedString(rawEntry.task_name_display),
     taskNamesSeen: uniqueNonEmptyStrings(rawEntry.task_names_seen || []),
     tagsDisplay: asTrimmedString(rawEntry.tags_display),
+    provider: asTrimmedString(rawEntry.provider),
+    model: asTrimmedString(rawEntry.model),
+    runCount: safeNum(rawEntry.run_count),
     modelCount: safeNum(rawEntry.model_count),
     distanceMetric: asTrimmedString(rawEntry.distance_metric),
     linkageMethod: asTrimmedString(rawEntry.linkage_method),
@@ -1194,17 +1198,21 @@ function normalizeAgreementClusters(payload) {
     return null;
   }
 
+  const repeatGroups = Array.isArray(payload.repeat_groups)
+    ? payload.repeat_groups.map((entry) => normalizeAgreementClusterEntry(entry, "", "repeat")).filter(Boolean)
+    : [];
   const crossModelRaw = payload.cross_model && typeof payload.cross_model === "object" ? payload.cross_model : {};
   const crossModel = {};
   AGREEMENT_REPRESENTATIVE_POLICY_KEYS.forEach((policy) => {
     crossModel[policy] = Array.isArray(crossModelRaw[policy])
-      ? crossModelRaw[policy].map((entry) => normalizeAgreementClusterEntry(entry, policy)).filter(Boolean)
+      ? crossModelRaw[policy].map((entry) => normalizeAgreementClusterEntry(entry, policy, "cross_model")).filter(Boolean)
       : [];
   });
 
   return {
     generatedAt: asTrimmedString(payload.generated_at),
     runCount: safeNum(payload.run_count),
+    repeatGroups,
     crossModel,
   };
 }
@@ -6165,13 +6173,7 @@ function getVisibleCrossModelAgreementEntries(runs, policy = state.agreementRepr
   );
 }
 
-function getVisibleCrossModelClusterEntries(runs, policy = state.agreementRepresentativePolicy) {
-  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
-  const crossModel =
-    state.agreementClusters && state.agreementClusters.crossModel
-      ? state.agreementClusters.crossModel
-      : {};
-  const source = Array.isArray(crossModel[policy]) ? crossModel[policy] : [];
+function buildVisibleAgreementClusterEntries(source, visibleRunStems) {
   return source
     .map((entry) => {
       const indexMap = new Map();
@@ -6210,11 +6212,30 @@ function getVisibleCrossModelClusterEntries(runs, policy = state.agreementRepres
         ...entry,
         visibleRepresentatives,
         visiblePairwise,
-        visibleModelCount: visibleRepresentatives.length,
+        visibleRepresentativeCount: visibleRepresentatives.length,
         fullVisible: visibleRepresentatives.length === (entry.representatives || []).length,
       };
     })
     .filter(Boolean);
+}
+
+function getVisibleRepeatClusterEntries(runs) {
+  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
+  const source =
+    state.agreementClusters && Array.isArray(state.agreementClusters.repeatGroups)
+      ? state.agreementClusters.repeatGroups
+      : [];
+  return buildVisibleAgreementClusterEntries(source, visibleRunStems);
+}
+
+function getVisibleCrossModelClusterEntries(runs, policy = state.agreementRepresentativePolicy) {
+  const visibleRunStems = new Set((runs || []).map((run) => run.runStem).filter(Boolean));
+  const crossModel =
+    state.agreementClusters && state.agreementClusters.crossModel
+      ? state.agreementClusters.crossModel
+      : {};
+  const source = Array.isArray(crossModel[policy]) ? crossModel[policy] : [];
+  return buildVisibleAgreementClusterEntries(source, visibleRunStems);
 }
 
 function computeAverageLinkageDendrogram(leafCount, pairwiseEntries) {
@@ -6357,6 +6378,64 @@ function buildAgreementProviderModelLabel(provider, model) {
     return modelText || "Unknown model";
   }
   return `${modelText || "Unknown model"} (${providerText})`;
+}
+
+function formatAgreementClusterTimestamp(ts) {
+  const ms = parseTimestampToMs(ts);
+  if (!Number.isFinite(ms)) {
+    return "";
+  }
+  return new Date(ms).toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getAgreementClusterEntityLabel(entry) {
+  return entry && entry.clusterScope === "repeat" ? "run" : "model";
+}
+
+function getAgreementClusterTotalCount(entry) {
+  if (!entry) {
+    return 0;
+  }
+  const fallbackCount = Array.isArray(entry.representatives) ? entry.representatives.length : 0;
+  if (entry.clusterScope === "repeat") {
+    return safeNum(entry.runCount) || fallbackCount;
+  }
+  return safeNum(entry.modelCount) || fallbackCount;
+}
+
+function buildAgreementClusterSubsetNote(entry) {
+  const visibleCount = Array.isArray(entry.visibleRepresentatives) ? entry.visibleRepresentatives.length : 0;
+  const totalCount = getAgreementClusterTotalCount(entry);
+  const entityLabel = getAgreementClusterEntityLabel(entry);
+  const pluralSuffix = visibleCount === 1 ? "" : "s";
+  if (entry.fullVisible) {
+    return `${formatNum(visibleCount, 0)} visible ${entityLabel}${pluralSuffix}.`;
+  }
+  return `Recomputed from ${formatNum(visibleCount, 0)} visible of ${formatNum(totalCount, 0)} total ${entityLabel}${totalCount === 1 ? "" : "s"}.`;
+}
+
+function buildAgreementClusterLeafLabel(entry, representative) {
+  const labelParts = [];
+  if (entry && entry.clusterScope === "repeat") {
+    labelParts.push(
+      formatAgreementClusterTimestamp(representative.timestamp) ||
+        asTrimmedString(representative.runStem) ||
+        asTrimmedString(representative.metricsFile) ||
+        "Run"
+    );
+  } else {
+    labelParts.push(buildAgreementProviderModelLabel(representative.provider, representative.model));
+  }
+  if (representative.cohenKappa != null) {
+    labelParts.push(`Îş ${formatNum(representative.cohenKappa, 3)}`);
+  }
+  return labelParts.join(" | ");
 }
 
 function getAgreementClusterLeafOrder(leafCount, linkage) {
@@ -6527,7 +6606,7 @@ function createAgreementClusterSvg(entry, linkage, options = {}) {
     mergeTitle.textContent = [
       `Merge similarity: ${formatNum(mergeSimilarity * 100, 1)}%`,
       `Disagreement distance: ${formatNum(distance, 3)}`,
-      `Merged representatives: ${formatNum(mergedLeafCount, 0)}`,
+      `Merged leaves: ${formatNum(mergedLeafCount, 0)}`,
     ].join("\n");
     mergeDot.appendChild(mergeTitle);
     svg.appendChild(mergeDot);
@@ -6560,7 +6639,7 @@ function createAgreementClusterSvg(entry, linkage, options = {}) {
     if (representative.cohenKappa != null) {
       labelParts.push(`κ ${formatNum(representative.cohenKappa, 3)}`);
     }
-    label.textContent = labelParts.join(" | ");
+    label.textContent = buildAgreementClusterLeafLabel(entry, representative);
     svg.appendChild(label);
   });
 
@@ -6576,26 +6655,25 @@ function createAgreementClusterSvg(entry, linkage, options = {}) {
   return svg;
 }
 
-function createCrossModelClusterCard(entry) {
+function createAgreementClusterCard(entry) {
   const card = document.createElement("section");
   card.className = "agreement-cluster-card";
 
   const heading = document.createElement("h4");
-  heading.textContent = entry.taskNameDisplay || "Cross-Model Similarity";
+  heading.textContent = entry.taskNameDisplay || "Similarity";
   card.appendChild(heading);
 
   const subtitle = document.createElement("p");
   subtitle.className = "agreement-cluster-subtitle muted";
-  const subsetNote = entry.fullVisible
-    ? `${formatNum(entry.visibleModelCount, 0)} visible model(s).`
-    : `Recomputed from ${formatNum(entry.visibleModelCount, 0)} visible of ${formatNum(entry.modelCount, 0)} total models.`;
+  const subsetNote = buildAgreementClusterSubsetNote(entry);
   subtitle.textContent = [
     entry.tagsDisplay,
+    entry.clusterScope === "repeat" ? buildAgreementProviderModelLabel(entry.provider, entry.model) : "",
     subsetNote,
     "Distance = disagreement rate on overlapping rated items.",
     "Cut labels show similarity at that threshold.",
     "Hover merge dots for exact merge similarity.",
-    "Label suffix = representative run Cohen's kappa."
+    "Label suffix = run Cohen's kappa."
   ]
     .filter(Boolean)
     .join(" ");
@@ -6605,7 +6683,7 @@ function createCrossModelClusterCard(entry) {
   if (!Array.isArray(linkage) || linkage.length !== entry.visibleRepresentatives.length - 1) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "Unable to build a similarity tree for the visible representatives because the pairwise distance graph is incomplete.";
+    empty.textContent = `Unable to build a similarity tree for the visible ${getAgreementClusterEntityLabel(entry)}s because the pairwise distance graph is incomplete.`;
     card.appendChild(empty);
     return card;
   }
@@ -6648,7 +6726,7 @@ function createAgreementTreeButton(clusterEntry) {
   return button;
 }
 
-function createCrossModelClustersSection(entries) {
+function createAgreementClustersSection(entries) {
   const section = document.createElement("section");
   section.className = "agreement-section agreement-clusters-section";
 
@@ -6657,7 +6735,7 @@ function createCrossModelClustersSection(entries) {
   section.appendChild(heading);
 
   entries.forEach((entry) => {
-    section.appendChild(createCrossModelClusterCard(entry));
+    section.appendChild(createAgreementClusterCard(entry));
   });
 
   return section;
@@ -6778,6 +6856,9 @@ function createAgreementTableV2(title, entries, mode, options = {}) {
     mode === "repeat"
       ? ["Task", "Model", "Runs", "Repeat α", "Pairable Items"]
       : ["Tree", "Task", "Models", "Cross-Model α", "Pairable Items", "Representatives"];
+  if (mode === "repeat") {
+    columns.unshift("Tree");
+  }
   columns.forEach((labelText) => {
     const th = document.createElement("th");
     th.textContent = labelText;
@@ -6792,8 +6873,19 @@ function createAgreementTableV2(title, entries, mode, options = {}) {
   const tbody = document.createElement("tbody");
   entries.forEach((entry) => {
     const tr = document.createElement("tr");
+    const clusterEntry =
+      options.clusterEntriesByGroupId instanceof Map ? options.clusterEntriesByGroupId.get(entry.groupId) || null : null;
+    const actionCell = document.createElement("td");
+    actionCell.className = "agreement-tree-col";
+    actionCell.dataset.label = "Tree";
+    if (clusterEntry) {
+      actionCell.appendChild(createAgreementTreeButton(clusterEntry));
+    } else {
+      actionCell.innerHTML = '<span class="muted">N/A</span>';
+    }
 
     if (mode === "repeat") {
+      tr.appendChild(actionCell);
       tr.appendChild(createAgreementCell("Task", entry.taskNameDisplay, entry.tagsDisplay));
       tr.appendChild(
         createAgreementCell(
@@ -6808,16 +6900,6 @@ function createAgreementTableV2(title, entries, mode, options = {}) {
       tr.appendChild(createAgreementMetricCell("Repeat α", entry.alphaNominal));
       tr.appendChild(createAgreementCountCell("Pairable Items", entry.pairableItemCount));
     } else {
-      const clusterEntry =
-        options.clusterEntriesByGroupId instanceof Map ? options.clusterEntriesByGroupId.get(entry.groupId) || null : null;
-      const actionCell = document.createElement("td");
-      actionCell.className = "agreement-tree-col";
-      actionCell.dataset.label = "Tree";
-      if (clusterEntry) {
-        actionCell.appendChild(createAgreementTreeButton(clusterEntry));
-      } else {
-        actionCell.innerHTML = '<span class="muted">N/A</span>';
-      }
       tr.appendChild(actionCell);
       tr.appendChild(createAgreementCell("Task", entry.taskNameDisplay, entry.tagsDisplay));
       tr.appendChild(createAgreementCountCell("Models", entry.modelCount));
@@ -6926,7 +7008,7 @@ function renderAgreement(container, runs) {
     : [];
   const clusterEntries = showCrossModel
     ? getVisibleCrossModelClusterEntries(runs, state.agreementRepresentativePolicy)
-    : [];
+    : getVisibleRepeatClusterEntries(runs);
   const clusterEntriesByGroupId = new Map((clusterEntries || []).map((entry) => [entry.groupId, entry]));
 
   const meta = document.createElement("p");
@@ -6937,7 +7019,7 @@ function renderAgreement(container, runs) {
   meta.textContent =
     showCrossModel
       ? `Cross-model agreement uses one representative run per provider/model (${AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy]}). Similarity trees are recomputed from the currently visible representatives.${generatedText}`
-      : `Same-model agreement uses all repeated runs inside a comparable task variant.${generatedText}`;
+      : `Same-model agreement uses all repeated runs inside a comparable task variant. Similarity trees are recomputed from the currently visible runs.${generatedText}`;
   container.appendChild(meta);
 
   if (!repeatEntries.length && !crossEntries.length && !clusterEntries.length) {
@@ -6951,7 +7033,7 @@ function renderAgreement(container, runs) {
 
   if (repeatEntries.length) {
     container.appendChild(
-      createAgreementTableV2("Same model", repeatEntries, "repeat")
+      createAgreementTableV2("Same model", repeatEntries, "repeat", { clusterEntriesByGroupId })
     );
   }
   if (crossEntries.length) {
@@ -6966,8 +7048,15 @@ function renderAgreement(container, runs) {
       "No full cross-model alpha groups are fully represented in the current filter. The similarity trees below still use the visible representatives.";
     container.appendChild(note);
   }
+  if (!showCrossModel && !repeatEntries.length && clusterEntries.length) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent =
+      "No full repeat-run alpha groups are fully represented in the current filter. The similarity trees below still use the visible repeated runs.";
+    container.appendChild(note);
+  }
   if (clusterEntries.length) {
-    container.appendChild(createCrossModelClustersSection(clusterEntries));
+    container.appendChild(createAgreementClustersSection(clusterEntries));
   }
 }
 
@@ -8050,25 +8139,28 @@ function fillAgreementClusterModalContent(entry) {
   }
 
   const linkage = computeAverageLinkageDendrogram(entry.visibleRepresentatives.length, entry.visiblePairwise);
-  const subsetNote = entry.fullVisible
-    ? `${formatNum(entry.visibleModelCount, 0)} visible model(s).`
-    : `Recomputed from ${formatNum(entry.visibleModelCount, 0)} visible of ${formatNum(entry.modelCount, 0)} total models.`;
+  const subsetNote = buildAgreementClusterSubsetNote(entry);
 
   els.clusterModalTitle.textContent = entry.taskNameDisplay || "Similarity Tree";
-  els.clusterModalMeta.textContent = [entry.tagsDisplay, subsetNote].filter(Boolean).join(" ");
+  els.clusterModalMeta.textContent = [
+    entry.tagsDisplay,
+    entry.clusterScope === "repeat" ? buildAgreementProviderModelLabel(entry.provider, entry.model) : "",
+    subsetNote,
+  ]
+    .filter(Boolean)
+    .join(" ");
   els.clusterModalContent.innerHTML = "";
 
   const note = document.createElement("p");
   note.className = "muted";
   note.textContent =
-    "Branch distance is disagreement rate on overlapping rated items. Vertical cut labels show similarity as 1 minus that disagreement distance. Hover the merge dots for exact merge similarity. The κ value next to each run is that representative run's Cohen's kappa against ground truth.";
+    "Branch distance is disagreement rate on overlapping rated items. Vertical cut labels show similarity as 1 minus that disagreement distance. Hover the merge dots for exact merge similarity. The κ value next to each leaf is that run's Cohen's kappa against ground truth.";
   els.clusterModalContent.appendChild(note);
 
   if (!Array.isArray(linkage) || linkage.length !== entry.visibleRepresentatives.length - 1) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent =
-      "Unable to build a similarity tree for the visible representatives because the pairwise distance graph is incomplete.";
+    empty.textContent = `Unable to build a similarity tree for the visible ${getAgreementClusterEntityLabel(entry)}s because the pairwise distance graph is incomplete.`;
     els.clusterModalContent.appendChild(empty);
     return;
   }

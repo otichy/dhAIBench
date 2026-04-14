@@ -10,6 +10,7 @@ Use it to configure:
 - prompt controls such as CoT and system prompt
 - input, labels, and output paths
 - plotting options
+- validator path plus dedicated validator lexicon, max distance, retry increment, and max suggestions fields
 - provider-specific controls that map to the CLI
 
 The GUI generates a `python benchmark_agent.py ...` command that you can paste into a terminal.

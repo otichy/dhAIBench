@@ -208,17 +208,17 @@
     calibration: "Generate a calibration plot from model confidence scores.",
     confusion_heatmap: "Generate a confusion heatmap when label-based metrics are available.",
     validator_enable: "Enable external validator roundtrip and retry logic.",
-    validator_cmd: "Executable or .py script path used for label validation.",
+    validator_cmd: "Path to the validator executable or .py script used for label validation.",
     validator_args:
       "The GUI synthesizes --validator_args from the dedicated validator lexicon, max distance, distance increment per retry, and max suggestions fields.",
     validator_lexicon:
       "Optional value passed to the validator as --lexicon. Leave blank to let the validator script use its own default lexicon.",
     validator_max_distance:
-      "Optional value passed to the validator as --max_distance. This is the validator-side matching threshold.",
+      "Optional value passed to the validator as --max_distance. For the bundled lemmatization validators, 0 disables the distance threshold. Returned labels are still capped by the lexicon and --max_suggestions.",
     validator_max_distance_per_retry:
       "Optional value passed to the validator as --max_distance_per_retry. The increment starts only on the second retry, meaning the third overall attempt is the first one with a higher threshold. Leave blank or 0 to keep the validator threshold fixed.",
     validator_max_suggestions:
-      "Optional value passed to the validator as --max_suggestions. It caps how many labels the validator returns before the benchmark-side Max prompt candidates cap is applied.",
+      "Optional value passed to the validator as --max_suggestions. It caps how many labels the validator returns after any distance filtering, before the benchmark-side Max prompt candidates cap is applied.",
     validator_timeout: "Timeout in seconds for each validator invocation.",
     validator_prompt_max_candidates:
       "Benchmark-side cap for how many validator-returned labels are shown in the retry prompt. This can be lower than the validator's own --max_suggestions limit.",
@@ -551,6 +551,7 @@
       ],
     },
   ];
+  let fieldHelpIdCounter = 0;
 
   function getWindowModelCatalog() {
     return window.MODEL_CATALOG && typeof window.MODEL_CATALOG === "object"
@@ -1698,10 +1699,177 @@
     }
   }
 
+  function getMappedHelpText(element) {
+    if (!element || !(element instanceof HTMLElement)) {
+      return "";
+    }
+    const mapped =
+      (element.id && inputHelpTextById[element.id]) ||
+      (element.name && inputHelpTextById[element.name]) ||
+      "";
+    return typeof mapped === "string" ? mapped.trim() : "";
+  }
+
+  function closeAllFieldHelp(exceptLabel = null) {
+    document.querySelectorAll('label[data-field-help="true"]').forEach((label) => {
+      if (!(label instanceof HTMLLabelElement) || label === exceptLabel) {
+        return;
+      }
+      const button = label.querySelector(".field-help-button");
+      const popover = label.querySelector(".field-help-popover");
+      if (!(button instanceof HTMLButtonElement) || !(popover instanceof HTMLElement)) {
+        return;
+      }
+      button.setAttribute("aria-expanded", "false");
+      popover.hidden = true;
+    });
+  }
+
+  function bindFieldHelpDismissListeners(ctx) {
+    if (ctx.fieldHelpDismissListenersBound) {
+      return;
+    }
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".field-help-button, .field-help-popover")) {
+        return;
+      }
+      closeAllFieldHelp();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeAllFieldHelp();
+      }
+    });
+    ctx.fieldHelpDismissListenersBound = true;
+  }
+
+  function resolveFieldAnchorNode(label, element) {
+    if (!(label instanceof HTMLLabelElement) || !(element instanceof HTMLElement)) {
+      return null;
+    }
+    let current = element;
+    while (current.parentElement && current.parentElement !== label) {
+      current = current.parentElement;
+    }
+    return current.parentElement === label ? current : null;
+  }
+
+  function resolveFieldHelpHeading(label, element) {
+    if (!(label instanceof HTMLLabelElement) || !(element instanceof HTMLElement)) {
+      return null;
+    }
+    const directHeading = Array.from(label.children).find((child) => {
+      return (
+        child instanceof HTMLElement &&
+        child.tagName === "SPAN" &&
+        (child.classList.contains("label-heading") || child.classList.contains("field-help-heading"))
+      );
+    });
+    if (directHeading instanceof HTMLElement) {
+      directHeading.classList.add("field-help-heading");
+      return directHeading;
+    }
+
+    const directSpan = Array.from(label.children).find((child) => {
+      return child instanceof HTMLElement && child.tagName === "SPAN";
+    });
+    if (directSpan instanceof HTMLElement) {
+      directSpan.classList.add("field-help-heading");
+      return directSpan;
+    }
+
+    const anchorNode = resolveFieldAnchorNode(label, element);
+    if (!(anchorNode instanceof Node)) {
+      return null;
+    }
+    const heading = document.createElement("span");
+    heading.className = "field-help-heading";
+    const leadingNodes = [];
+    for (const node of Array.from(label.childNodes)) {
+      if (node === anchorNode) {
+        break;
+      }
+      leadingNodes.push(node);
+    }
+    if (!leadingNodes.some((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim())) {
+      return null;
+    }
+    label.insertBefore(heading, anchorNode);
+    leadingNodes.forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
+        node.remove();
+        return;
+      }
+      heading.appendChild(node);
+    });
+    return heading;
+  }
+
+  function enhanceFieldHelp(label, element, helpText) {
+    if (!(label instanceof HTMLLabelElement) || !(element instanceof HTMLElement) || !helpText) {
+      return;
+    }
+    if (label.dataset.fieldHelp === "true") {
+      return;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "field-help-button";
+    button.textContent = "?";
+    button.title = helpText;
+    button.setAttribute("aria-expanded", "false");
+
+    const headingText = label.textContent ? label.textContent.replace(/\s+/g, " ").trim() : "";
+    button.setAttribute(
+      "aria-label",
+      headingText ? `Show help for ${headingText}` : "Show field help"
+    );
+
+    const popover = document.createElement("div");
+    popover.className = "field-help-popover";
+    popover.hidden = true;
+    popover.textContent = helpText;
+    popover.id = `field-help-${fieldHelpIdCounter += 1}`;
+    button.setAttribute("aria-controls", popover.id);
+
+    if (label.classList.contains("inline")) {
+      label.appendChild(button);
+      label.appendChild(popover);
+    } else {
+      const heading = resolveFieldHelpHeading(label, element);
+      if (heading instanceof HTMLElement) {
+        heading.appendChild(button);
+        const anchorNode = resolveFieldAnchorNode(label, element);
+        if (anchorNode instanceof Node) {
+          label.insertBefore(popover, anchorNode);
+        } else {
+          label.appendChild(popover);
+        }
+      } else {
+        label.insertBefore(button, label.firstChild);
+        label.insertBefore(popover, element);
+      }
+    }
+
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const willOpen = button.getAttribute("aria-expanded") !== "true";
+      closeAllFieldHelp(label);
+      button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      popover.hidden = !willOpen;
+    });
+
+    label.dataset.fieldHelp = "true";
+  }
+
   function applyInputHoverHelp(ctx) {
     if (!ctx.form) {
       return;
     }
+    bindFieldHelpDismissListeners(ctx);
     Array.from(ctx.form.elements).forEach((element) => {
       if (!element || !(element instanceof HTMLElement)) {
         return;
@@ -1709,12 +1877,20 @@
       if (element.type === "file") {
         return;
       }
-      const mapped =
-        (element.id && inputHelpTextById[element.id]) ||
-        (element.name && inputHelpTextById[element.name]) ||
-        "";
+      const mapped = getMappedHelpText(element);
       if (mapped) {
         element.title = mapped;
+        if (
+          (element instanceof HTMLInputElement ||
+            element instanceof HTMLSelectElement ||
+            element instanceof HTMLTextAreaElement) &&
+          element.type !== "hidden"
+        ) {
+          const label = element.closest("label");
+          if (label instanceof HTMLLabelElement) {
+            enhanceFieldHelp(label, element, mapped);
+          }
+        }
       }
     });
     if (ctx.refreshModelsButton) {
@@ -2728,6 +2904,7 @@
       isInitializing: true,
       activeMode: "run",
       sidebarCollapsed: true,
+      fieldHelpDismissListenersBound: false,
       form: document.getElementById("config-form"),
       commandPanel: document.querySelector(".command-panel"),
       commandOutput: document.getElementById("command-output"),

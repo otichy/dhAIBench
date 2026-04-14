@@ -9,6 +9,36 @@ from validators import lemmatization_validator as lv
 
 
 class LemmatizationValidatorTests(unittest.TestCase):
+    def test_handle_validate_treats_zero_max_distance_as_unbounded(self) -> None:
+        lexicon_norm = {"cat", "dog"}
+        canonical = {"cat": "cat", "dog": "dog"}
+        by_pos = {}
+        tree = lv.BKTree()
+        tree.add("cat", max_distance_hint=2)
+        tree.add("dog", max_distance_hint=2)
+        result = lv.handle_validate(
+            message={
+                "request_id": "1",
+                "prediction": {"label": "cot"},
+                "example": {"info": ""},
+            },
+            lexicon_norm=lexicon_norm,
+            canonical=canonical,
+            by_pos=by_pos,
+            tree=tree,
+            lowercase=False,
+            strip_punct=False,
+            use_pos=False,
+            pos_regex=re.compile(r".*"),
+            pos_whitelist=[],
+            pos_fallback=False,
+            pos_unknown_policy="ignore",
+            max_distance=0,
+            max_suggestions=30,
+        )
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["retry"]["allowed_labels"], ["cat", "dog"])
+
     def test_handle_validate_increases_max_distance_per_retry(self) -> None:
         lexicon_norm = {"cat"}
         canonical = {"cat": "cat"}
@@ -17,7 +47,7 @@ class LemmatizationValidatorTests(unittest.TestCase):
         tree.add("cat", max_distance_hint=2)
         base_message = {
             "request_id": "1",
-            "prediction": {"label": "cut"},
+            "prediction": {"label": "dog"},
             "example": {"info": ""},
         }
         first_attempt = lv.handle_validate(
@@ -33,7 +63,7 @@ class LemmatizationValidatorTests(unittest.TestCase):
             pos_whitelist=[],
             pos_fallback=False,
             pos_unknown_policy="ignore",
-            max_distance=0,
+            max_distance=2,
             max_suggestions=30,
             max_distance_per_retry=1.0,
         )
@@ -50,7 +80,7 @@ class LemmatizationValidatorTests(unittest.TestCase):
             pos_whitelist=[],
             pos_fallback=False,
             pos_unknown_policy="ignore",
-            max_distance=0,
+            max_distance=2,
             max_suggestions=30,
             max_distance_per_retry=1.0,
         )
@@ -67,7 +97,7 @@ class LemmatizationValidatorTests(unittest.TestCase):
             pos_whitelist=[],
             pos_fallback=False,
             pos_unknown_policy="ignore",
-            max_distance=0,
+            max_distance=2,
             max_suggestions=30,
             max_distance_per_retry=1.0,
         )

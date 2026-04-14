@@ -61,13 +61,14 @@ The comparison key ignores the `open source` tag so that publication-status vari
 
 `data/metrics/agreement_clusters.json` is rebuilt alongside the agreement summary.
 
-It stores privacy-safe cross-model similarity data for the Agreement tab:
+It stores privacy-safe similarity data for the Agreement tab:
 
+- repeat-run trees for repeated runs of the same provider/model on the same comparable task variant
 - one representative run per provider/model for each comparable task variant and representative policy
 - pairwise disagreement distances over overlapping rated items
 - average-linkage dendrogram merges for the full visible group
 
-The dashboard can use the stored pairwise distances to redraw the dendrogram for a filtered subset of visible models without requiring access to the original output CSVs.
+The dashboard can use the stored pairwise distances to redraw the dendrogram for a filtered subset of visible runs or models without requiring access to the original output CSVs.
 
 ## Charts
 

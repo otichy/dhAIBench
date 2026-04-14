@@ -117,6 +117,24 @@ class OELemmatizationValidatorTests(unittest.TestCase):
         self.assertEqual(result["retry"]["allowed_labels"], ["habban"])
         self.assertIn('The previous lemma "habbane" was rejected', result["retry"]["message"])
 
+    def test_handle_validate_treats_zero_max_distance_as_unbounded(self) -> None:
+        lexicon = oe.Lexicon(
+            all_lemmas={"habban": "habban", "hatan": "hatan"},
+            lemmas_by_pos={"VB": {"habban": "habban", "hatan": "hatan"}},
+        )
+        result = oe.handle_validate(
+            message={
+                "request_id": "1",
+                "prediction": {"label": "habbane"},
+                "example": {"info": "VB"},
+            },
+            lexicon=lexicon,
+            max_distance=0.0,
+            max_suggestions=30,
+        )
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["retry"]["allowed_labels"], ["habban", "hatan"])
+
     def test_handle_validate_increases_max_distance_per_retry(self) -> None:
         lexicon = oe.Lexicon(
             all_lemmas={"sawel": "sawel"},

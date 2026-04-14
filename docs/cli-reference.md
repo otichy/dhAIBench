@@ -243,14 +243,24 @@ options:
                         via the current Python interpreter.
   --validator_args VALIDATOR_ARGS
                         Optional extra arguments passed to the validator
-                        command as a single string (supports quoting).
-                        Example: "--lexicon data/lemmas.txt --max_distance 2".
+                        executable/script as a single string (supports
+                        quoting). Example: "--lexicon data/lemmas.txt
+                        --max_distance 2 --max_suggestions 30". For the
+                        bundled lemmatization validators, validator-side
+                        --max_distance 0 disables the distance threshold.
+                        Validator-side --max_suggestions caps how many labels
+                        the validator returns;
+                        --validator_prompt_max_candidates caps how many of
+                        those returned labels are rendered into the retry
+                        prompt.
   --validator_timeout VALIDATOR_TIMEOUT
                         Timeout (seconds) for each validator request/response
                         roundtrip.
   --validator_prompt_max_candidates VALIDATOR_PROMPT_MAX_CANDIDATES
                         Maximum number of allowed_labels candidates rendered
-                        into a validator retry prompt.
+                        into a validator retry prompt. This is a benchmark-
+                        side cap applied after any validator-side limit such
+                        as --max_suggestions.
   --validator_prompt_max_chars VALIDATOR_PROMPT_MAX_CHARS
                         Maximum character length of the validator retry
                         instruction appended to the prompt.

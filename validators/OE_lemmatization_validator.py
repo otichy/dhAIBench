@@ -65,6 +65,8 @@ def resolve_effective_max_distance(
     max_distance: float,
     max_distance_per_retry: float,
 ) -> float:
+    if float(max_distance) <= 0.0:
+        return 0.0
     attempt_index = resolve_attempt_index(message)
     retry_count = max(0, attempt_index - 2)
     return max(0.0, float(max_distance) + max(0.0, float(max_distance_per_retry)) * retry_count)
@@ -254,7 +256,7 @@ def collect_candidates(
     matches: List[Suggestion] = []
     for lemma_norm, lemma in candidates.items():
         distance = weighted_distance(prediction, lemma_norm)
-        if distance <= max_distance:
+        if max_distance <= 0.0 or distance <= max_distance:
             matches.append(Suggestion(distance=distance, lemma=lemma))
     matches.sort(key=lambda item: (item.distance, item.lemma))
     return matches[:max_suggestions]
@@ -384,7 +386,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--max_distance",
         type=float,
         default=DEFAULT_MAX_DISTANCE,
-        help="Maximum weighted edit distance for suggestions.",
+        help=(
+            "Maximum weighted edit distance for suggestions. Set to 0 to disable the distance threshold; "
+            "returned candidates are then limited by the lexicon and --max_suggestions."
+        ),
     )
     parser.add_argument(
         "--max_distance_per_retry",
