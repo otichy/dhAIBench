@@ -6435,6 +6435,9 @@ function buildAgreementClusterLeafLabel(entry, representative) {
   if (representative.cohenKappa != null) {
     labelParts.push(`Îş ${formatNum(representative.cohenKappa, 3)}`);
   }
+  if (representative.cohenKappa != null) {
+    labelParts[labelParts.length - 1] = `\u03BA ${formatNum(representative.cohenKappa, 3)}`;
+  }
   return labelParts.join(" | ");
 }
 
