@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import codecs
 import copy
 import csv
 import hashlib
@@ -78,6 +77,8 @@ PROMPT_LOG_DETAIL_COMPACT = "compact"
 DEFAULT_PROMPT_LOG_DETAIL = PROMPT_LOG_DETAIL_FULL
 DEFAULT_FLUSH_ROWS = 100
 DEFAULT_FLUSH_SECONDS = 2.0
+MAX_PROMPT_LOG_RECORD_BYTES = 10_000_000
+MAX_STORED_SYSTEM_PROMPT_CHARS = 100_000
 LEGACY_DATA_ROOT_DIR = "/data"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -876,21 +877,17 @@ def decode_cli_system_prompt(raw_prompt: Optional[str]) -> Optional[str]:
     """Decode GUI-escaped newline/tab/backslash sequences back into the original text."""
     if raw_prompt is None or "\\" not in raw_prompt:
         return raw_prompt
-    try:
-        return codecs.decode(raw_prompt, "unicode_escape")
-    except Exception:
-        logging.debug("Failed to decode system prompt escapes; using raw value.")
-        replacements = (
-            ("\\r\\n", "\n"),
-            ("\\n", "\n"),
-            ("\\r", "\r"),
-            ("\\t", "\t"),
-            ("\\\\", "\\"),
-        )
-        decoded = raw_prompt
-        for pattern, replacement in replacements:
-            decoded = decoded.replace(pattern, replacement)
-        return decoded
+    replacements = {
+        "\\r\\n": "\n",
+        "\\n": "\n",
+        "\\r": "\r",
+        "\\t": "\t",
+        "\\\\": "\\",
+    }
+    decoded = raw_prompt
+    for pattern, replacement in replacements.items():
+        decoded = decoded.replace(pattern, replacement)
+    return decoded
 
 
 def decode_system_prompt_b64(encoded_prompt: Optional[str]) -> Optional[str]:
@@ -1526,6 +1523,13 @@ def is_missing_resume_value(value: Any) -> bool:
     return False
 
 
+def is_unsafe_stored_system_prompt(value: Any) -> bool:
+    """Return True when a stored prompt is too large to recover or log safely."""
+    if not isinstance(value, str):
+        return False
+    return len(value) > MAX_STORED_SYSTEM_PROMPT_CHARS
+
+
 def normalize_resume_run_config(config: Any) -> Dict[str, Any]:
     """Normalize a stored run-config payload to the known resume-recoverable keys."""
     if not isinstance(config, dict):
@@ -1534,7 +1538,14 @@ def normalize_resume_run_config(config: Any) -> Dict[str, Any]:
     for dest in RESUME_RECOVERABLE_ARG_DESTS:
         if dest not in config:
             continue
-        normalized[dest] = normalize_resume_value(dest, config.get(dest))
+        normalized_value = normalize_resume_value(dest, config.get(dest))
+        if dest == "system_prompt" and is_unsafe_stored_system_prompt(normalized_value):
+            logging.warning(
+                "Ignoring recovered system prompt because it is too large for safe resume metadata (%d chars).",
+                len(normalized_value),
+            )
+            continue
+        normalized[dest] = normalized_value
     return normalized
 
 
@@ -1581,7 +1592,15 @@ def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
         decoded_system_prompt = decode_system_prompt_b64(encoded_system_prompt) or DEFAULT_SYSTEM_PROMPT
     else:
         decoded_system_prompt = decode_cli_system_prompt(raw_system_prompt) or DEFAULT_SYSTEM_PROMPT
-    snapshot["system_prompt"] = str(decoded_system_prompt or DEFAULT_SYSTEM_PROMPT)
+    system_prompt_for_snapshot = str(decoded_system_prompt or DEFAULT_SYSTEM_PROMPT)
+    if is_unsafe_stored_system_prompt(system_prompt_for_snapshot):
+        logging.warning(
+            "System prompt is %d chars; omitting it from run metadata to avoid oversized resume logs.",
+            len(system_prompt_for_snapshot),
+        )
+        snapshot["system_prompt"] = ""
+    else:
+        snapshot["system_prompt"] = system_prompt_for_snapshot
     snapshot["system_prompt_b64"] = None
     return snapshot
 
@@ -3372,6 +3391,46 @@ def _load_legacy_prompt_log_records_best_effort(path: str) -> Tuple[List[Dict[st
     return records, truncated
 
 
+def iter_ndjson_prompt_log_lines(path: str) -> Iterator[Tuple[int, str]]:
+    """Yield NDJSON lines while skipping records that exceed the safe parse limit."""
+    with open(path, "rb") as handle:
+        line_number = 0
+        chunks: List[bytes] = []
+        current_size = 0
+        skipping_oversized = False
+        while True:
+            chunk = handle.readline(1024 * 1024)
+            if chunk == b"":
+                if chunks and not skipping_oversized:
+                    yield line_number, b"".join(chunks).decode("utf-8")
+                return
+
+            if not chunks and not skipping_oversized:
+                line_number += 1
+
+            current_size += len(chunk)
+            if current_size > MAX_PROMPT_LOG_RECORD_BYTES:
+                if not skipping_oversized:
+                    logging.warning(
+                        "Skipping oversized prompt-log record in %s at line %d (> %d bytes).",
+                        path,
+                        line_number,
+                        MAX_PROMPT_LOG_RECORD_BYTES,
+                    )
+                chunks = []
+                skipping_oversized = True
+
+            if not skipping_oversized:
+                chunks.append(chunk)
+
+            if chunk.endswith(b"\n"):
+                if chunks and not skipping_oversized:
+                    yield line_number, b"".join(chunks).decode("utf-8")
+                chunks = []
+                current_size = 0
+                skipping_oversized = False
+
+
 def iter_prompt_log_records(path: str) -> Iterator[Dict[str, Any]]:
     """Iterate prompt-log records from NDJSON or legacy JSON-array files."""
     resolved = resolve_user_path(path)
@@ -3409,19 +3468,18 @@ def iter_prompt_log_records(path: str) -> Iterator[Dict[str, Any]]:
                 )
         return
     if format_name == "ndjson":
-        with open(resolved, "r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"Invalid NDJSON record in {resolved} at line {line_number}: {exc}"
-                    ) from exc
-                if isinstance(payload, dict):
-                    yield payload
+        for line_number, line in iter_ndjson_prompt_log_lines(resolved):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid NDJSON record in {resolved} at line {line_number}: {exc}"
+                ) from exc
+            if isinstance(payload, dict):
+                yield payload
         return
     raise ValueError(
         f"Prompt log {resolved} has an unknown format. Expected NDJSON or legacy JSON array."
@@ -3483,6 +3541,44 @@ def extract_run_config_from_log_records(
         if run_config:
             latest_run_config = run_config
     return latest_run_config
+
+
+def extract_run_config_prefix_from_oversized_prompt_log(path: str) -> Optional[Dict[str, Any]]:
+    """Recover metadata fields that precede an oversized stored system prompt."""
+    resolved = resolve_user_path(path)
+    if detect_prompt_log_format(resolved) != "ndjson":
+        return None
+    try:
+        with open(resolved, "rb") as handle:
+            prefix_bytes = handle.read(MAX_PROMPT_LOG_RECORD_BYTES)
+    except OSError:
+        return None
+    if b"\n" in prefix_bytes:
+        return None
+    key_index = prefix_bytes.find(b'"system_prompt"')
+    if key_index < 0:
+        return None
+    try:
+        prefix = prefix_bytes[:key_index].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    prefix = prefix.rstrip()
+    if prefix.endswith(","):
+        prefix = prefix[:-1]
+    try:
+        recovered_record = json.loads(prefix + "}}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(recovered_record, dict):
+        return None
+    recovered_config = normalize_resume_run_config(recovered_record.get("run_config"))
+    if recovered_config:
+        logging.warning(
+            "Recovered partial run configuration from oversized prompt-log metadata in %s; "
+            "the stored system prompt was ignored.",
+            resolved,
+        )
+    return recovered_config
 
 
 def load_metrics_payload(path: str) -> Optional[Dict[str, Any]]:
@@ -3575,6 +3671,10 @@ def recover_resume_defaults_from_artifacts(
     log_path = resolve_prompt_log_path_for_output(output_path)
     log_records: List[Dict[str, Any]] = []
     if os.path.exists(log_path):
+        merge_resume_defaults(
+            recovered,
+            extract_run_config_prefix_from_oversized_prompt_log(log_path),
+        )
         log_records = load_existing_prompt_log(log_path)
         merge_resume_defaults(recovered, extract_run_config_from_log_records(log_records))
         merge_resume_defaults(

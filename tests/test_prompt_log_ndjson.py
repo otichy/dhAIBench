@@ -161,6 +161,53 @@ class PromptLogNdjsonTests(unittest.TestCase):
             for line in lines:
                 self.assertIsInstance(json.loads(line), dict)
 
+    def test_decode_cli_system_prompt_preserves_unicode_with_backslashes(self) -> None:
+        prompt = "Classify it’s and \\* markers\\nNext line"
+        decoded = ba.decode_cli_system_prompt(prompt)
+        self.assertEqual(decoded, "Classify it’s and \\* markers\nNext line")
+
+        decoded_again = ba.decode_cli_system_prompt(decoded)
+        self.assertEqual(decoded_again, decoded)
+
+    def test_run_config_snapshot_omits_oversized_system_prompt_metadata(self) -> None:
+        args = _build_args()
+        args.system_prompt = "x" * 25
+        with patch.object(ba, "MAX_STORED_SYSTEM_PROMPT_CHARS", 10):
+            snapshot = ba.build_run_config_snapshot(args)
+        self.assertEqual(snapshot["system_prompt"], "")
+
+    def test_iter_prompt_log_records_skips_oversized_ndjson_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "run.log")
+            with open(log_path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write('{"record_type":"run_metadata","system_prompt":"' + ("x" * 200) + '"}\n')
+                handle.write('{"record_type":"run_command","command":"python benchmark_agent.py"}\n')
+
+            with patch.object(ba, "MAX_PROMPT_LOG_RECORD_BYTES", 100):
+                records = list(ba.iter_prompt_log_records(log_path))
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].get("record_type"), "run_command")
+
+    def test_resume_recovers_prefix_config_from_oversized_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "run.log")
+            with open(log_path, "w", encoding="utf-8", newline="") as handle:
+                handle.write(
+                    '{"record_type":"run_metadata","run_config":{'
+                    '"input":["data/input/x.csv"],"model":"m","provider":"p",'
+                    '"system_prompt":"'
+                    + ("x" * 200)
+                )
+
+            with patch.object(ba, "MAX_PROMPT_LOG_RECORD_BYTES", 150):
+                recovered = ba.extract_run_config_prefix_from_oversized_prompt_log(log_path)
+
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered.get("input"), ["data/input/x.csv"])
+            self.assertEqual(recovered.get("model"), "m")
+            self.assertNotIn("system_prompt", recovered)
+
     def test_compact_attempt_logs_drop_heavy_text_fields(self) -> None:
         attempt_logs = [
             {
@@ -329,10 +376,17 @@ class PromptLogNdjsonTests(unittest.TestCase):
                     )
 
                 self.assertEqual(exit_code, 0)
-                self.assertEqual(captured["input_path"], input_path)
+                self.assertEqual(
+                    os.path.normcase(os.path.normpath(captured["input_path"])),
+                    os.path.normcase(os.path.normpath(input_path)),
+                )
                 self.assertEqual(captured["output_path"], output_path)
                 self.assertTrue(captured["args"].resume)
-                self.assertEqual(captured["args"].input, [input_path])
+                self.assertEqual(len(captured["args"].input), 1)
+                self.assertEqual(
+                    os.path.normcase(os.path.normpath(captured["args"].input[0])),
+                    os.path.normcase(os.path.normpath(input_path)),
+                )
                 self.assertEqual(captured["args"].model, "override-model")
 
     def test_main_resume_requires_existing_output_file(self) -> None:
