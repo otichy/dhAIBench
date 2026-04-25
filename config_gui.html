@@ -527,10 +527,10 @@
                   <span class="label-heading">
                     <span data-mode-visible="run validator">Input CSV Path(s)</span>
                     <span data-mode-visible="metrics">Existing Output CSV Path(s)</span>
-                    <span class="field-tags"><span class="field-tag">Required</span></span>
+                    <span class="field-tags"><span class="field-tag" id="input-path-mode-badge">Required</span></span>
                   </span>
                   <textarea id="input_path" name="input_path" placeholder="data/input/examples.csv&#10;data/input/examples_2.csv" required></textarea>
-                  <span class="hint">Provide one path per line.</span>
+                  <span class="hint" id="input-path-mode-hint">Provide one path per line.</span>
                 </label>
               </section>
               <section class="dataset-output" data-mode-visible="run validator resume">

@@ -63,6 +63,14 @@ python benchmark_agent.py \
 
 ## Metrics-Only Recompute
 
+Refresh only the aggregate agreement files from existing `*_metrics.json` artifacts:
+
+```bash
+python benchmark_agent.py --metrics_only
+```
+
+Recompute metrics for an existing output CSV:
+
 ```bash
 python benchmark_agent.py \
   --metrics_only \

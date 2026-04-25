@@ -139,7 +139,8 @@
   };
 
   const inputHelpTextById = {
-    input_path: "One or more CSV input files. Use one path per line.",
+    input_path:
+      "One or more CSV files. In metrics-only mode, leave this empty to refresh only agreement_summary.json and agreement_clusters.json.",
     model: "Model identifier. Click and pick from cached models or type your own model id.",
     provider: "Provider slug used by --provider. Refresh updates this list from config_models.js.",
     system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
@@ -196,7 +197,7 @@
     tags:
       "Optional metrics tags. Use semicolon-separated tags (for example: tag1;tag2;tag3).",
     metrics_only:
-      "Skip API calls and only recompute metrics from existing output CSVs listed in input_path. Truth labels come from output truth column and can be overridden via labels_path.",
+      "Skip API calls and recompute metrics from existing output CSVs listed in input_path. With no input paths, refresh only agreement_summary.json and agreement_clusters.json.",
     output_path:
       "Optional output CSV file path, or output directory when running multiple inputs. Resume mode requires an existing output CSV here.",
     reprompt_unclassified:
@@ -2084,9 +2085,18 @@
       );
     }
     if (ctx.inputPathInput) {
-      const inputRequired = normalizedMode !== "resume";
+      const inputRequired = normalizedMode !== "resume" && normalizedMode !== "metrics";
       ctx.inputPathInput.required = inputRequired;
       ctx.inputPathInput.setAttribute("aria-required", inputRequired ? "true" : "false");
+    }
+    if (ctx.inputPathModeBadge) {
+      ctx.inputPathModeBadge.textContent = normalizedMode === "metrics" ? "Optional" : "Required";
+    }
+    if (ctx.inputPathModeHint) {
+      ctx.inputPathModeHint.textContent =
+        normalizedMode === "metrics"
+          ? "Provide existing output CSVs, or leave blank to refresh only agreement summaries."
+          : "Provide one path per line.";
     }
     if (ctx.logprobsInput) {
       const logprobsEnabled = normalizedMode !== "metrics";
@@ -2195,9 +2205,13 @@
       .split(/\r?\n/)
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0);
-    command.pushFlag("--input");
+    if (!metricsOnly || inputPaths.length > 0) {
+      command.pushFlag("--input");
+    }
     if (inputPaths.length === 0) {
-      command.pushRaw(shellQuote(""));
+      if (!metricsOnly) {
+        command.pushRaw(shellQuote(""));
+      }
     } else {
       for (const inputPath of inputPaths) {
         command.pushRaw(shellQuote(inputPath));
@@ -2466,9 +2480,13 @@
         .split(/\r?\n/)
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
-      command.pushFlag("--input");
+      if (mode !== "metrics" || inputPaths.length > 0) {
+        command.pushFlag("--input");
+      }
       if (inputPaths.length === 0) {
-        command.pushRaw(shellQuote(""));
+        if (mode !== "metrics") {
+          command.pushRaw(shellQuote(""));
+        }
       } else {
         inputPaths.forEach((inputPath) => command.pushRaw(shellQuote(inputPath)));
       }
@@ -2692,11 +2710,17 @@
       }
     }
 
+    const hasMetricsInput =
+      mode === "metrics" &&
+      (data.get("input_path") ?? "")
+        .toString()
+        .split(/\r?\n/)
+        .some((entry) => entry.trim().length > 0);
     const baselineFlags =
       mode === "resume"
         ? new Set(["--resume", "--output"])
         : mode === "metrics"
-          ? new Set(["--input", "--metrics_only"])
+          ? new Set(hasMetricsInput ? ["--input", "--metrics_only"] : ["--metrics_only"])
           : new Set(["--input", "--model"]);
     const nonDefaultFlagCount = command.flags.filter((flag) => !baselineFlags.has(flag)).length;
     return {
@@ -2936,6 +2960,8 @@
       outputPathInput: document.getElementById("output_path"),
       outputPathModeBadge: document.getElementById("output-path-mode-badge"),
       outputPathModeHint: document.getElementById("output-path-mode-hint"),
+      inputPathModeBadge: document.getElementById("input-path-mode-badge"),
+      inputPathModeHint: document.getElementById("input-path-mode-hint"),
       modeButtons: Array.from(document.querySelectorAll("[data-mode-choice]")),
       sidebarToggleButton: document.getElementById("sidebar-toggle-button"),
       sidebarModeLabel: document.getElementById("sidebar-mode-label"),

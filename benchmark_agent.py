@@ -10107,7 +10107,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         help=(
             "Skip model/API calls and compute metrics from existing output CSV file(s) "
             "provided via --input. Truth labels are taken from each output truth column "
-            "and optionally overridden by --labels."
+            "and optionally overridden by --labels. When --input is omitted, only "
+            f"{AGREEMENT_SUMMARY_FILENAME} and {AGREEMENT_CLUSTERS_FILENAME} are refreshed."
         ),
     )
 
@@ -10171,10 +10172,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             top_examples=args.summarize_log_errors_top,
         )
 
-    if not args.input:
+    if not args.input and not args.metrics_only:
         parser.error(
             "--input is required unless --update-models or --summarize-log-errors is specified, "
-            "or it can be recovered via --resume."
+            "or it can be recovered via --resume. In --metrics_only mode, omit --input to "
+            "refresh only the agreement summary artifacts."
         )
 
     if not args.metrics_only and not args.model:
@@ -10215,9 +10217,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     overall_start = time.perf_counter()
-    input_paths = [resolve_user_path(path) for path in args.input]
+    input_paths = [resolve_user_path(path) for path in (args.input or [])]
 
     if args.metrics_only:
+        if not input_paths:
+            if args.output:
+                logging.warning("--output is ignored when --metrics_only is run without --input.")
+            if args.labels:
+                logging.warning("--labels is ignored when --metrics_only is run without --input.")
+            logging.info(
+                "No --input provided in --metrics_only mode; refreshing only %s and %s.",
+                AGREEMENT_SUMMARY_FILENAME,
+                AGREEMENT_CLUSTERS_FILENAME,
+            )
+            refresh_agreement_summary()
+            elapsed_seconds = time.perf_counter() - overall_start
+            logging.info("Total runtime: %.2f seconds", elapsed_seconds)
+            return 0
+
         if args.output:
             logging.warning(
                 "--output is ignored in --metrics_only mode. Metrics are written to %s.",

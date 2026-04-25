@@ -96,7 +96,7 @@ Session logs capture the benchmark runner's own process logging and are written 
 
 ## Metrics-Only Mode
 
-Use `--metrics_only` to recompute metrics from an existing predictions CSV without calling the model API again.
+Use `--metrics_only` to recompute metrics from an existing predictions CSV without calling the model API again. If you omit `--input`, metrics-only mode refreshes only `agreement_summary.json` and `agreement_clusters.json` from existing run metrics.
 
 Truth labels are taken from:
 

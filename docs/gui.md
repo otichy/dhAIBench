@@ -15,6 +15,8 @@ Use it to configure:
 
 The GUI generates a `python benchmark_agent.py ...` command that you can paste into a terminal.
 
+In Metrics only mode, leave the existing output CSV field empty to generate a command that refreshes only `agreement_summary.json` and `agreement_clusters.json`.
+
 ## System Prompt Handling
 
 The GUI chooses the prompt flag automatically:

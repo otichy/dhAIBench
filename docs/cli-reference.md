@@ -312,5 +312,7 @@ options:
                         Skip model/API calls and compute metrics from existing
                         output CSV file(s) provided via --input. Truth labels
                         are taken from each output truth column and optionally
-                        overridden by --labels.
+                        overridden by --labels. When --input is omitted, only
+                        agreement_summary.json and agreement_clusters.json are
+                        refreshed.
 ```

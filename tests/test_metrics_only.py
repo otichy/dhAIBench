@@ -396,6 +396,67 @@ class MetricsOnlyTests(unittest.TestCase):
                 self.assertIsNotNone(best_pairwise.get("distance"))
                 self.assertAlmostEqual(best_pairwise.get("distance"), 0.5, places=8)
 
+    def test_metrics_only_without_input_refreshes_only_agreement_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _isolated_data_dirs(tmpdir):
+                runs = [
+                    ("agreement-task__openai__model-a__2026-01-01-00-00.csv", "model-a"),
+                    ("agreement-task__openai__model-b__2026-01-02-00-00.csv", "model-b"),
+                ]
+                rows = [
+                    {"ID": "1", "prediction": "NOUN", "truth": "NOUN", "confidence": "0.9"},
+                    {"ID": "2", "prediction": "VERB", "truth": "VERB", "confidence": "0.8"},
+                ]
+
+                for filename, model_name in runs:
+                    output_csv = os.path.join(ba.DEFAULT_OUTPUT_DIR, filename)
+                    _write_output_csv(output_csv, rows)
+                    metrics_json = ba.build_artifact_path(output_csv, "_metrics.json", ba.DEFAULT_METRICS_DIR)
+                    with open(metrics_json, "w", encoding="utf-8") as handle:
+                        json.dump(
+                            {
+                                "accuracy": 1.0,
+                                "cohen_kappa": 1.0,
+                                "source_output_csv": ba.normalize_metrics_path_reference(
+                                    output_csv,
+                                    ba.DEFAULT_OUTPUT_DIR,
+                                ),
+                                "run_config": {
+                                    "task_name": "Agreement Task",
+                                    "tags": "alpha; beta",
+                                },
+                                "model_details": {
+                                    "provider": "openai",
+                                    "model_requested": model_name,
+                                },
+                            },
+                            handle,
+                            indent=2,
+                        )
+
+                with (
+                    patch.object(
+                        ba,
+                        "process_metrics_only_output",
+                        side_effect=AssertionError("per-run metrics should not be recomputed"),
+                    ),
+                    patch.object(ba, "parse_env_file", side_effect=AssertionError("parse_env_file should not run")),
+                ):
+                    exit_code = ba.main(["--metrics_only"])
+
+                self.assertEqual(exit_code, 0)
+                summary_path = os.path.join(ba.DEFAULT_METRICS_DIR, ba.AGREEMENT_SUMMARY_FILENAME)
+                clusters_path = os.path.join(ba.DEFAULT_METRICS_DIR, ba.AGREEMENT_CLUSTERS_FILENAME)
+                self.assertTrue(os.path.exists(summary_path))
+                self.assertTrue(os.path.exists(clusters_path))
+
+                with open(summary_path, "r", encoding="utf-8") as handle:
+                    summary_payload = json.load(handle)
+                self.assertEqual(summary_payload.get("run_count"), 2)
+                cross_latest = ((summary_payload.get("cross_model") or {}).get("latest") or [])
+                self.assertEqual(len(cross_latest), 1)
+                self.assertEqual(cross_latest[0].get("model_count"), 2)
+
     def test_metrics_only_agreement_refresh_groups_comparable_runs_across_task_renames(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _isolated_data_dirs(tmpdir):
