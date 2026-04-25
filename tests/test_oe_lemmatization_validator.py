@@ -1,5 +1,6 @@
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -45,6 +46,18 @@ class OELemmatizationValidatorTests(unittest.TestCase):
         self.assertEqual(oe.weighted_distance("god", "got"), oe.DENTAL_VARIANT_COST)
         self.assertEqual(oe.weighted_distance("god", "goð"), oe.DENTAL_VARIANT_COST)
         self.assertEqual(oe.weighted_distance("smið", "smiþ"), 0.0)
+
+    def test_load_lexicon_accepts_lemma_only_csv(self) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False) as handle:
+            path = pathlib.Path(handle.name)
+            handle.write("lemma\nhabban\nsawel\n")
+        try:
+            lexicon = oe.load_lexicon(str(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+        self.assertEqual(lexicon.all_lemmas, {"habban": "habban", "sawel": "sawel"})
+        self.assertEqual(lexicon.lemmas_by_pos, {})
 
     def test_handle_validate_forces_foreign_word_label(self) -> None:
         lexicon = oe.Lexicon(all_lemmas={"foreign_word": "foreign_word"}, lemmas_by_pos={"FW": {"foreign_word": "foreign_word"}})

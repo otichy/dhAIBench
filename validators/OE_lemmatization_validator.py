@@ -176,8 +176,8 @@ def load_lexicon(path: str) -> Lexicon:
     lemmas_by_pos: Dict[str, Dict[str, str]] = {}
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=";")
-        if not reader.fieldnames or "lemma" not in reader.fieldnames or "pos" not in reader.fieldnames:
-            raise ValueError("Lexicon must contain 'lemma' and 'pos' columns.")
+        if not reader.fieldnames or "lemma" not in reader.fieldnames:
+            raise ValueError("Lexicon must contain a 'lemma' column.")
         for row in reader:
             lemma = normalize_text(row.get("lemma", ""))
             pos = normalize_pos(row.get("pos", ""))
