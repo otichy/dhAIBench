@@ -8070,6 +8070,13 @@ function fillRunDetailsContent(run) {
     ["Provider", run.provider || "N/A"],
     ["Model Requested", run.modelDetails.model_requested || "N/A"],
     ["Model For Requests", run.modelDetails.model_for_requests || "N/A"],
+    ["Model Source", run.modelDetails.model_source || (run.modelDetails.model_metadata || {}).model_source || "N/A"],
+    ["Quantization", run.modelDetails.quantization || (run.modelDetails.model_metadata || {}).quantization || "N/A"],
+    ["Context Size", formatNum(safeNum(run.modelDetails.context_size || (run.modelDetails.model_metadata || {}).context_size), 0) || "N/A"],
+    [
+      "Max Output Tokens",
+      formatNum(safeNum(run.modelDetails.max_output_tokens || (run.modelDetails.model_metadata || {}).max_output_tokens), 0) || "N/A",
+    ],
   ];
 
   els.runModalTitle.textContent = `${run.task} / ${run.model}`;

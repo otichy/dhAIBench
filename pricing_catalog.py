@@ -141,6 +141,22 @@ def service_tier_entry(
     }
 
 
+def parse_optional_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if parsed == parsed and parsed not in (float("inf"), float("-inf")) else None
+    text = str(value).strip()
+    if not text or "*" in text:
+        return None
+    try:
+        parsed = float(text)
+    except ValueError:
+        return None
+    return parsed if parsed == parsed and parsed not in (float("inf"), float("-inf")) else None
+
+
 def dedupe_sources(sources: Iterable[Dict[str, str]]) -> List[Dict[str, str]]:
     seen = set()
     deduped: List[Dict[str, str]] = []
@@ -236,6 +252,46 @@ def unpriced_entry(reason: str) -> Dict[str, Any]:
             "standard": service_tier_entry(None, None, None),
         },
     }
+
+
+def metadata_priced_entry(
+    metadata: Dict[str, Any],
+    source_url: str,
+) -> Optional[Dict[str, Any]]:
+    input_cost = parse_optional_float(metadata.get("input_cost_per_token"))
+    cached_input_cost = parse_optional_float(metadata.get("cached_input_cost_per_token"))
+    output_cost = parse_optional_float(metadata.get("output_cost_per_token"))
+    if input_cost is None and cached_input_cost is None and output_cost is None:
+        return None
+    sources = [{"label": "Provider model metadata", "url": source_url}] if source_url else []
+    notes = ["Pricing was imported from provider model metadata."]
+    return priced_entry(
+        {
+            "standard": service_tier_entry(
+                input_cost * 1_000_000 if input_cost is not None else None,
+                cached_input_cost * 1_000_000 if cached_input_cost is not None else None,
+                output_cost * 1_000_000 if output_cost is not None else None,
+            )
+        },
+        sources=sources,
+        notes=notes,
+    )
+
+
+def model_metadata_source_entries(provider: str, model_catalog: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    provider_entry = model_catalog.get(provider) or {}
+    metadata_map = provider_entry.get("model_metadata")
+    if not isinstance(metadata_map, dict):
+        return {}
+    source_url = str(provider_entry.get("model_metadata_endpoint") or provider_entry.get("models_api_base") or "").strip()
+    entries: Dict[str, Dict[str, Any]] = {}
+    for model_id, metadata in metadata_map.items():
+        if not isinstance(metadata, dict):
+            continue
+        entry = metadata_priced_entry(metadata, source_url)
+        if entry is not None:
+            entries[str(model_id)] = entry
+    return entries
 
 
 def merge_priced_entries(*entries: Dict[str, Any]) -> Dict[str, Any]:
@@ -942,6 +998,7 @@ def build_pricing_catalog(
         if normalized_provider not in selected:
             continue
         source_entries = provider_source_entries(provider_key, model_catalog, fetcher)
+        metadata_entries = model_metadata_source_entries(provider_key, model_catalog)
         config_models = sorted(set((model_catalog.get(provider_key) or {}).get("models") or []))
         provider_models: Dict[str, Dict[str, Any]] = {}
         for model in config_models:
@@ -961,6 +1018,10 @@ def build_pricing_catalog(
 
             if model in source_entries and is_priced_entry(source_entries[model]):
                 provider_models[model] = source_entries[model]
+                continue
+
+            if model in metadata_entries and is_priced_entry(metadata_entries[model]):
+                provider_models[model] = metadata_entries[model]
                 continue
 
             provider_models[model] = source_entries.get(model) or unsupported_entry(default_unsupported_reason(provider_key))
@@ -1011,7 +1072,17 @@ def sync_pricing_catalog_with_model_catalog(
         provider_entry = providers_out.setdefault(provider_key, {})
         models_map = provider_entry.setdefault("models", {})
         config_models = sorted(set((model_catalog.get(provider_key) or {}).get("models") or []))
+        metadata_entries = model_metadata_source_entries(provider_key, model_catalog)
         for model in config_models:
+            metadata_entry = metadata_entries.get(model)
+            existing_entry = models_map.get(model)
+            if (
+                metadata_entry is not None
+                and is_priced_entry(metadata_entry)
+                and not is_priced_entry(existing_entry)
+            ):
+                models_map[model] = metadata_entry
+                continue
             if model in models_map:
                 continue
             models_map[model] = unpriced_entry(
@@ -1040,7 +1111,11 @@ def sync_missing_price_entries(
         pricing_catalog=existing_catalog,
         selected_providers=providers,
     )
-    if added_models or not os.path.exists(prices_path):
+    if (
+        added_models
+        or not os.path.exists(prices_path)
+        or strip_status_fields(existing_catalog or {}) != strip_status_fields(synced_catalog)
+    ):
         write_pricing_catalog_js(synced_catalog, prices_path)
     return synced_catalog, added_models
 

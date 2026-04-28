@@ -1100,8 +1100,13 @@ def parse_optional_int(value: Any) -> Optional[int]:
 
 def parse_optional_float(value: Any) -> Optional[float]:
     """Parse an optional floating-point CSV value."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = "" if value is None else str(value).strip()
-    if not text:
+    if not text or "*" in text:
         return None
     try:
         number = float(text)
@@ -2114,8 +2119,163 @@ def normalize_api_base(provider: str, api_base: Optional[str]) -> Optional[str]:
     return trimmed
 
 
-def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) -> Tuple[List[str], Optional[str]]:
-    """Normalize provider model payloads into a list of model IDs."""
+MODEL_METADATA_ENV_SUFFIXES = ("MODEL_METADATA_URL", "MODEL_INFO_URL")
+
+
+def first_present_mapping(*values: Any) -> Dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def first_present_list(*values: Any) -> Optional[List[Any]]:
+    for value in values:
+        if isinstance(value, list):
+            return list(value)
+    return None
+
+
+def _copy_metadata_field(
+    target: Dict[str, Any],
+    output_key: str,
+    *values: Any,
+) -> None:
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text and "*" not in text:
+                target[output_key] = text
+                return
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = float(value)
+            if math.isfinite(parsed):
+                target[output_key] = parsed
+                return
+        elif isinstance(value, list):
+            target[output_key] = copy.deepcopy(value)
+            return
+        elif isinstance(value, dict):
+            target[output_key] = copy.deepcopy(value)
+            return
+
+
+def sanitize_provider_model_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep non-secret model metadata useful for pricing and run display."""
+    model_info = first_present_mapping(item.get("model_info"), item.get("info"))
+    litellm_params = first_present_mapping(item.get("litellm_params"))
+    pricing = first_present_mapping(item.get("pricing"))
+    extra_body = first_present_mapping(litellm_params.get("extra_body"), item.get("extra_body"))
+
+    metadata: Dict[str, Any] = {}
+    _copy_metadata_field(metadata, "model_name", item.get("model_name"), item.get("name"), item.get("id"))
+    _copy_metadata_field(metadata, "litellm_model", litellm_params.get("model"), item.get("model"))
+    _copy_metadata_field(metadata, "key", model_info.get("key"), item.get("canonical_slug"))
+    _copy_metadata_field(
+        metadata,
+        "context_size",
+        model_info.get("context_size"),
+        item.get("context_size"),
+        item.get("context_length"),
+        item.get("context_window"),
+        item.get("inputTokenLimit"),
+        item.get("input_token_limit"),
+    )
+    _copy_metadata_field(
+        metadata,
+        "max_output_tokens",
+        item.get("max_output_tokens"),
+        item.get("max_output_length"),
+        item.get("outputTokenLimit"),
+        item.get("output_token_limit"),
+        extra_body.get("max_completion_tokens"),
+        extra_body.get("max_tokens"),
+    )
+    _copy_metadata_field(metadata, "model_source", model_info.get("model_source"), item.get("model_source"))
+    _copy_metadata_field(metadata, "quantization", model_info.get("quantization"), item.get("quantization"))
+    _copy_metadata_field(
+        metadata,
+        "capabilities",
+        first_present_list(model_info.get("capabilities"), item.get("capabilities"), item.get("supported_features")),
+    )
+    _copy_metadata_field(
+        metadata,
+        "supported_openai_params",
+        first_present_list(model_info.get("supported_openai_params"), item.get("supported_openai_params")),
+    )
+    _copy_metadata_field(
+        metadata,
+        "supported_generation_methods",
+        first_present_list(item.get("supportedGenerationMethods"), item.get("supported_generation_methods")),
+    )
+    _copy_metadata_field(
+        metadata,
+        "input_modalities",
+        first_present_list(item.get("input_modalities"), item.get("inputModalities")),
+    )
+    _copy_metadata_field(
+        metadata,
+        "output_modalities",
+        first_present_list(item.get("output_modalities"), item.get("outputModalities")),
+    )
+    if extra_body:
+        safe_extra_body = {
+            key: value
+            for key, value in extra_body.items()
+            if key in {"max_tokens", "max_completion_tokens", "presence_penalty", "model_group", "enable_thinking"}
+        }
+        if safe_extra_body:
+            metadata["extra_body"] = copy.deepcopy(safe_extra_body)
+
+    cost_fields = {
+        "input_cost_per_token": (
+            model_info.get("input_cost_per_token"),
+            item.get("input_cost_per_token"),
+            litellm_params.get("input_cost_per_token"),
+            pricing.get("prompt"),
+            pricing.get("input"),
+        ),
+        "cached_input_cost_per_token": (
+            model_info.get("cached_input_cost_per_token"),
+            item.get("cached_input_cost_per_token"),
+            pricing.get("cached_input"),
+            pricing.get("cache_read"),
+        ),
+        "output_cost_per_token": (
+            model_info.get("output_cost_per_token"),
+            item.get("output_cost_per_token"),
+            litellm_params.get("output_cost_per_token"),
+            pricing.get("completion"),
+            pricing.get("output"),
+        ),
+    }
+    for output_key, values in cost_fields.items():
+        for value in values:
+            parsed = parse_optional_float(value)
+            if parsed is not None:
+                metadata[output_key] = parsed
+                break
+
+    return metadata
+
+
+def _merge_model_metadata(
+    target: Dict[str, Dict[str, Any]],
+    model_id: str,
+    metadata: Dict[str, Any],
+) -> None:
+    model_key = str(model_id or "").strip()
+    if not model_key or not metadata:
+        return
+    existing = target.setdefault(model_key, {})
+    for key, value in metadata.items():
+        if value not in (None, "", [], {}):
+            existing[key] = value
+
+
+def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) -> Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]:
+    """Normalize provider model payloads into model IDs plus optional metadata."""
+    model_metadata: Dict[str, Dict[str, Any]] = {}
     if provider == "vertex":
         model_items: Any = payload.get("data")
         if not isinstance(model_items, list):
@@ -2147,14 +2307,21 @@ def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) 
                     normalized = normalized.strip("/")
                     if normalized:
                         models.append(normalized)
+                        _merge_model_metadata(
+                            model_metadata,
+                            normalized,
+                            sanitize_provider_model_metadata(item),
+                        )
             models = sorted(set(models))
             if not models:
                 logging.warning("Provider %s returned an empty model list.", provider)
             else:
                 logging.info("Fetched %d models for provider %s.", len(models), provider)
-            return models, None
+            return models, model_metadata, None
 
     items = payload.get("data")
+    if not isinstance(items, list):
+        items = payload.get("models")
     if isinstance(items, list):
         models: List[str] = []
         for item in items:
@@ -2162,17 +2329,137 @@ def _parse_model_payload(payload: Dict[str, Any], provider: str, endpoint: str) 
                 models.append(item)
             elif isinstance(item, dict):
                 identifier = item.get("id")
+                if not isinstance(identifier, str) or not identifier.strip():
+                    identifier = item.get("name")
                 if isinstance(identifier, str):
-                    models.append(identifier)
+                    normalized = identifier.strip()
+                    models.append(normalized)
+                    _merge_model_metadata(
+                        model_metadata,
+                        normalized,
+                        sanitize_provider_model_metadata(item),
+                    )
         models = sorted(set(models))
         if not models:
             logging.warning("Provider %s returned an empty model list.", provider)
         else:
             logging.info("Fetched %d models for provider %s.", len(models), provider)
-        return models, None
+        return models, model_metadata, None
 
     logging.error("Unexpected payload when fetching models for provider %s: %r", provider, payload)
-    return [], "Unexpected response schema"
+    return [], {}, "Unexpected response schema"
+
+
+def _parse_litellm_model_info_payload(payload: Dict[str, Any], endpoint: str) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    """Parse LiteLLM /model/info style metadata payloads."""
+    items = payload.get("data")
+    if not isinstance(items, list):
+        return {}, "Unexpected model metadata response schema"
+    metadata_by_model: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = sanitize_provider_model_metadata(item)
+        candidate_ids = [
+            item.get("model_name"),
+            first_present_mapping(item.get("litellm_params")).get("model"),
+            first_present_mapping(item.get("model_info")).get("key"),
+        ]
+        for candidate in candidate_ids:
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            model_id = candidate.strip()
+            if "/" in model_id and model_id.startswith(("hosted_", "openai/", "anthropic/", "google/")):
+                model_id = model_id.rsplit("/", 1)[-1]
+            _merge_model_metadata(metadata_by_model, model_id, metadata)
+    if not metadata_by_model:
+        logging.warning("Provider metadata endpoint returned no usable model metadata: %s", endpoint)
+    return metadata_by_model, None
+
+
+def _provider_metadata_env_var_candidates(provider_slug: str, defaults: Dict[str, str]) -> List[str]:
+    candidates: List[str] = []
+    api_base_var = defaults.get("api_base_var", "")
+    if api_base_var.endswith("_BASE_URL"):
+        prefix = api_base_var[: -len("_BASE_URL")]
+        for suffix in MODEL_METADATA_ENV_SUFFIXES:
+            candidates.append(f"{prefix}_{suffix}")
+    inferred_prefix = provider_slug_to_env_prefix(provider_slug)
+    for suffix in MODEL_METADATA_ENV_SUFFIXES:
+        candidates.append(f"{inferred_prefix}_{suffix}")
+    return list(dict.fromkeys(candidates))
+
+
+def resolve_provider_model_metadata_endpoint(
+    provider_slug: str,
+    api_base: Optional[str],
+    defaults: Dict[str, str],
+    env_map: Dict[str, str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve an optional model metadata endpoint URL and the var/candidate that supplied it."""
+    for env_var in _provider_metadata_env_var_candidates(provider_slug, defaults):
+        configured = resolve_env_value(env_var, env_map)
+        if configured and not is_placeholder_value(configured):
+            return configured.strip(), env_var
+    if provider_slug == "e-infra" and api_base:
+        return f"{api_base.rstrip('/')}/model/info", "default:/model/info"
+    return None, None
+
+
+def select_model_metadata(
+    model_metadata: Dict[str, Dict[str, Any]],
+    requested_model: str,
+    model_for_requests: str,
+) -> Dict[str, Any]:
+    """Return metadata for the requested model, accepting common alias keys."""
+    candidates = [
+        str(requested_model or "").strip(),
+        str(model_for_requests or "").strip(),
+    ]
+    for candidate in list(candidates):
+        if "/" in candidate:
+            candidates.append(candidate.rsplit("/", 1)[-1])
+        slug = sanitize_model_identifier(candidate)
+        if slug and slug != candidate:
+            candidates.append(slug)
+    for candidate in candidates:
+        if candidate and isinstance(model_metadata.get(candidate), dict):
+            return copy.deepcopy(model_metadata[candidate])
+    return {}
+
+
+def fetch_run_model_metadata(
+    provider_slug: str,
+    requested_model: str,
+    model_for_requests: str,
+    api_base_url: Optional[str],
+    api_key_var: Optional[str],
+    api_base_var: Optional[str],
+) -> Dict[str, Any]:
+    """Best-effort metadata lookup for a run, without failing the benchmark."""
+    if not provider_slug or not api_base_url or not api_key_var:
+        return {}
+    env_map = parse_env_file(".env")
+    api_key = resolve_env_value(api_key_var, env_map)
+    if is_placeholder_value(api_key):
+        return {}
+    defaults = {
+        "api_key_var": api_key_var,
+        "api_base_var": api_base_var or f"{provider_slug_to_env_prefix(provider_slug)}_BASE_URL",
+    }
+    endpoint, _source = resolve_provider_model_metadata_endpoint(provider_slug, api_base_url, defaults, env_map)
+    model_metadata: Dict[str, Dict[str, Any]] = {}
+    if endpoint:
+        fetched_metadata, metadata_error = fetch_provider_model_metadata(provider_slug, api_key, endpoint)
+        if metadata_error:
+            logging.debug("Run model metadata lookup failed for %s via %s: %s", provider_slug, endpoint, metadata_error)
+        model_metadata.update(fetched_metadata)
+
+    if not model_metadata and provider_slug in {"requesty", "inception", "openrouter", "ufal"}:
+        models, fetched_metadata, _error = fetch_provider_models(provider_slug, api_key, api_base_url)
+        if models:
+            model_metadata.update(fetched_metadata)
+    return select_model_metadata(model_metadata, requested_model, model_for_requests)
 
 
 def _extract_vertex_project_id(api_base: str) -> Optional[str]:
@@ -2195,7 +2482,7 @@ def _vertex_publisher_models_endpoint(api_base: str) -> str:
 def _fetch_vertex_publisher_models(
     api_base: str,
     auth_token: str,
-) -> Tuple[List[str], Optional[str]]:
+) -> Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]:
     """Fetch Vertex publisher models via the v1beta1 endpoint."""
     endpoint = _vertex_publisher_models_endpoint(api_base)
     project_id = _extract_vertex_project_id(api_base)
@@ -2207,6 +2494,7 @@ def _fetch_vertex_publisher_models(
         headers["x-goog-user-project"] = project_id
 
     models: List[str] = []
+    model_metadata: Dict[str, Dict[str, Any]] = {}
     next_page_token: Optional[str] = None
     max_pages = 20
     pages_fetched = 0
@@ -2228,19 +2516,21 @@ def _fetch_vertex_publisher_models(
                 page_endpoint,
                 message,
             )
-            return [], message
+            return [], {}, message
         except urllib.error.URLError as exc:
             message = str(exc)
             logging.error("Connection error for Vertex publisher model listing: %s", message)
-            return [], message
+            return [], {}, message
         except json.JSONDecodeError as exc:
             logging.error("Malformed JSON from Vertex publisher model listing (%s): %s", page_endpoint, exc)
-            return [], "Invalid JSON response"
+            return [], {}, "Invalid JSON response"
 
-        page_models, parse_error = _parse_model_payload(payload, "vertex", page_endpoint)
+        page_models, page_metadata, parse_error = _parse_model_payload(payload, "vertex", page_endpoint)
         if parse_error:
-            return [], parse_error
+            return [], {}, parse_error
         models.extend(page_models)
+        for model_id, metadata in page_metadata.items():
+            _merge_model_metadata(model_metadata, model_id, metadata)
 
         token_value = payload.get("nextPageToken") if isinstance(payload, dict) else None
         if isinstance(token_value, str) and token_value.strip():
@@ -2249,14 +2539,14 @@ def _fetch_vertex_publisher_models(
             continue
         break
 
-    return sorted(set(models)), None
+    return sorted(set(models)), model_metadata, None
 
 
 def _fetch_models_with_curl(
     endpoint: str,
     api_key: str,
     provider: str,
-) -> Tuple[List[str], Optional[str]]:
+) -> Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]:
     """Fallback to curl when Python lacks SSL support for HTTPS."""
     headers = [
         ("Authorization", f"Bearer {api_key}"),
@@ -2288,7 +2578,7 @@ def _fetch_models_with_curl(
 
     combined_error = "; ".join(errors) if errors else "curl unavailable"
     logging.error("Curl fallback failed for provider %s: %s", provider, combined_error)
-    return [], combined_error
+    return [], {}, combined_error
 
 
 def fetch_provider_models(
@@ -2296,11 +2586,11 @@ def fetch_provider_models(
     api_key: str,
     api_base: str,
     token_provider: Optional[AccessTokenProvider] = None,
-) -> Tuple[List[str], Optional[str]]:
+) -> Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]:
     """Fetch available models for a provider using raw HTTP."""
     endpoint = f"{api_base.rstrip('/')}/models"
 
-    def maybe_fetch_vertex_fallback(auth_token: str) -> Optional[Tuple[List[str], Optional[str]]]:
+    def maybe_fetch_vertex_fallback(auth_token: str) -> Optional[Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]]:
         if provider != "vertex":
             return None
         logging.info(
@@ -2342,7 +2632,7 @@ def fetch_provider_models(
                 logging.error(
                     "Vertex ADC requires a quota project. Run: gcloud auth application-default set-quota-project <PROJECT_ID>"
                 )
-            return [], message
+            return [], {}, message
         except urllib.error.URLError as exc:
             message = str(exc)
             logging.error("Connection error while fetching models for provider %s: %s", provider, message)
@@ -2352,12 +2642,65 @@ def fetch_provider_models(
                     "Python SSL support appears to be missing; trying curl fallback for provider %s.", provider
                 )
                 return _fetch_models_with_curl(endpoint, auth_token, provider)
-            return [], message
+            return [], {}, message
         except json.JSONDecodeError as exc:
             logging.error("Malformed JSON response from provider %s (%s): %s", provider, endpoint, exc)
-            return [], "Invalid JSON response"
+            return [], {}, "Invalid JSON response"
 
-    return [], "Unable to fetch models after token refresh retries"
+    return [], {}, "Unable to fetch models after token refresh retries"
+
+
+def fetch_provider_model_metadata(
+    provider: str,
+    api_key: str,
+    metadata_endpoint: str,
+    token_provider: Optional[AccessTokenProvider] = None,
+) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    """Fetch optional provider model metadata from a configured endpoint."""
+    if not metadata_endpoint:
+        return {}, None
+    max_attempts = 2 if token_provider is not None else 1
+    for attempt_index in range(max_attempts):
+        auth_token = api_key
+        if token_provider is not None:
+            auth_token = token_provider.get_token(force_refresh=(attempt_index > 0))
+        request = urllib.request.Request(
+            metadata_endpoint,
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                content_type = response.headers.get("Content-Type", "")
+                body = response.read().decode("utf-8", errors="replace")
+            if "html" in content_type.lower() or body.lstrip().startswith("<"):
+                return {}, "Metadata endpoint returned HTML instead of JSON"
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                return {}, "Unexpected model metadata response schema"
+            if isinstance(payload.get("data"), list) and any(
+                isinstance(item, dict) and ("model_info" in item or "litellm_params" in item)
+                for item in payload.get("data", [])
+            ):
+                return _parse_litellm_model_info_payload(payload, metadata_endpoint)
+            _, metadata, parse_error = _parse_model_payload(payload, provider, metadata_endpoint)
+            return metadata, parse_error
+        except urllib.error.HTTPError as exc:
+            if token_provider is not None and exc.code in {401, 403} and attempt_index == 0:
+                logging.warning(
+                    "Authentication failed while fetching model metadata for provider %s; refreshing token and retrying once.",
+                    provider,
+                )
+                continue
+            detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            return {}, f"HTTP {exc.code} {exc.reason or ''} {detail}".strip()
+        except urllib.error.URLError as exc:
+            return {}, str(exc)
+        except json.JSONDecodeError:
+            return {}, "Invalid JSON response"
+    return {}, "Unable to fetch model metadata after token refresh retries"
 
 
 def _gemini_caching_base_url(api_base_url: Optional[str]) -> str:
@@ -2684,6 +3027,27 @@ def build_run_model_details(
         )
     if gemini_cached_content:
         details["gemini_cached_content"] = str(gemini_cached_content).strip()
+    model_metadata = fetch_run_model_metadata(
+        provider_slug=provider_slug,
+        requested_model=requested_model,
+        model_for_requests=normalized_request_model,
+        api_base_url=api_base_url,
+        api_key_var=api_key_var,
+        api_base_var=api_base_var,
+    )
+    if model_metadata:
+        details["model_metadata"] = model_metadata
+        for key in (
+            "model_source",
+            "quantization",
+            "context_size",
+            "max_output_tokens",
+            "input_cost_per_token",
+            "cached_input_cost_per_token",
+            "output_cost_per_token",
+        ):
+            if key in model_metadata:
+                details[key] = copy.deepcopy(model_metadata[key])
     return details
 
 
@@ -3212,10 +3576,34 @@ def update_model_catalog(
         if is_placeholder_value(api_key):
             logging.warning("Skipping provider %s; missing API key in %s (.env first, env fallback).", provider_slug, api_key_var)
             continue
-        models, error = fetch_provider_models(
+        models, model_metadata, error = fetch_provider_models(
             provider_slug, api_key, models_api_base, token_provider=token_provider
         )
-        catalog[provider_slug] = {
+        metadata_endpoint, metadata_endpoint_source = resolve_provider_model_metadata_endpoint(
+            provider_slug,
+            models_api_base,
+            defaults,
+            env_map,
+        )
+        metadata_error = None
+        if metadata_endpoint:
+            fetched_metadata, metadata_error = fetch_provider_model_metadata(
+                provider_slug,
+                api_key,
+                metadata_endpoint,
+                token_provider=token_provider,
+            )
+            for model_id, metadata in fetched_metadata.items():
+                _merge_model_metadata(model_metadata, model_id, metadata)
+            if metadata_error:
+                logging.info(
+                    "No additional model metadata for provider %s from %s: %s",
+                    provider_slug,
+                    metadata_endpoint,
+                    metadata_error,
+                )
+
+        provider_catalog: Dict[str, Any] = {
             "models": models,
             "api_base": api_base or models_api_base,
             "models_api_base": models_api_base,
@@ -3225,6 +3613,13 @@ def update_model_catalog(
             "error": error,
             "timestamp": utc_timestamp(),
         }
+        if model_metadata:
+            provider_catalog["model_metadata"] = model_metadata
+        if metadata_endpoint:
+            provider_catalog["model_metadata_endpoint"] = metadata_endpoint
+            provider_catalog["model_metadata_endpoint_source"] = metadata_endpoint_source
+            provider_catalog["model_metadata_error"] = metadata_error
+        catalog[provider_slug] = provider_catalog
         if error or not models:
             errors += 1
 

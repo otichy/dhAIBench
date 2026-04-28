@@ -303,6 +303,50 @@ class PricingCatalogGenerationTests(unittest.TestCase):
             "gpt-6-preview",
         )
 
+    def test_sync_uses_model_metadata_pricing_for_missing_model(self) -> None:
+        model_catalog = {
+            "e-infra": {
+                "models": ["glm-5.1"],
+                "model_metadata_endpoint": "https://llm.ai.e-infra.cz/v1/model/info",
+                "model_metadata": {
+                    "glm-5.1": {
+                        "input_cost_per_token": 0.0000006,
+                        "output_cost_per_token": 0.0000022,
+                    }
+                },
+            }
+        }
+
+        synced, added = pc.sync_pricing_catalog_with_model_catalog(model_catalog, {})
+
+        self.assertEqual(added, [])
+        entry = synced["providers"]["e-infra"]["models"]["glm-5.1"]
+        self.assertEqual(entry["service_tiers"]["standard"]["input_usd_per_mtokens"], 0.6)
+        self.assertEqual(entry["service_tiers"]["standard"]["output_usd_per_mtokens"], 2.2)
+        self.assertIn("Provider model metadata", entry["sources"][0]["label"])
+
+    def test_build_pricing_catalog_uses_metadata_when_source_has_no_price(self) -> None:
+        model_catalog = {
+            "e-infra": {
+                "models": ["glm-5.1"],
+                "model_metadata_endpoint": "https://llm.ai.e-infra.cz/v1/model/info",
+                "model_metadata": {
+                    "glm-5.1": {
+                        "input_cost_per_token": 0.0000006,
+                        "cached_input_cost_per_token": 0.0000001,
+                        "output_cost_per_token": 0.0000022,
+                    }
+                },
+            }
+        }
+
+        catalog = pc.build_pricing_catalog(model_catalog, updated_at="2026-04-28T00:00:00Z")
+
+        entry = catalog["providers"]["e-infra"]["models"]["glm-5.1"]
+        self.assertEqual(entry["service_tiers"]["standard"]["input_usd_per_mtokens"], 0.6)
+        self.assertAlmostEqual(entry["service_tiers"]["standard"]["cached_input_usd_per_mtokens"], 0.1)
+        self.assertEqual(entry["service_tiers"]["standard"]["output_usd_per_mtokens"], 2.2)
+
     def test_write_and_sync_strip_legacy_status_fields(self) -> None:
         pricing_catalog = {
             "updated_at": "2026-03-21T00:00:00Z",
