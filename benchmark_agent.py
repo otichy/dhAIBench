@@ -3474,6 +3474,19 @@ def write_model_catalog_js(catalog: Dict[str, Dict[str, Any]], output_path: str)
     logging.info("Wrote model catalog to %s", output_path)
 
 
+def load_model_catalog_js(path: str) -> Dict[str, Dict[str, Any]]:
+    """Load a config_models.js catalog if it exists."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    match = re.search(r"window\.MODEL_CATALOG\s*=\s*(\{.*\})\s*;\s*$", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"Could not extract MODEL_CATALOG from {path}")
+    payload = json.loads(match.group(1))
+    return payload if isinstance(payload, dict) else {}
+
+
 def update_model_catalog(
     providers: Optional[List[str]],
     output_path: str,
@@ -3511,6 +3524,15 @@ def update_model_catalog(
 
     logging.info("Updating model catalog for providers: %s", ", ".join(selected))
     catalog: Dict[str, Dict[str, Any]] = {}
+    if providers and os.path.exists(output_path):
+        try:
+            catalog = load_model_catalog_js(output_path)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning(
+                "Could not load existing model catalog %s; selected provider update will rewrite from scratch: %s",
+                output_path,
+                exc,
+            )
     errors = 0
 
     for provider in selected:
