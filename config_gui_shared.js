@@ -8,6 +8,12 @@
   const MODE_FIRST_UI_STORAGE_KEY = "benchmarkAgentModeFirst.ui.v1";
   const DEFAULT_CLASSIC_COMMAND = 'python benchmark_agent.py --input "" --model ""';
   const PREVIEW_MODES = ["run", "resume", "metrics", "validator"];
+  const MODE_PATH_GROUPS = {
+    run: "run_validate",
+    validator: "run_validate",
+    resume: "resume",
+    metrics: "metrics",
+  };
   const MODE_LABELS = {
     run: "Run",
     resume: "Resume",
@@ -839,6 +845,10 @@
 
   function getModeLabel(mode) {
     return MODE_LABELS[normalizeMode(mode)] || MODE_LABELS.run;
+  }
+
+  function getModePathGroup(mode) {
+    return MODE_PATH_GROUPS[normalizeMode(mode)] || MODE_PATH_GROUPS.run;
   }
 
   function providerSlugToEnvPrefix(slug) {
@@ -1921,10 +1931,58 @@
     }
   }
 
+  function readPathFieldValues(ctx) {
+    return {
+      input_path: ctx.inputPathInput ? ctx.inputPathInput.value : "",
+      output_path: ctx.outputPathInput ? ctx.outputPathInput.value : "",
+    };
+  }
+
+  function snapshotModePathFields(ctx, mode = ctx.activeMode) {
+    if (!isModeFirstVariant(ctx.variant)) {
+      return;
+    }
+    ctx.modePathValues[getModePathGroup(mode)] = readPathFieldValues(ctx);
+  }
+
+  function restoreModePathFields(ctx, mode = ctx.activeMode) {
+    if (!isModeFirstVariant(ctx.variant)) {
+      return;
+    }
+    const values = ctx.modePathValues[getModePathGroup(mode)] || {
+      input_path: "",
+      output_path: "",
+    };
+    if (ctx.inputPathInput) {
+      ctx.inputPathInput.value = values.input_path || "";
+    }
+    if (ctx.outputPathInput) {
+      ctx.outputPathInput.value = values.output_path || "";
+    }
+  }
+
+  function normalizeStoredModePathValues(raw) {
+    const normalized = {};
+    if (!raw || typeof raw !== "object") {
+      return normalized;
+    }
+    Object.entries(raw).forEach(([group, values]) => {
+      if (!values || typeof values !== "object") {
+        return;
+      }
+      normalized[group] = {
+        input_path: (values.input_path || "").toString(),
+        output_path: (values.output_path || "").toString(),
+      };
+    });
+    return normalized;
+  }
+
   function saveConfig(ctx) {
     if (!ctx.form) {
       return;
     }
+    snapshotModePathFields(ctx);
     const config = {};
     Array.from(ctx.form.elements).forEach((element) => {
       if (!element.name || element.type === "file") {
@@ -1938,6 +1996,7 @@
     });
     if (isModeFirstVariant(ctx.variant)) {
       config.__active_mode = normalizeMode(ctx.activeMode);
+      config.__mode_path_values = ctx.modePathValues;
     }
     try {
       localStorage.setItem(ctx.storageKey, JSON.stringify(config));
@@ -1956,8 +2015,11 @@
       if (isModeFirstVariant(ctx.variant) && config.__active_mode) {
         ctx.activeMode = normalizeMode(config.__active_mode);
       }
+      if (isModeFirstVariant(ctx.variant) && config.__mode_path_values) {
+        ctx.modePathValues = normalizeStoredModePathValues(config.__mode_path_values);
+      }
       for (const [name, value] of Object.entries(config)) {
-        if (name === "__active_mode") {
+        if (name === "__active_mode" || name === "__mode_path_values") {
           continue;
         }
         const control = ctx.form.elements.namedItem(name);
@@ -1977,6 +2039,14 @@
           control.checked = Boolean(value);
         } else {
           control.value = value;
+        }
+      }
+      if (isModeFirstVariant(ctx.variant)) {
+        const activePathGroup = getModePathGroup(ctx.activeMode);
+        if (ctx.modePathValues[activePathGroup]) {
+          restoreModePathFields(ctx);
+        } else {
+          snapshotModePathFields(ctx);
         }
       }
     } catch (error) {
@@ -2894,17 +2964,23 @@
     }
   }
 
+  function switchPreviewMode(ctx, nextMode) {
+    const normalizedNextMode = normalizeMode(nextMode);
+    if (normalizedNextMode === ctx.activeMode) {
+      return;
+    }
+    snapshotModePathFields(ctx, ctx.activeMode);
+    ctx.activeMode = normalizedNextMode;
+    restoreModePathFields(ctx, ctx.activeMode);
+    updateContextualVisibility(ctx);
+    handleFormChange(ctx);
+  }
+
   function bindPreviewModeListeners(ctx) {
     if (ctx.modeButtons && ctx.modeButtons.length > 0) {
       ctx.modeButtons.forEach((button) => {
         button.addEventListener("click", () => {
-          const nextMode = normalizeMode(button.dataset.modeChoice);
-          if (nextMode === ctx.activeMode) {
-            return;
-          }
-          ctx.activeMode = nextMode;
-          updateContextualVisibility(ctx);
-          handleFormChange(ctx);
+          switchPreviewMode(ctx, button.dataset.modeChoice);
         });
       });
     }
@@ -2927,6 +3003,7 @@
       sampledEstimateSource: "",
       isInitializing: true,
       activeMode: "run",
+      modePathValues: {},
       sidebarCollapsed: true,
       fieldHelpDismissListenersBound: false,
       form: document.getElementById("config-form"),
@@ -2988,6 +3065,7 @@
   function initPreviewPage(ctx) {
     syncProvidersFromCatalog(ctx);
     loadConfig(ctx);
+    snapshotModePathFields(ctx);
     renderCliFlagReference(ctx);
     ctx.sidebarCollapsed = loadSidebarState(ctx);
     applyInputHoverHelp(ctx);

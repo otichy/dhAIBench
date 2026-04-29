@@ -139,6 +139,21 @@ class ConfigGuiModeFirstTests(unittest.TestCase):
         html = _load_main_gui_html()
         self.assertIn('data-mode-hidden="metrics"><input type="checkbox" id="logprobs"', html)
 
+    def test_mode_first_paths_are_independent_outside_run_validate(self) -> None:
+        shared_js = (Path(__file__).resolve().parents[1] / "config_gui_shared.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('run: "run_validate"', shared_js)
+        self.assertIn('validator: "run_validate"', shared_js)
+        self.assertIn('resume: "resume"', shared_js)
+        self.assertIn('metrics: "metrics"', shared_js)
+        self.assertIn("function snapshotModePathFields(ctx, mode = ctx.activeMode)", shared_js)
+        self.assertIn("function restoreModePathFields(ctx, mode = ctx.activeMode)", shared_js)
+        self.assertIn("function switchPreviewMode(ctx, nextMode)", shared_js)
+        self.assertIn("snapshotModePathFields(ctx, ctx.activeMode);", shared_js)
+        self.assertIn("restoreModePathFields(ctx, ctx.activeMode);", shared_js)
+        self.assertIn("config.__mode_path_values = ctx.modePathValues;", shared_js)
+
 
 if __name__ == "__main__":
     unittest.main()
