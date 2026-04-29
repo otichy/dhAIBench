@@ -7306,6 +7306,10 @@ class ProviderEmptyResponseError(RuntimeError):
     """Raised when provider repeatedly returns empty model responses."""
 
 
+class EmptyModelLabelError(ValueError):
+    """Raised when a parseable model response omits the required label value."""
+
+
 class RequestedControlRejectedError(RuntimeError):
     """Raised when requested controls are rejected by the endpoint."""
 
@@ -8295,7 +8299,7 @@ def classify_example(
             confidence_raw = payload.get("confidence")
             confidence = safe_float(confidence_raw, default=0.0)
             if label == "":
-                raise ValueError("Model returned empty label.")
+                raise EmptyModelLabelError("Model returned empty label.")
             if not math.isfinite(confidence):
                 logging.debug(
                     "Invalid confidence %r received for example %s; forcing to 0.0.",
@@ -8552,6 +8556,8 @@ def classify_example(
                 log_entry["error_category"] = "provider_server_error"
             elif malformed_response_error:
                 log_entry["error_category"] = "malformed_provider_response"
+            elif isinstance(exc, EmptyModelLabelError):
+                log_entry["error_category"] = "empty_model_label"
             log_entry["error"] = str(exc)
             interaction_logs.append(log_entry)
             attempt_limit_base = (
@@ -8641,6 +8647,32 @@ def classify_example(
             "Provider returned empty model responses after retries for "
             f"example {example.example_id}: {detail}"
         ) from last_error
+    if isinstance(last_error, EmptyModelLabelError):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        logging.error(
+            "Model returned blank label for example %s after %d attempt(s); "
+            "continuing with fallback label='unclassified' and blank confidence. Detail: %s",
+            example.example_id,
+            max_retries,
+            detail,
+        )
+        return Prediction(
+            label="unclassified",
+            explanation="",
+            confidence=None,
+            raw_response=latest_raw_response,
+            prompt_tokens=latest_prompt_tokens,
+            completion_tokens=latest_completion_tokens,
+            total_tokens=latest_total_tokens,
+            label_logprob=None,
+            label_probability=None,
+            node_echo=None,
+            span_source=None,
+            validator_status="accepted_after_empty_label",
+            validator_reason=detail,
+            shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+            variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+        ), interaction_logs
     if is_request_timeout_error(last_error):
         detail = str(last_error).strip() or last_error.__class__.__name__
         logging.error(
