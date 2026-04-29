@@ -16,6 +16,8 @@ config_models.js
 /data/backup
 /data/validators/*
 !/data/validators/*.py
+/validators/*
+!/validators/*.py
 __pycache__/
 *.py[cod]
 /.ipynb_checkpoints
