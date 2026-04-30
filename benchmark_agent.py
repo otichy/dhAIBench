@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Tuple
 
-from validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
+from scripts.validator_client import ValidatorClient, ValidatorError, ValidatorRunInfo
 
 
 NODE_MARKER_LEFT = "\u27E6"
@@ -3652,7 +3652,7 @@ def update_model_catalog(
     write_model_catalog_js(catalog, output_path)
     prices_path = os.path.join(os.path.dirname(output_path) or ".", "config_prices.js")
     try:
-        from pricing_catalog import sync_missing_price_entries
+        from scripts.pricing_catalog import sync_missing_price_entries
 
         _, added_price_models = sync_missing_price_entries(
             output_path,
