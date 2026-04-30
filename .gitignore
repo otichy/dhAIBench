@@ -1,5 +1,6 @@
 .env
 config_models.js
+/tests/
 /verification_tmp/*
 /data/analysis/*
 /data/logs/*
