@@ -98,6 +98,7 @@
     validator_exhausted_policy: "accept_blank_confidence",
     validator_debug: false,
     metrics_only: false,
+    no_metrics: false,
     reprompt_unclassified: false,
     repeat_unclassified: false,
     calibration: true,
@@ -204,6 +205,8 @@
       "Optional metrics tags. Use semicolon-separated tags (for example: tag1;tag2;tag3).",
     metrics_only:
       "Skip API calls and recompute metrics from existing output CSVs listed in input_path. With no input paths, refresh only agreement_summary.json and agreement_clusters.json.",
+    no_metrics:
+      "Skip end-of-run metrics files, heatmap/calibration artifacts, and agreement summary refresh. Predictions and prompt logs are still written.",
     output_path:
       "Optional output CSV file path, or output directory when running multiple inputs. Resume mode requires an existing output CSV here.",
     reprompt_unclassified:
@@ -267,6 +270,11 @@
           flags: ["--metrics_only"],
           helpId: "metrics_only",
           modes: ["Metrics only"],
+        },
+        {
+          flags: ["--no_metrics"],
+          helpId: "no_metrics",
+          modes: ["Run", "Run & Validate", "Resume"],
         },
         {
           flags: ["--labels"],
@@ -2449,6 +2457,10 @@
     if (metricsOnly) {
       command.pushFlag("--metrics_only");
     }
+    const noMetrics = !metricsOnly && Boolean(data.get("no_metrics"));
+    if (noMetrics) {
+      command.pushFlag("--no_metrics");
+    }
 
     const rawSystemPrompt = data.get("system_prompt");
     const trimmedSystemPrompt =
@@ -2472,10 +2484,10 @@
     if (!metricsOnly && data.get("logprobs")) {
       command.pushFlag("--logprobs");
     }
-    if (data.get("calibration")) {
+    if (!noMetrics && data.get("calibration")) {
       command.pushFlag("--calibration");
     }
-    if (document.getElementById("confusion_heatmap") && !data.get("confusion_heatmap")) {
+    if (!noMetrics && document.getElementById("confusion_heatmap") && !data.get("confusion_heatmap")) {
       command.pushFlag("--no-confusion_heatmap");
     }
 
@@ -2544,6 +2556,9 @@
       if (data.get("repeat_unclassified")) {
         command.pushFlag("--repeat_unclassified");
       }
+      if (data.get("no_metrics")) {
+        command.pushFlag("--no_metrics");
+      }
     } else {
       const inputRaw = (data.get("input_path") ?? "").toString();
       const inputPaths = inputRaw
@@ -2589,11 +2604,15 @@
       if (tags) {
         command.pushFlag("--tags", shellQuote(tags));
       }
-      if (data.get("calibration")) {
+      const noMetrics = mode !== "metrics" && Boolean(data.get("no_metrics"));
+      if (!noMetrics && data.get("calibration")) {
         command.pushFlag("--calibration");
       }
-      if (document.getElementById("confusion_heatmap") && !data.get("confusion_heatmap")) {
+      if (!noMetrics && document.getElementById("confusion_heatmap") && !data.get("confusion_heatmap")) {
         command.pushFlag("--no-confusion_heatmap");
+      }
+      if (noMetrics) {
+        command.pushFlag("--no_metrics");
       }
     }
 

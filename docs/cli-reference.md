@@ -31,7 +31,7 @@ usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
                           [--no_explanation] [--logprobs | --no-logprobs]
                           [--calibration]
                           [--confusion_heatmap | --no-confusion_heatmap]
-                          [--api_key_var API_KEY_VAR]
+                          [--no_metrics] [--api_key_var API_KEY_VAR]
                           [--api_base_var API_BASE_VAR]
                           [--max_retries MAX_RETRIES]
                           [--retry_delay RETRY_DELAY]
@@ -203,6 +203,10 @@ options:
                         Generate a confusion heatmap when label-based metrics
                         are available. Enabled by default; use --no-
                         confusion_heatmap to disable it. (default: True)
+  --no_metrics, --no-metrics
+                        Skip end-of-run metrics, heatmap/calibration
+                        artifacts, and agreement summary refresh. Predictions
+                        and prompt logs are still written.
   --api_key_var API_KEY_VAR
                         Environment variable name that stores the API key or
                         access token.

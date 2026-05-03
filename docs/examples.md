@@ -69,6 +69,16 @@ Refresh only the aggregate agreement files from existing `*_metrics.json` artifa
 python benchmark_agent.py --metrics_only
 ```
 
+Run a quick benchmark without writing run metrics or refreshing agreement artifacts:
+
+```bash
+python benchmark_agent.py \
+  --input data/input/sample.csv \
+  --output data/output/sample_test.csv \
+  --model gpt-4.1-mini \
+  --no_metrics
+```
+
 Recompute metrics for an existing output CSV:
 
 ```bash

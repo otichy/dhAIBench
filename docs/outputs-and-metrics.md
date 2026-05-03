@@ -105,6 +105,10 @@ Truth labels are taken from:
 
 In this mode, `--output` is ignored and metrics artifacts are written to `data/metrics`.
 
+## Skipping Metrics
+
+Use `--no_metrics` on normal benchmark or resume runs when you want predictions and prompt logs only. This skips the end-of-run metrics JSON, confusion heatmap, calibration plot, and `agreement_summary.json` / `agreement_clusters.json` refresh.
+
 ## Dashboard Consumption
 
 The static dashboard in `web/` reads the `*_metrics.json` artifacts produced here and, when available, `agreement_summary.json`. See [Metrics Dashboard](metrics-dashboard.md) for loading modes, navigation, and feature details.

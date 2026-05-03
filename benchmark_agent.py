@@ -9459,6 +9459,30 @@ def process_dataset(
                 f"including {missing_predictions[:5]}."
             )
 
+    if bool(getattr(args, "no_metrics", False)):
+        logging.info(
+            "--no_metrics set; skipping metrics JSON, confusion heatmap, calibration plot, and agreement refresh."
+        )
+        if total_prompt_tokens or total_completion_tokens or total_reported_tokens:
+            total_token_usage = (
+                total_reported_tokens
+                if total_reported_tokens
+                else total_prompt_tokens + total_completion_tokens
+            )
+            logging.info(
+                "Aggregate token usage -> prompt: %s, completion: %s, total: %s",
+                total_prompt_tokens or "N/A",
+                total_completion_tokens or "N/A",
+                total_token_usage,
+            )
+        if not bool(getattr(args, "_suppress_unclassified_resume_hint", False)):
+            log_unclassified_resume_hint(
+                output_path=output_path,
+                predictions=predictions,
+                reprompt_unclassified=reprompt_unclassified,
+            )
+        return total_prompt_tokens, total_completion_tokens, total_reported_tokens, halted_by_quota
+
     evaluated_examples = [
         ex for ex in examples if ex.truth is not None and ex.example_id in predictions
     ]
@@ -10330,6 +10354,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--no_metrics",
+        "--no-metrics",
+        dest="no_metrics",
+        action="store_true",
+        help=(
+            "Skip end-of-run metrics, heatmap/calibration artifacts, and agreement "
+            "summary refresh. Predictions and prompt logs are still written."
+        ),
+    )
+    parser.add_argument(
         "--api_key_var",
         default=None,
         help="Environment variable name that stores the API key or access token.",
@@ -10575,6 +10609,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--metrics_only and --update-models cannot be used together.")
     if args.metrics_only and args.summarize_log_errors:
         parser.error("--metrics_only and --summarize-log-errors cannot be used together.")
+    if args.metrics_only and args.no_metrics:
+        parser.error("--no_metrics cannot be used with --metrics_only.")
     if args.timeout_probe and args.update_models:
         parser.error("--timeout_probe and --update-models cannot be used together.")
     if args.timeout_probe and args.summarize_log_errors:
