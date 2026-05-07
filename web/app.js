@@ -119,6 +119,7 @@ const els = {
   btnAutoServer: document.querySelector("#btnAutoServer"),
   btnOpenFolder: document.querySelector("#btnOpenFolder"),
   reloadBtn: document.querySelector("#reloadBtn"),
+  shareUrlBtn: document.querySelector("#shareUrlBtn"),
   sourceStatus: document.querySelector("#sourceStatus"),
   sourceWarnings: document.querySelector("#sourceWarnings"),
   kpiRuns: document.querySelector("#kpiRuns"),
@@ -175,6 +176,8 @@ const LEADERBOARD_TABLE_METRICS = [
 const LEADERBOARD_TABLE_SORTABLE_KEYS = new Set(["run", "timestamp", ...LEADERBOARD_TABLE_METRICS]);
 const SORT_DIRECTIONS = new Set(["asc", "desc"]);
 let leaderboardMetricsScrollCleanup = null;
+let urlStateSyncEnabled = false;
+let shareButtonResetTimer = null;
 
 const METRIC_LABELS = {
   accuracy: "Accuracy",
@@ -1872,6 +1875,7 @@ function persistUiState() {
   } catch (_) {
     // Ignore storage failures.
   }
+  updateUrlFromState();
 }
 
 function restoreUiState() {
@@ -2004,6 +2008,452 @@ function restoreUiState() {
   } catch (_) {
     // Ignore corrupted storage.
   }
+}
+
+function getHashSearchParams() {
+  const rawHash = window.location.hash || "";
+  if (!rawHash || rawHash.length <= 1) {
+    return null;
+  }
+  const hash = rawHash.slice(1).replace(/^\?/, "");
+  if (!hash || !hash.includes("=")) {
+    return null;
+  }
+  return new URLSearchParams(hash);
+}
+
+function getRepeatedParamValues(params, key) {
+  if (!params || !params.has(key)) {
+    return [];
+  }
+  return uniqueNonEmptyStrings(params.getAll(key));
+}
+
+function parseBoolParam(params, key, fallback) {
+  if (!params.has(key)) {
+    return fallback;
+  }
+  const value = asTrimmedString(params.get(key)).toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+  return fallback;
+}
+
+function formatViewportNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "";
+  }
+  return Number(numeric.toPrecision(12)).toString();
+}
+
+function encodeViewportParam(viewport) {
+  const normalized = normalizeTimeSeriesViewport(viewport);
+  if (!normalized) {
+    return "";
+  }
+  return [
+    normalized.xMin,
+    normalized.xMax,
+    normalized.yMin,
+    normalized.yMax,
+  ].map(formatViewportNumber).join(",");
+}
+
+function decodeViewportParam(value) {
+  const parts = asTrimmedString(value).split(",").map((part) => Number(part));
+  if (parts.length !== 4) {
+    return null;
+  }
+  return normalizeTimeSeriesViewport({
+    xMin: parts[0],
+    xMax: parts[1],
+    yMin: parts[2],
+    yMax: parts[3],
+  });
+}
+
+function encodeTimeRangeParam(range) {
+  const normalized = {
+    from: asTrimmedString(range && range.from),
+    to: asTrimmedString(range && range.to),
+  };
+  if (!normalized.from && !normalized.to) {
+    return "";
+  }
+  return `${normalized.from}|${normalized.to}`;
+}
+
+function decodeTimeRangeParam(value) {
+  const [from = "", to = ""] = asTrimmedString(value).split("|", 2);
+  return { from: asTrimmedString(from), to: asTrimmedString(to) };
+}
+
+function getRunModalIsOpen() {
+  return Boolean(els.runModal && !els.runModal.classList.contains("hidden"));
+}
+
+function getClusterModalIsOpen() {
+  return Boolean(els.clusterModal && !els.clusterModal.classList.contains("hidden"));
+}
+
+function getAgreementClusterShareKey(entry) {
+  if (!entry || !entry.groupId) {
+    return "";
+  }
+  return [
+    asTrimmedString(entry.clusterScope),
+    asTrimmedString(entry.policy),
+    asTrimmedString(entry.groupId),
+  ].join("|");
+}
+
+function getVisibleAgreementClusterEntriesForCurrentState() {
+  if (state.agreementViewMode === "cross_model") {
+    return getVisibleCrossModelClusterEntries(state.filtered, state.agreementRepresentativePolicy);
+  }
+  return getVisibleRepeatClusterEntries(state.filtered);
+}
+
+function findAgreementClusterByShareKey(shareKey) {
+  const normalized = asTrimmedString(shareKey);
+  if (!normalized) {
+    return null;
+  }
+  return (
+    getVisibleAgreementClusterEntriesForCurrentState().find(
+      (entry) => getAgreementClusterShareKey(entry) === normalized
+    ) || null
+  );
+}
+
+function appendArrayParams(params, key, values) {
+  uniqueNonEmptyStrings(values || []).forEach((value) => {
+    params.append(key, value);
+  });
+}
+
+function buildShareSearchParams() {
+  const params = new URLSearchParams();
+
+  appendArrayParams(params, "task", state.selectedTasks);
+  appendArrayParams(params, "model", state.selectedModels);
+  appendArrayParams(params, "tag", state.selectedTags);
+
+  const query = asTrimmedString(state.filterSearchQuery);
+  if (query) {
+    params.set("q", query);
+  }
+
+  normalizeTimeRanges(state.timeRanges)
+    .map(encodeTimeRangeParam)
+    .filter(Boolean)
+    .forEach((value) => params.append("time", value));
+
+  if (state.hideNoAccuracy) {
+    params.set("hide", "1");
+  }
+  if (state.sortBy !== "accuracy") {
+    params.set("metric", state.sortBy);
+  }
+  if (state.leaderboardTab !== "chart") {
+    params.set("tab", state.leaderboardTab);
+  }
+  if (state.leaderboardTableSortKey && state.leaderboardTableSortDirection) {
+    params.set("tableSort", `${state.leaderboardTableSortKey}:${state.leaderboardTableSortDirection}`);
+  }
+  if (state.agreementViewMode !== "same_model") {
+    params.set("agreement", state.agreementViewMode);
+  }
+  if (state.agreementRepresentativePolicy !== "latest") {
+    params.set("rep", state.agreementRepresentativePolicy);
+  }
+  if (state.leaderboardChartGroupBy !== "model") {
+    params.set("chartGroup", state.leaderboardChartGroupBy);
+  }
+  if (state.leaderboardScatterGroupBy !== "none") {
+    params.set("scatterGroup", state.leaderboardScatterGroupBy);
+  }
+  if (state.leaderboardChartBestByTask) {
+    params.set("bestTask", "1");
+  }
+  if (state.leaderboardScatterXAxis !== "price") {
+    params.set("scatterX", state.leaderboardScatterXAxis);
+  }
+  if (!state.scatterShowCi) {
+    params.set("scatterCi", "0");
+  }
+  if (state.timeSeriesShowLabels) {
+    params.set("tsLabels", "1");
+  }
+  if (state.priceScatterCostMode !== "total") {
+    params.set("priceMode", state.priceScatterCostMode);
+  }
+  if (state.radarAxis !== "tag") {
+    params.set("radarAxis", state.radarAxis);
+  }
+  if (state.radarScale !== "contrast") {
+    params.set("radarScale", state.radarScale);
+  }
+
+  const timeZoom = encodeViewportParam(state.timeSeriesViewport);
+  if (timeZoom) {
+    params.set("timeZoom", timeZoom);
+  }
+  const priceZoom = encodeViewportParam(state.priceScatterViewport);
+  if (priceZoom) {
+    params.set("priceZoom", priceZoom);
+  }
+
+  if (getRunModalIsOpen() && state.selectedRunPath) {
+    params.set("run", state.selectedRunPath);
+  }
+  if (getClusterModalIsOpen()) {
+    const clusterKey = els.clusterModal ? els.clusterModal.dataset.shareKey || "" : "";
+    if (clusterKey) {
+      params.set("cluster", clusterKey);
+      params.set("tab", "agreement");
+    }
+  }
+
+  if ([...params.keys()].length) {
+    params.set("v", "1");
+  }
+  return params;
+}
+
+function buildShareUrl() {
+  const params = buildShareSearchParams();
+  const url = new URL(window.location.href);
+  url.hash = "";
+  const baseUrl = url.toString();
+  const hash = params.toString();
+  return hash ? `${baseUrl}#${hash}` : baseUrl;
+}
+
+function updateUrlFromState() {
+  if (!urlStateSyncEnabled || typeof window.history?.replaceState !== "function") {
+    return;
+  }
+  const nextUrl = buildShareUrl();
+  const currentUrl = window.location.href;
+  if (nextUrl !== currentUrl) {
+    window.history.replaceState(null, "", nextUrl);
+  }
+}
+
+function applyShareStateFromUrl() {
+  const params = getHashSearchParams();
+  if (!params) {
+    return false;
+  }
+  const shareKeys = [
+    "v",
+    "task",
+    "model",
+    "tag",
+    "q",
+    "time",
+    "hide",
+    "metric",
+    "tab",
+    "tableSort",
+    "agreement",
+    "rep",
+    "chartGroup",
+    "scatterGroup",
+    "bestTask",
+    "scatterX",
+    "scatterCi",
+    "tsLabels",
+    "priceMode",
+    "radarAxis",
+    "radarScale",
+    "timeZoom",
+    "priceZoom",
+    "run",
+    "cluster",
+  ];
+  if (!shareKeys.some((key) => params.has(key))) {
+    return false;
+  }
+
+  state.selectedTasks = [];
+  state.selectedModels = [];
+  state.selectedTags = [];
+  state.filterSearchQuery = "";
+  state.timeRanges = [createEmptyTimeRange()];
+  state.hideNoAccuracy = false;
+  state.sortBy = "accuracy";
+  state.leaderboardTableSortKey = null;
+  state.leaderboardTableSortDirection = null;
+  state.leaderboardTab = "chart";
+  state.agreementViewMode = "same_model";
+  state.leaderboardChartGroupBy = "model";
+  state.leaderboardScatterGroupBy = "none";
+  state.leaderboardChartBestByTask = false;
+  state.leaderboardScatterXAxis = "price";
+  state.agreementRepresentativePolicy = "latest";
+  state.scatterShowCi = true;
+  state.timeSeriesShowLabels = false;
+  state.timeSeriesViewport = null;
+  state.priceScatterViewport = null;
+  state.priceScatterCostMode = "total";
+  state.radarAxis = "tag";
+  state.radarScale = "contrast";
+  state.selectedRunPath = null;
+  state.pendingSharedRunPath = null;
+  state.pendingSharedAgreementClusterKey = null;
+
+  state.selectedTasks = getRepeatedParamValues(params, "task");
+  state.selectedModels = getRepeatedParamValues(params, "model");
+  state.selectedTags = getRepeatedParamValues(params, "tag");
+
+  if (params.has("q")) {
+    state.filterSearchQuery = asTrimmedString(params.get("q"));
+  }
+  if (params.has("time")) {
+    const decodedRanges = params.getAll("time").map(decodeTimeRangeParam);
+    state.timeRanges = normalizeTimeRanges(decodedRanges);
+  }
+  state.hideNoAccuracy = parseBoolParam(params, "hide", state.hideNoAccuracy);
+
+  const metric = asTrimmedString(params.get("metric"));
+  if (METRIC_KEYS.has(metric)) {
+    state.sortBy = metric;
+  }
+  const tab = asTrimmedString(params.get("tab"));
+  if (LEADERBOARD_TAB_KEYS.has(tab)) {
+    state.leaderboardTab = tab;
+  }
+  const tableSort = asTrimmedString(params.get("tableSort"));
+  if (tableSort.includes(":")) {
+    const [key, direction] = tableSort.split(":", 2);
+    if (LEADERBOARD_TABLE_SORTABLE_KEYS.has(key) && SORT_DIRECTIONS.has(direction)) {
+      state.leaderboardTableSortKey = key;
+      state.leaderboardTableSortDirection = direction;
+    }
+  }
+  const agreementMode = asTrimmedString(params.get("agreement"));
+  if (AGREEMENT_VIEW_MODE_KEYS.has(agreementMode)) {
+    state.agreementViewMode = agreementMode;
+  }
+  const representativePolicy = asTrimmedString(params.get("rep"));
+  if (AGREEMENT_REPRESENTATIVE_POLICY_KEYS.has(representativePolicy)) {
+    state.agreementRepresentativePolicy = representativePolicy;
+  }
+  const chartGroup = asTrimmedString(params.get("chartGroup"));
+  if (LEADERBOARD_CHART_GROUP_BY_KEYS.has(chartGroup)) {
+    state.leaderboardChartGroupBy = chartGroup;
+  }
+  const scatterGroup = asTrimmedString(params.get("scatterGroup"));
+  if (LEADERBOARD_CHART_GROUP_BY_KEYS.has(scatterGroup)) {
+    state.leaderboardScatterGroupBy = scatterGroup;
+  }
+  state.leaderboardChartBestByTask = parseBoolParam(
+    params,
+    "bestTask",
+    state.leaderboardChartBestByTask
+  );
+  const scatterXAxis = asTrimmedString(params.get("scatterX"));
+  if (LEADERBOARD_SCATTER_X_AXIS_KEYS.has(scatterXAxis)) {
+    state.leaderboardScatterXAxis = scatterXAxis;
+  }
+  state.scatterShowCi = parseBoolParam(params, "scatterCi", state.scatterShowCi);
+  state.timeSeriesShowLabels = parseBoolParam(params, "tsLabels", state.timeSeriesShowLabels);
+  const priceMode = asTrimmedString(params.get("priceMode"));
+  if (PRICE_SCATTER_COST_MODE_KEYS.has(priceMode)) {
+    state.priceScatterCostMode = priceMode;
+  }
+  const radarAxis = asTrimmedString(params.get("radarAxis"));
+  if (RADAR_AXIS_KEYS.has(radarAxis)) {
+    state.radarAxis = radarAxis;
+  }
+  const radarScale = asTrimmedString(params.get("radarScale"));
+  if (RADAR_SCALE_KEYS.has(radarScale)) {
+    state.radarScale = radarScale;
+  }
+
+  const timeZoom = decodeViewportParam(params.get("timeZoom"));
+  if (timeZoom) {
+    state.timeSeriesViewport = timeZoom;
+  }
+  const priceZoom = decodeViewportParam(params.get("priceZoom"));
+  if (priceZoom) {
+    state.priceScatterViewport = priceZoom;
+  }
+
+  const runPath = asTrimmedString(params.get("run"));
+  if (runPath) {
+    state.selectedRunPath = runPath;
+    state.pendingSharedRunPath = runPath;
+  }
+  const clusterKey = asTrimmedString(params.get("cluster"));
+  if (clusterKey) {
+    state.pendingSharedAgreementClusterKey = clusterKey;
+    state.leaderboardTab = "agreement";
+  }
+
+  return true;
+}
+
+function applyPendingSharedDetailViews() {
+  if (state.pendingSharedRunPath) {
+    const run = findRunByPath(state.pendingSharedRunPath);
+    if (run) {
+      state.selectedRunPath = run.filePath;
+      openRunModal(run, { syncUrl: false });
+      state.pendingSharedRunPath = null;
+    }
+  }
+
+  if (state.pendingSharedAgreementClusterKey) {
+    const entry = findAgreementClusterByShareKey(state.pendingSharedAgreementClusterKey);
+    if (entry) {
+      openAgreementClusterModal(entry, { syncUrl: false });
+      state.pendingSharedAgreementClusterKey = null;
+    }
+  }
+  updateUrlFromState();
+}
+
+async function copyShareUrl() {
+  const url = buildShareUrl();
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = url;
+      textarea.setAttribute("readonly", "readonly");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setShareButtonStatus("Copied");
+  } catch (_) {
+    setShareButtonStatus("Copy failed");
+  }
+}
+
+function setShareButtonStatus(message) {
+  if (!els.shareUrlBtn) {
+    return;
+  }
+  window.clearTimeout(shareButtonResetTimer);
+  els.shareUrlBtn.title = message;
+  els.shareUrlBtn.setAttribute("aria-label", message);
+  shareButtonResetTimer = window.setTimeout(() => {
+    els.shareUrlBtn.title = "Copy Share Link";
+    els.shareUrlBtn.setAttribute("aria-label", "Copy Share Link");
+  }, 1600);
 }
 
 function applyUiStateToControls() {
@@ -2810,6 +3260,12 @@ function setupSourceControls() {
     }
     renderError("No active local source to reload. Choose Open Metrics Folder.", true);
   });
+
+  if (els.shareUrlBtn) {
+    els.shareUrlBtn.addEventListener("click", () => {
+      copyShareUrl();
+    });
+  }
 }
 
 function getMetricValueForRun(run, key) {
@@ -8127,17 +8583,21 @@ function fillRunDetailsContent(run) {
   els.runModalContent.appendChild(rawWrap);
 }
 
-function openRunModal(run) {
+function openRunModal(run, options = {}) {
   if (!run) {
     return;
   }
   state.selectedRunPath = run.filePath;
   fillRunDetailsContent(run);
   els.runModal.classList.remove("hidden");
+  if (options.syncUrl !== false) {
+    updateUrlFromState();
+  }
 }
 
 function closeRunModal() {
   els.runModal.classList.add("hidden");
+  updateUrlFromState();
 }
 
 function fillAgreementClusterModalContent(entry) {
@@ -8192,12 +8652,16 @@ function fillAgreementClusterModalContent(entry) {
   els.clusterModalContent.appendChild(svg);
 }
 
-function openAgreementClusterModal(entry) {
+function openAgreementClusterModal(entry, options = {}) {
   if (!entry || !els.clusterModal) {
     return;
   }
+  els.clusterModal.dataset.shareKey = getAgreementClusterShareKey(entry);
   fillAgreementClusterModalContent(entry);
   els.clusterModal.classList.remove("hidden");
+  if (options.syncUrl !== false) {
+    updateUrlFromState();
+  }
 }
 
 function closeAgreementClusterModal() {
@@ -8205,6 +8669,8 @@ function closeAgreementClusterModal() {
     return;
   }
   els.clusterModal.classList.add("hidden");
+  delete els.clusterModal.dataset.shareKey;
+  updateUrlFromState();
 }
 
 function setupModalControls() {
@@ -8302,6 +8768,7 @@ function applyLoadedResult(result) {
 
   render();
   updateSourceStatus();
+  applyPendingSharedDetailViews();
 }
 
 async function activateServerSource() {
@@ -8357,6 +8824,8 @@ async function activateFilesSource(files) {
 
 async function init() {
   restoreUiState();
+  applyShareStateFromUrl();
+  urlStateSyncEnabled = true;
   applyUiStateToControls();
   applyTheme();
   applySidebarLayoutState();

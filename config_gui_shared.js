@@ -164,7 +164,8 @@
     flush_seconds: "Flush CSV and prompt log after this many seconds even when flush_rows is not reached.",
     request_timeout_seconds:
       "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
-    service_tier: "OpenAI-compatible service tier. Ignored by providers that do not support it.",
+    service_tier:
+      "OpenAI-compatible service tier for OpenAI, Gemini/Vertex, and Claude targets. Claude supports standard and priority.",
     reasoning_effort:
       "Reasoning effort level (low, medium, high, xhigh). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
     verbosity:
@@ -401,7 +402,7 @@
           flags: ["--service_tier"],
           helpId: "service_tier",
           modes: ["Run", "Run & Validate"],
-          providers: ["OpenAI"],
+          providers: ["OpenAI", "Gemini", "Vertex", "Claude"],
         },
         {
           flags: ["--reasoning_effort"],
@@ -2072,6 +2073,33 @@
     return provider === "anthropic" || model.includes("claude");
   }
 
+  function getAllowedServiceTiers(provider, modelValue) {
+    if (isClaudeTarget(provider, modelValue)) {
+      return new Set(["standard", "priority"]);
+    }
+    if (provider === "openai" || provider === "vertex" || isGeminiTarget(provider, modelValue)) {
+      return new Set(["standard", "flex", "priority"]);
+    }
+    return new Set(["standard"]);
+  }
+
+  function updateServiceTierOptions(ctx) {
+    if (!ctx.serviceTierInput) {
+      return;
+    }
+    const provider = ctx.providerSelect?.value || defaultValues.provider;
+    const modelValue = ctx.modelInput?.value || "";
+    const allowed = getAllowedServiceTiers(provider, modelValue);
+    Array.from(ctx.serviceTierInput.options).forEach((option) => {
+      const isAllowed = allowed.has(option.value);
+      option.disabled = !isAllowed;
+      option.hidden = !isAllowed;
+    });
+    if (!allowed.has(ctx.serviceTierInput.value)) {
+      ctx.serviceTierInput.value = defaultValues.service_tier;
+    }
+  }
+
   function matchesProviderVisibility(rule, provider, modelValue) {
     const tokens = (rule || "")
       .toString()
@@ -2235,6 +2263,7 @@
 
   function updateContextualVisibility(ctx) {
     const provider = ctx.providerSelect?.value || defaultValues.provider;
+    updateServiceTierOptions(ctx);
     if (ctx.vertexAuthOptions) {
       ctx.vertexAuthOptions.style.display = provider === "vertex" ? "" : "none";
     }

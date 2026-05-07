@@ -108,7 +108,8 @@ options:
                         it).
   --service_tier {standard,flex,priority}
                         Optional service-tier hint for providers that support
-                        differentiated throughput.
+                        differentiated throughput (OpenAI/Gemini/Vertex:
+                        standard, flex, priority; Claude: standard, priority).
   --verbosity {low,medium,high}
                         Optional output verbosity control for GPT models. Sent
                         as verbosity (Chat Completions) or text.verbosity

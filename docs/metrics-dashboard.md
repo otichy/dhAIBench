@@ -106,6 +106,13 @@ Useful behavior:
 
 The dashboard persists most UI state in browser storage, including filters, selected tab, grouping mode, and theme.
 
+The share button in the source toolbar copies a URL for the current view. The
+URL stores filters, selected tags, leaderboard tab, agreement mode, open run or
+agreement-tree detail modals, and scatter/time-series zoom windows. Shared links
+restore fully when the recipient loads the same published server metrics. For
+locally selected folders or files, the recipient must load the same local metrics
+source first because browsers cannot reopen local files from a URL.
+
 ## KPIs
 
 The KPI strip gives a fast summary of the current filtered view:

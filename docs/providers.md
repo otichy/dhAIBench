@@ -24,6 +24,8 @@ Examples:
 Use only the controls supported by your target provider:
 
 - `--reasoning_effort {low,medium,high,xhigh}` for OpenAI-style reasoning
+- `--service_tier {standard,flex,priority}` for providers with throughput tiers
+  (OpenAI and Gemini/Vertex expose all three; Claude uses `standard` or `priority`)
 - `--verbosity {low,medium,high}` for GPT output detail
 - `--thinking_level {minimal,low,medium,high}` for Gemini thinking configuration
 - `--effort {low,medium,high,max}` for Claude-style effort

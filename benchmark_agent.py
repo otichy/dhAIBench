@@ -6124,6 +6124,8 @@ class OpenAIConnector:
             requested_controls["effort"] = effort
         if verbosity:
             requested_controls["verbosity"] = verbosity
+        if service_tier and service_tier != "standard":
+            requested_controls["service_tier"] = service_tier
         if normalized_prompt_cache_key:
             requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
         if normalized_gemini_cached_content and is_gemini_target:
@@ -6143,6 +6145,7 @@ class OpenAIConnector:
                 "google_thinking_config": "thinking_level",
                 "effort": "effort",
                 "verbosity": "verbosity",
+                "service_tier": "service_tier",
                 "prompt_cache_key": "prompt_cache_key",
                 "cached_content": "gemini_cached_content",
                 "gemini_cached_content": "gemini_cached_content",
@@ -6490,6 +6493,8 @@ class OpenAIConnector:
 
             if request_args.get("verbosity") is not None:
                 sent["verbosity"] = str(request_args["verbosity"])
+            if request_args.get("service_tier") is not None:
+                sent["service_tier"] = str(request_args["service_tier"])
             if request_args.get("prompt_cache_key") is not None:
                 sent["prompt_cache_key"] = str(request_args["prompt_cache_key"])
             if request_args.get("cached_content") is not None:
@@ -10144,7 +10149,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--service_tier",
         choices=["standard", "flex", "priority"],
         default="standard",
-        help="Optional service-tier hint for providers that support differentiated throughput.",
+        help=(
+            "Optional service-tier hint for providers that support differentiated throughput "
+            "(OpenAI/Gemini/Vertex: standard, flex, priority; Claude: standard, priority)."
+        ),
     )
     parser.add_argument(
         "--verbosity",
