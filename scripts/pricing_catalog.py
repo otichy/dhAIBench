@@ -341,6 +341,7 @@ SAFE_OPENAI_SNAPSHOT_PREFIXES = (
     "gpt-5",
     "gpt-5.1",
     "gpt-5.2",
+    "gpt-5.5",
     "gpt-5.4",
     "o1-pro",
     "o3",
@@ -456,7 +457,14 @@ def parse_openai_pricing_page(page_text: str) -> Dict[str, Dict[str, Any]]:
         "flex": "Flex Short context Long context Model Input Cached input Output Input Cached input Output",
         "priority": "Priority Short context Long context Model Input Cached input Output Input Cached input Output",
     }
-    flagship_models = ("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro")
+    flagship_models = (
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.4-pro",
+    )
     for tier_name, marker in flagship_sections.items():
         idx = page_text.find(marker)
         if idx == -1:
