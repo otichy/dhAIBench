@@ -1,3 +1,5 @@
+### 🔗 [Check our LLM benchmarks on linguistic annotation tasks](https://dhaibench.silent3.ff.cuni.cz/)
+
 # LLM Linguistic Classification Benchmark Agent
 
 Python tooling for benchmarking large language models on linguistic classification tasks. The agent loads semicolon-delimited datasets, queries an OpenAI-compatible endpoint for each example, and writes predictions, metrics, charts, and prompt logs.
