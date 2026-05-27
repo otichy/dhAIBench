@@ -377,13 +377,7 @@ def display_label(row: dict[str, Any]) -> str:
     return f"{prefix}{row['model']} [{tier or 'unpriced'}]"
 
 
-def plot_prices(rows: list[dict[str, Any]], path: Path) -> None:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Patch
-
+def priced_rows_for_plot(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     priced = [
         row
         for row in rows
@@ -405,9 +399,25 @@ def plot_prices(rows: list[dict[str, Any]], path: Path) -> None:
             tier_rank.get(str(row["service_tier_used_for_price"]), 99),
         )
     )
+    return priced
 
-    height = max(8, len(priced) * 0.34)
-    fig, ax = plt.subplots(figsize=(13, height))
+
+def plot_prices(rows: list[dict[str, Any]], path: Path, *, landscape: bool = False) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    priced = priced_rows_for_plot(rows)
+
+    height = 9.5 if landscape else max(8, len(priced) * 0.34)
+    width = 18 if landscape else 13
+    bar_height = 0.44 if landscape else 0.58
+    label_fontsize = 7 if landscape else 8
+    value_fontsize = 6 if landscape else 7
+    sum_fontsize = 5.5 if landscape else 6
+    fig, ax = plt.subplots(figsize=(width, height))
     y_positions = list(range(len(priced)))
     input_prices = [float(row["input_usd_per_mtokens"] or 0) for row in priced]
     output_prices = [float(row["output_usd_per_mtokens"] or 0) for row in priced]
@@ -423,25 +433,25 @@ def plot_prices(rows: list[dict[str, Any]], path: Path) -> None:
         tier_output = [float(priced[pos]["output_usd_per_mtokens"] or 0) for pos in positions]
         tier_input = [float(priced[pos]["input_usd_per_mtokens"] or 0) for pos in positions]
         output_color, input_color = tier_colors[tier]
-        ax.barh(positions, tier_output, height=0.58, color=output_color, label=f"{tier} output")
-        ax.barh(positions, tier_input, left=tier_output, height=0.58, color=input_color, label=f"{tier} input")
+        ax.barh(positions, tier_output, height=bar_height, color=output_color, label=f"{tier} output")
+        ax.barh(positions, tier_input, left=tier_output, height=bar_height, color=input_color, label=f"{tier} input")
 
     for pos, row in zip(y_positions, priced):
         input_price = float(row["input_usd_per_mtokens"] or 0)
         output_price = float(row["output_usd_per_mtokens"] or 0)
         total_price = output_price + input_price
         if output_price > 0.09:
-            ax.text(output_price / 2, pos, f"out {fmt(output_price)}", va="center", ha="center", fontsize=7, color="white")
+            ax.text(output_price / 2, pos, f"out {fmt(output_price)}", va="center", ha="center", fontsize=value_fontsize, color="white")
         else:
-            ax.text(output_price * 1.06 if output_price else 0.032, pos, f"out {fmt(output_price)}", va="center", ha="left", fontsize=7)
+            ax.text(output_price * 1.06 if output_price else 0.032, pos, f"out {fmt(output_price)}", va="center", ha="left", fontsize=value_fontsize)
         if input_price > 0.09:
-            ax.text(output_price + (input_price / 2), pos, f"in {fmt(input_price)}", va="center", ha="center", fontsize=7, color="white")
+            ax.text(output_price + (input_price / 2), pos, f"in {fmt(input_price)}", va="center", ha="center", fontsize=value_fontsize, color="white")
         else:
-            ax.text(total_price * 1.05, pos, f"in {fmt(input_price)}", va="center", ha="left", fontsize=7)
-        ax.text(total_price * 1.05, pos + 0.22, f"sum {fmt(total_price)}", va="center", ha="left", fontsize=6, color="#555555")
+            ax.text(total_price * 1.05, pos, f"in {fmt(input_price)}", va="center", ha="left", fontsize=value_fontsize)
+        ax.text(total_price * 1.05, pos + (0.2 if landscape else 0.22), f"sum {fmt(total_price)}", va="center", ha="left", fontsize=sum_fontsize, color="#555555")
 
     ax.set_yticks(y_positions)
-    ax.set_yticklabels([display_label(row) for row in priced], fontsize=8)
+    ax.set_yticklabels([display_label(row) for row in priced], fontsize=label_fontsize)
     ax.set_xlabel("Stacked USD per 1M tokens: output first, then input (logarithmic scale)")
     ax.set_title("Configured prices for models with benchmark outputs - stacked, logarithmic x-axis")
     ax.set_xscale("log")
@@ -453,6 +463,56 @@ def plot_prices(rows: list[dict[str, Any]], path: Path) -> None:
     ax.legend(handles, labels, frameon=False)
     fig.text(0.5, 0.01, "Provider names are omitted from y-axis labels.", ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.025, 1, 1))
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_prices_vertical_axis(rows: list[dict[str, Any]], path: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    priced = priced_rows_for_plot(rows)
+    x_positions = list(range(len(priced)))
+    input_prices = [float(row["input_usd_per_mtokens"] or 0) for row in priced]
+    output_prices = [float(row["output_usd_per_mtokens"] or 0) for row in priced]
+    tier_colors = {
+        "standard": ("#B45F24", "#3F70AE"),
+        "flex": ("#D9953D", "#6E9ED6"),
+    }
+
+    fig, ax = plt.subplots(figsize=(18, 10))
+    for tier in ("standard", "flex"):
+        positions = [pos for pos, row in zip(x_positions, priced) if row["service_tier_used_for_price"] == tier]
+        if not positions:
+            continue
+        tier_output = [float(priced[pos]["output_usd_per_mtokens"] or 0) for pos in positions]
+        tier_input = [float(priced[pos]["input_usd_per_mtokens"] or 0) for pos in positions]
+        output_color, input_color = tier_colors[tier]
+        ax.bar(positions, tier_output, width=0.72, color=output_color, label=f"{tier} output")
+        ax.bar(positions, tier_input, bottom=tier_output, width=0.72, color=input_color, label=f"{tier} input")
+
+    for pos, row in zip(x_positions, priced):
+        input_price = float(row["input_usd_per_mtokens"] or 0)
+        output_price = float(row["output_usd_per_mtokens"] or 0)
+        total_price = output_price + input_price
+        ax.text(pos, total_price * 1.08, fmt(total_price), ha="center", va="bottom", fontsize=6, color="#555555")
+
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels([display_label(row) for row in priced], rotation=58, ha="right", fontsize=7)
+    ax.set_ylabel("Stacked USD per 1M tokens: output first, then input (logarithmic scale)")
+    ax.set_title("Configured prices for models with benchmark outputs - vertical price axis")
+    ax.set_yscale("log")
+    ax.set_ylim(0.03, max(out + inp for out, inp in zip(output_prices, input_prices)) * 1.9)
+    ax.grid(axis="y", alpha=0.25)
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(Patch(facecolor="none", edgecolor="none"))
+    labels.append("â—Ž open source")
+    ax.legend(handles, labels, frameon=False, ncol=3, loc="upper left")
+    fig.text(0.5, 0.01, "Provider names are omitted from x-axis labels.", ha="center", fontsize=8, color="#555555")
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     fig.savefig(path, dpi=180)
     plt.close(fig)
 
@@ -477,6 +537,8 @@ def write_markdown(rows: list[dict[str, Any]], catalog: dict[str, Any], path: Pa
         "## Files",
         "",
         "- `model_prices_for_outputs.png`: stacked output/input price chart for priced models",
+        "- `model_prices_for_outputs_horizontal.png`: landscape-oriented horizontal version of the same chart",
+        "- `model_prices_for_outputs_vertical_axis.png`: bars arranged horizontally with price on the vertical axis",
         "- `model_prices_for_outputs.csv`: all provider/model pairs found in outputs, including unpriced models",
         "",
         "## Coverage",
@@ -509,6 +571,8 @@ def main() -> None:
     write_csv(rows, out_dir / "model_prices_for_outputs.csv")
     write_markdown(rows, catalog, out_dir / "README.md")
     plot_prices(rows, out_dir / "model_prices_for_outputs.png")
+    plot_prices(rows, out_dir / "model_prices_for_outputs_horizontal.png", landscape=True)
+    plot_prices_vertical_axis(rows, out_dir / "model_prices_for_outputs_vertical_axis.png")
     print(f"Wrote pricing analysis to {out_dir}")
     print(f"Provider/model/tier rows: {len(rows)}; priced: {sum(bool(row['priced']) for row in rows)}; unpriced: {sum(not bool(row['priced']) for row in rows)}")
 
