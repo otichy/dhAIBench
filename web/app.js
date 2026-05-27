@@ -3566,6 +3566,39 @@ function formatUsd(value) {
   })}`;
 }
 
+function formatDurationHuman(totalSeconds) {
+  const numericSeconds = Number(totalSeconds);
+  if (!Number.isFinite(numericSeconds)) {
+    return "N/A";
+  }
+  const secondsInt = Math.round(Math.max(0, numericSeconds));
+  const days = Math.floor(secondsInt / 86400);
+  let remainder = secondsInt % 86400;
+  const hours = Math.floor(remainder / 3600);
+  remainder %= 3600;
+  const minutes = Math.floor(remainder / 60);
+  const seconds = remainder % 60;
+  const pad2 = (value) => String(value).padStart(2, "0");
+
+  if (days > 0) {
+    return `${days}d ${pad2(hours)}h ${pad2(minutes)}m ${pad2(seconds)}s`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${pad2(minutes)}m ${pad2(seconds)}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${pad2(seconds)}s`;
+  }
+  return `${seconds}s`;
+}
+
+function formatRunRuntime(run) {
+  if (run && run.overallTimeHuman) {
+    return run.overallTimeHuman;
+  }
+  return formatDurationHuman(run ? run.overallTimeSeconds : null);
+}
+
 function formatTs(ts) {
   const ms = parseTimestampToMs(ts);
   if (!Number.isFinite(ms)) return "N/A";
@@ -8517,8 +8550,7 @@ function fillRunDetailsContent(run) {
     ["Estimated Cost", formatUsd(run.estimatedCostUsd)],
     ["Pricing Tier", run.serviceTier || "standard"],
     ["Pricing Status", run.pricingStatus || "N/A"],
-    ["Runtime (seconds)", formatNum(run.overallTimeSeconds, 2)],
-    ["Runtime (human)", run.overallTimeHuman],
+    ["Runtime", formatRunRuntime(run)],
     ["First Prompt", formatTs(run.firstPromptTimestamp)],
     ["Last Prompt", formatTs(run.lastPromptTimestamp)],
     ["Label Metrics Available", run.labelMetricsAvailable ? "true" : "false"],
