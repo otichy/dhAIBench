@@ -1,4 +1,6 @@
 ### 🔗 [Check our LLM benchmarks on linguistic annotation tasks](https://dhaibench.silent3.ff.cuni.cz/)
+- If you want your linguistic annotation benchmarked, either send us the dataset ([ondrej.tichy@ff.cuni.cz](ondrej.tichy@ff.cuni.cz)) or use this tool.
+- In either case, we would love to show the results as part of the results above to help others assess what is (im)possible with LLMs.
 
 # LLM Linguistic Classification Benchmark Agent
 
