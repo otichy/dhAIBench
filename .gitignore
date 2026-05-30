@@ -24,3 +24,4 @@ __pycache__/
 *.py[cod]
 /.ipynb_checkpoints
 /web/.ipynb_checkpoints
+/web/analytics.local.js
