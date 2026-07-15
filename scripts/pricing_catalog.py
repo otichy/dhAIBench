@@ -324,7 +324,6 @@ def merge_priced_entries(*entries: Dict[str, Any]) -> Dict[str, Any]:
 OPENAI_UNSUPPORTED_MARKERS = (
     "audio",
     "image",
-    "realtime",
     "transcribe",
     "tts",
     "search",
@@ -615,6 +614,114 @@ VERTEX_MODEL_LABELS = {
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
 }
 
+GOOGLE_TEXT_RATE_OVERRIDES = {
+    "models/gemini-3-pro-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(2.0, None, 12.0),
+            "batch": service_tier_entry(1.0, None, 6.0),
+            "flex": service_tier_entry(1.0, None, 6.0),
+            "priority": service_tier_entry(3.6, None, 21.6),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "models/gemini-3.1-flash-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.5, None, 3.0),
+            "batch": service_tier_entry(0.25, None, 1.5),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "models/gemini-3.5-live-translate-preview": {
+        "service_tiers": {"standard": service_tier_entry(3.5, None, 21.0)},
+        "notes": [
+            "Audio minute equivalents are documented by the provider but are not represented in this catalog entry."
+        ],
+    },
+    "models/gemini-3.1-flash-lite-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.25, None, 1.5),
+            "batch": service_tier_entry(0.125, None, 0.75),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "models/gemini-omni-flash-preview": {
+        "service_tiers": {"standard": service_tier_entry(1.5, None, 9.0)},
+        "notes": ["Text-token rates only; video output rates are documented separately by the provider."],
+    },
+}
+
+GOOGLE_TEXT_RATE_ALIASES = {
+    "models/gemini-3-pro-image-preview": "models/gemini-3-pro-image",
+    "models/gemini-3.1-flash-image-preview": "models/gemini-3.1-flash-image",
+}
+
+VERTEX_TEXT_RATE_OVERRIDES = {
+    "gemini-3-pro-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(2.0, None, 12.0),
+            "flex": service_tier_entry(1.0, None, 6.0),
+            "batch": service_tier_entry(1.0, None, 6.0),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "gemini-3.1-flash-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.5, None, 3.0),
+            "flex": service_tier_entry(0.25, None, 1.5),
+            "batch": service_tier_entry(0.25, None, 1.5),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "gemini-3.1-flash-lite-image": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.25, None, 1.5),
+            "flex": service_tier_entry(0.125, None, 0.75),
+            "batch": service_tier_entry(0.125, None, 0.75),
+        },
+        "notes": ["Text-token rates only; image output rates are documented separately by the provider."],
+    },
+    "gemini-omni-flash-preview": {
+        "service_tiers": {"standard": service_tier_entry(1.5, None, 9.0)},
+        "notes": ["Text-token rates only; video output rates are documented separately by the provider."],
+    },
+}
+
+VERTEX_TEXT_RATE_ALIASES = {
+    "gemini-3-pro-image-preview": "gemini-3-pro-image",
+    "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
+}
+
+VERTEX_UNSUPPORTED_OVERRIDES = {
+    "diffusiongemma": {
+        "reason": "No compatible official per-token pricing was found for this model.",
+        "sources": [{"label": "Vertex AI Pricing", "url": VERTEX_PRICING_URL}],
+    },
+    "alphagenome": {
+        "reason": (
+            "AlphaGenome uses licensing and infrastructure pricing; no compatible official per-token pricing "
+            "was found for this model."
+        ),
+        "sources": [
+            {
+                "label": "AlphaGenome model page",
+                "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/open-models/alphagenome",
+            }
+        ],
+    },
+    "alphagenome-request": {
+        "reason": (
+            "AlphaGenome uses licensing and infrastructure pricing; no compatible official per-token pricing "
+            "was found for this model."
+        ),
+        "sources": [
+            {
+                "label": "AlphaGenome model page",
+                "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/open-models/alphagenome",
+            }
+        ],
+    },
+}
+
 
 def extract_section(text: str, heading: str) -> Optional[str]:
     idx = text.find(heading)
@@ -708,6 +815,15 @@ def build_google_source_entries(fetch_html: FetchHtmlFn) -> Dict[str, Dict[str, 
             [{"label": "Gemini Developer API Pricing", "url": final_url}],
             long_context=parsed["long_context"],
         )
+    for model, override in GOOGLE_TEXT_RATE_OVERRIDES.items():
+        entries[model] = priced_entry(
+            override["service_tiers"],
+            [{"label": "Gemini Developer API Pricing", "url": final_url}],
+            notes=override.get("notes"),
+        )
+    for alias, canonical in GOOGLE_TEXT_RATE_ALIASES.items():
+        if canonical in entries:
+            entries[alias] = alias_entry(canonical, "provider_alias")
     for alias, canonical in GOOGLE_EXPLICIT_ALIASES.items():
         if canonical in entries:
             entries[alias] = alias_entry(canonical, "provider_alias")
@@ -827,6 +943,17 @@ def build_vertex_source_entries(fetch_html: FetchHtmlFn) -> Dict[str, Dict[str, 
                 [{"label": "Vertex AI Pricing", "url": final_url}],
                 long_context=long_context,
             )
+    for model, override in VERTEX_TEXT_RATE_OVERRIDES.items():
+        entries[model] = priced_entry(
+            override["service_tiers"],
+            [{"label": "Vertex AI Pricing", "url": final_url}],
+            notes=override.get("notes"),
+        )
+    for alias, canonical in VERTEX_TEXT_RATE_ALIASES.items():
+        if canonical in entries:
+            entries[alias] = alias_entry(canonical, "provider_alias")
+    for model, override in VERTEX_UNSUPPORTED_OVERRIDES.items():
+        entries[model] = unsupported_entry(override["reason"], override.get("sources"))
     return entries
 
 
