@@ -917,7 +917,7 @@ def is_quota_or_rate_limit_error(exc: BaseException) -> bool:
         if status_value is None:
             continue
         status_text = str(status_value).strip()
-        if status_text == "429":
+        if status_text in {"402", "429"}:
             return True
 
     text = str(exc).strip().lower()
@@ -927,11 +927,23 @@ def is_quota_or_rate_limit_error(exc: BaseException) -> bool:
         "rate limit",
         "resource has been exhausted",
         "resource exhausted",
+        "insufficient balance",
         "insufficient_quota",
         "exceeded your current quota",
         "quota",
     )
     return any(marker in text for marker in indicators)
+
+
+def is_permanent_provider_billing_error(exc: BaseException) -> bool:
+    """Detect payment failures that cannot succeed by retrying this run."""
+    for attr_name in ("status_code", "status", "http_status"):
+        status_value = getattr(exc, attr_name, None)
+        if str(status_value).strip() == "402":
+            return True
+
+    text = str(exc).strip().lower()
+    return "insufficient balance" in text or "payment required" in text
 
 
 def is_retryable_resource_exhausted_error(exc: BaseException) -> bool:
@@ -7304,7 +7316,7 @@ class Prediction:
 
 
 class ProviderQuotaExceededError(RuntimeError):
-    """Raised when provider quota/rate limit is exhausted after retries."""
+    """Raised when a provider quota, rate-limit, or billing failure stops a run."""
 
 
 class ProviderEmptyResponseError(RuntimeError):
@@ -8526,6 +8538,7 @@ def classify_example(
             strict_control_error = (
                 strict_control_acceptance and isinstance(exc, RequestedControlRejectedError)
             )
+            permanent_billing_error = is_permanent_provider_billing_error(exc)
             resource_exhausted_error = is_retryable_resource_exhausted_error(exc)
             empty_response_error = is_empty_model_response_error(exc)
             timeout_error = is_request_timeout_error(exc)
@@ -8551,7 +8564,9 @@ def classify_example(
             if "status" not in log_entry:
                 log_entry["status"] = "error"
             log_entry["error_type"] = exc.__class__.__name__
-            if resource_exhausted_error:
+            if permanent_billing_error:
+                log_entry["error_category"] = "provider_billing"
+            elif resource_exhausted_error:
                 log_entry["error_category"] = "resource_exhausted"
             elif provider_cancellation_error:
                 log_entry["error_category"] = "provider_cancellation"
@@ -8580,6 +8595,12 @@ def classify_example(
                 exc,
             )
             if strict_control_error:
+                break
+            if permanent_billing_error:
+                logging.error(
+                    "Provider reported a billing failure for example %s; stopping without retrying.",
+                    example.example_id,
+                )
                 break
             if resource_exhausted_error:
                 if resource_exhausted_retry_step < len(RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS):
@@ -11241,7 +11262,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if halted_by_quota:
                 stopped_by_quota = True
                 logging.error(
-                    "Stopping remaining input datasets because the provider reported a retry-exhausted failure."
+                    "Stopping remaining input datasets because the provider reported a quota or billing failure."
                 )
                 break
     except RequestedControlRejectedError as exc:
@@ -11304,7 +11325,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if stopped_by_quota:
         logging.error(
-            "Run ended early due to a provider-side retry-exhausted failure. "
+            "Run ended early due to a provider-side quota or billing failure. "
             "Re-run later with the same --output path to resume."
         )
         return 2
