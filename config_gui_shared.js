@@ -24,6 +24,7 @@
   const PROMPT_ESTIMATE_SAMPLE_LIMIT = 100;
   const PROMPT_CACHE_HINT_TOKENS = 1024;
   const MAX_CACHE_PADDING_TOKENS = 200000;
+  const MAX_METRICS_IMPORT_BYTES = 10 * 1024 * 1024;
   const NODE_MARKER_LEFT = "\u27E6";
   const NODE_MARKER_RIGHT = "\u27E7";
   const LEGACY_NODE_MARKER_LEFT = "\u00E2\u017A\u00A6";
@@ -107,6 +108,71 @@
     task_description: "",
     tags: "",
   };
+
+  const metricsImportFields = [
+    ["labels", "labels_path", "labels path"],
+    ["task_name", "task_name", "task name"],
+    ["task_description", "task_description", "task description"],
+    ["tags", "tags", "tags"],
+    ["model", "model", "model"],
+    ["temperature", "temperature", "temperature"],
+    ["top_p", "top_p", "top-p"],
+    ["top_k", "top_k", "top-k"],
+    ["service_tier", "service_tier", "service tier"],
+    ["verbosity", "verbosity", "verbosity"],
+    ["reasoning_effort", "reasoning_effort", "reasoning effort"],
+    ["thinking_level", "thinking_level", "thinking level"],
+    ["effort", "effort", "Claude effort"],
+    ["strict_control_acceptance", "strict_control_acceptance", "strict control acceptance"],
+    ["provider", "provider", "provider"],
+    ["system_prompt", "system_prompt", "system prompt"],
+    ["few_shot_examples", "few_shot_examples", "few-shot examples"],
+    ["prompt_layout", "prompt_layout", "prompt layout"],
+    ["cache_pad_target_tokens", "cache_pad_target_tokens", "cache padding target"],
+    ["prompt_cache_key", "prompt_cache_key", "prompt cache key"],
+    ["gemini_cached_content", "gemini_cached_content", "Gemini cached content"],
+    ["requesty_auto_cache", "requesty_auto_cache", "Requesty auto cache"],
+    ["vertex_auto_adc_login", "vertex_auto_adc_login", "Vertex ADC auto-login"],
+    [
+      "vertex_access_token_refresh_seconds",
+      "vertex_access_token_refresh_seconds",
+      "Vertex token refresh interval",
+    ],
+    ["create_gemini_cache", "create_gemini_cache", "Gemini cache creation"],
+    ["gemini_cache_ttl", "gemini_cache_ttl", "Gemini cache TTL"],
+    [
+      "gemini_cache_ttl_autoupdate",
+      "gemini_cache_ttl_autoupdate",
+      "Gemini cache TTL auto-refresh",
+    ],
+    ["keep_gemini_cache", "keep_gemini_cache", "keep Gemini cache"],
+    ["enable_cot", "enable_cot", "chain-of-thought prompt"],
+    ["logprobs", "logprobs", "logprobs"],
+    ["calibration", "calibration", "calibration plot"],
+    ["confusion_heatmap", "confusion_heatmap", "confusion heatmap"],
+    ["max_retries", "max_retries", "maximum retries"],
+    ["retry_delay", "retry_delay", "retry delay"],
+    ["request_interval_ms", "request_interval_ms", "request interval"],
+    ["request_timeout_seconds", "request_timeout_seconds", "request timeout"],
+    ["threads", "threads", "threads"],
+    ["prompt_log_detail", "prompt_log_detail", "prompt log detail"],
+    ["flush_rows", "flush_rows", "flush row interval"],
+    ["flush_seconds", "flush_seconds", "flush time interval"],
+    ["validator_cmd", "validator_cmd", "validator path"],
+    ["validator_timeout", "validator_timeout", "validator timeout"],
+    [
+      "validator_prompt_max_candidates",
+      "validator_prompt_max_candidates",
+      "validator prompt candidate limit",
+    ],
+    ["validator_prompt_max_chars", "validator_prompt_max_chars", "validator prompt size limit"],
+    [
+      "validator_exhausted_policy",
+      "validator_exhausted_policy",
+      "validator exhausted policy",
+    ],
+    ["validator_debug", "validator_debug", "validator debugging"],
+  ];
 
   const providerDefaults = {
     openai: { apiKeyVar: "OPENAI_API_KEY", apiBaseVar: "OPENAI_BASE_URL" },
@@ -1923,6 +1989,10 @@
     if (ctx.resetButton) {
       ctx.resetButton.title = "Reset all GUI fields to defaults and clear saved settings.";
     }
+    if (ctx.metricsLoadButton) {
+      ctx.metricsLoadButton.title =
+        "Load benchmark settings from a metrics JSON artifact. Settings absent from older artifacts revert to defaults.";
+    }
     if (ctx.modelClearButton) {
       ctx.modelClearButton.title = "Clear the model input field.";
     }
@@ -2060,6 +2130,364 @@
       }
     } catch (error) {
       console.warn("Unable to load stored configuration:", error);
+    }
+  }
+
+  function hasOwn(object, key) {
+    return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  function isRecord(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function setMetricsLoadStatus(ctx, message, level = "info") {
+    if (!ctx.metricsLoadStatus) {
+      return;
+    }
+    ctx.metricsLoadStatus.textContent = message || "";
+    ctx.metricsLoadStatus.classList.toggle("is-success", level === "success");
+    ctx.metricsLoadStatus.classList.toggle("is-warning", level === "warning");
+    ctx.metricsLoadStatus.classList.toggle("is-error", level === "error");
+  }
+
+  function decodeStoredSystemPrompt(value) {
+    if (typeof value !== "string" || !value.trim()) {
+      return "";
+    }
+    try {
+      const binary = window.atob(value.trim());
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      if (window.TextDecoder) {
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      }
+      let encoded = "";
+      bytes.forEach((byte) => {
+        encoded += `%${byte.toString(16).padStart(2, "0")}`;
+      });
+      return decodeURIComponent(encoded);
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function tokenizeStoredArguments(value) {
+    const source = (value || "").toString().trim();
+    if (!source) {
+      return [];
+    }
+    const tokens = [];
+    let current = "";
+    let quote = "";
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source[index];
+      if (quote) {
+        if (character === quote) {
+          if (quote === '"' && source[index + 1] === '"') {
+            current += '"';
+            index += 1;
+          } else {
+            quote = "";
+          }
+        } else if (character === "\\" && source[index + 1] === quote) {
+          current += quote;
+          index += 1;
+        } else {
+          current += character;
+        }
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+      } else if (/\s/.test(character)) {
+        if (current) {
+          tokens.push(current);
+          current = "";
+        }
+      } else {
+        current += character;
+      }
+    }
+    if (quote) {
+      throw new Error("Validator arguments contain an unterminated quote.");
+    }
+    if (current) {
+      tokens.push(current);
+    }
+    return tokens;
+  }
+
+  function parseStoredValidatorArguments(value) {
+    const fieldByFlag = {
+      "--lexicon": "validator_lexicon",
+      "--max_distance": "validator_max_distance",
+      "--max_distance_per_retry": "validator_max_distance_per_retry",
+      "--max_suggestions": "validator_max_suggestions",
+    };
+    const values = {};
+    const unsupported = [];
+    const tokens = tokenizeStoredArguments(value);
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      const equalsIndex = token.indexOf("=");
+      const flag = equalsIndex > 0 ? token.slice(0, equalsIndex) : token;
+      const controlName = fieldByFlag[flag];
+      if (!controlName) {
+        unsupported.push(token);
+        continue;
+      }
+      const argumentValue = equalsIndex > 0 ? token.slice(equalsIndex + 1) : tokens[index + 1];
+      if (argumentValue === undefined || (equalsIndex < 0 && argumentValue.startsWith("--"))) {
+        unsupported.push(token);
+        continue;
+      }
+      values[controlName] = argumentValue;
+      if (equalsIndex < 0) {
+        index += 1;
+      }
+    }
+    return { values, unsupported };
+  }
+
+  function buildMetricsImportConfig(payload) {
+    const runConfig = isRecord(payload.run_config) ? payload.run_config : {};
+    const config = { ...runConfig };
+    const copyFallback = (key, value, allowEmpty = false) => {
+      if (hasOwn(config, key)) {
+        return;
+      }
+      if (value === undefined || value === null) {
+        return;
+      }
+      if (!allowEmpty && typeof value === "string" && !value.trim()) {
+        return;
+      }
+      config[key] = value;
+    };
+
+    const sourceInput = (payload.source_input_csv || "").toString().trim();
+    if (sourceInput) {
+      copyFallback("input", [sourceInput]);
+    }
+    copyFallback("labels", payload.source_labels_csv, true);
+    ["task_name", "task_description", "tags", "prompt_layout"].forEach((key) => {
+      copyFallback(key, payload[key]);
+    });
+
+    const modelDetails = isRecord(payload.model_details) ? payload.model_details : {};
+    copyFallback("provider", modelDetails.provider);
+    copyFallback("model", modelDetails.model_requested);
+    copyFallback("gemini_cached_content", modelDetails.gemini_cached_content);
+
+    if (!hasOwn(config, "system_prompt") && hasOwn(config, "system_prompt_b64")) {
+      const decodedPrompt = decodeStoredSystemPrompt(config.system_prompt_b64);
+      if (decodedPrompt) {
+        config.system_prompt = decodedPrompt;
+      }
+    }
+    return config;
+  }
+
+  function applyDefaultValuesToForm(ctx) {
+    ctx.form.reset();
+    for (const [name, value] of Object.entries(defaultValues)) {
+      const control = ctx.form.elements.namedItem(name);
+      if (!control || control.type === "file" || control instanceof RadioNodeList) {
+        continue;
+      }
+      if (control.type === "checkbox") {
+        control.checked = Boolean(value);
+      } else {
+        control.value = value;
+      }
+    }
+  }
+
+  function applyImportedControlValue(ctx, controlName, value) {
+    const control = ctx.form.elements.namedItem(controlName);
+    if (!control || control.type === "file" || control instanceof RadioNodeList) {
+      return false;
+    }
+    if (value === undefined || value === null) {
+      return true;
+    }
+    if (control.type === "checkbox") {
+      control.checked = typeof value === "string" ? !/^(?:|0|false|no)$/i.test(value) : Boolean(value);
+      return true;
+    }
+    const rendered = Array.isArray(value) ? value.join("\n") : String(value);
+    if (control instanceof HTMLSelectElement) {
+      const hasOption = Array.from(control.options).some((option) => option.value === rendered);
+      if (!hasOption) {
+        return false;
+      }
+    }
+    const previousValue = control.value;
+    control.value = rendered;
+    if (control.value !== rendered) {
+      control.value = previousValue;
+      return false;
+    }
+    return true;
+  }
+
+  function describeUnavailableMetricsFields(fields) {
+    const unique = Array.from(new Set(fields));
+    const visible = unique.slice(0, 10);
+    const remainder = unique.length - visible.length;
+    return `${visible.join(", ")}${remainder > 0 ? `, and ${remainder} more` : ""}`;
+  }
+
+  function applyMetricsPayload(ctx, payload, sourceLabel) {
+    if (!isRecord(payload)) {
+      throw new Error("The selected JSON file does not contain a metrics object.");
+    }
+    const hasRecognizableMetrics =
+      isRecord(payload.run_config) ||
+      isRecord(payload.model_details) ||
+      hasOwn(payload, "source_output_csv") ||
+      hasOwn(payload, "source_input_csv");
+    if (!hasRecognizableMetrics) {
+      throw new Error("The selected JSON file is not a benchmark metrics artifact.");
+    }
+
+    const config = buildMetricsImportConfig(payload);
+    const unavailable = [];
+    applyDefaultValuesToForm(ctx);
+    ctx.sampledEstimateRows = null;
+    ctx.sampledEstimateSource = "";
+    setPromptEstimateStatus(ctx, "Configuration loaded. Sample a CSV to refresh row-based estimates.");
+
+    const inputAvailable =
+      hasOwn(config, "input") &&
+      (Array.isArray(config.input)
+        ? config.input.some((value) => String(value || "").trim())
+        : Boolean(String(config.input || "").trim()));
+    if (!inputAvailable || !applyImportedControlValue(ctx, "input_path", config.input)) {
+      unavailable.push("input path");
+    }
+
+    const outputPath = (payload.source_output_csv || "").toString().trim();
+    if (!outputPath || !applyImportedControlValue(ctx, "output_path", outputPath)) {
+      unavailable.push("output path");
+    }
+
+    if (hasOwn(config, "provider")) {
+      const provider = (config.provider || "").toString().trim();
+      if (provider) {
+        ensureProviderRegistered(ctx, provider, provider);
+      }
+    }
+    for (const [configKey, controlName, label] of metricsImportFields) {
+      if (!hasOwn(config, configKey)) {
+        unavailable.push(label);
+        continue;
+      }
+      if (
+        (configKey === "system_prompt" || configKey === "model") &&
+        !(config[configKey] || "").toString().trim()
+      ) {
+        unavailable.push(label);
+        continue;
+      }
+      if (!applyImportedControlValue(ctx, controlName, config[configKey])) {
+        unavailable.push(label);
+      }
+    }
+
+    if (!hasOwn(config, "no_explanation")) {
+      unavailable.push("explanation setting");
+    } else {
+      applyImportedControlValue(ctx, "include_explanations", !Boolean(config.no_explanation));
+    }
+
+    if (!hasOwn(config, "validator_args")) {
+      unavailable.push("validator arguments");
+    } else {
+      try {
+        const parsedValidatorArgs = parseStoredValidatorArguments(config.validator_args);
+        Object.entries(parsedValidatorArgs.values).forEach(([controlName, value]) => {
+          if (!applyImportedControlValue(ctx, controlName, value)) {
+            unavailable.push(controlName.replace(/_/g, " "));
+          }
+        });
+        if (parsedValidatorArgs.unsupported.length > 0) {
+          unavailable.push("unsupported validator arguments");
+        }
+      } catch (error) {
+        unavailable.push("validator arguments");
+      }
+    }
+
+    const selectedProvider = ctx.providerSelect?.value || defaultValues.provider;
+    updatePlaceholdersForProvider(ctx, selectedProvider);
+    updateModelOptionsForProvider(ctx, selectedProvider);
+
+    const validatorControl = ctx.form.elements.namedItem("validator_cmd");
+    const importedMode = validatorControl && validatorControl.value.trim() ? "validator" : "run";
+    if (isModeFirstVariant(ctx.variant)) {
+      ctx.activeMode = importedMode;
+      ctx.modePathValues = {
+        run_validate: readPathFieldValues(ctx),
+        resume: { input_path: "", output_path: "" },
+        metrics: { input_path: "", output_path: "" },
+      };
+    }
+    updateContextualVisibility(ctx);
+    handleFormChange(ctx);
+
+    const uniqueUnavailable = Array.from(new Set(unavailable));
+    if (uniqueUnavailable.length > 0) {
+      setMetricsLoadStatus(
+        ctx,
+        `Loaded a partial configuration from ${sourceLabel}. ${uniqueUnavailable.length} unavailable setting(s) reverted to defaults: ${describeUnavailableMetricsFields(uniqueUnavailable)}.`,
+        "warning"
+      );
+    } else {
+      setMetricsLoadStatus(ctx, `Loaded the complete configuration from ${sourceLabel}.`, "success");
+    }
+  }
+
+  async function loadMetricsConfigFile(ctx) {
+    const file = ctx.metricsFileInput?.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (file.size > MAX_METRICS_IMPORT_BYTES) {
+      throw new Error(
+        `Metrics file is too large (${Math.ceil(file.size / (1024 * 1024))} MB). The 10 MB limit helps catch accidental log-file selection.`
+      );
+    }
+    const text = (await file.text()).replace(/^\uFEFF/, "");
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch (error) {
+      throw new Error("The selected metrics file is not valid JSON.");
+    }
+    applyMetricsPayload(ctx, payload, file.name || "selected metrics file");
+  }
+
+  async function handleMetricsFileSelection(ctx) {
+    if (ctx.metricsLoadButton) {
+      ctx.metricsLoadButton.disabled = true;
+    }
+    setMetricsLoadStatus(ctx, "Loading metrics configuration...");
+    try {
+      await loadMetricsConfigFile(ctx);
+    } catch (error) {
+      setMetricsLoadStatus(
+        ctx,
+        error && error.message ? error.message : "Unable to load metrics configuration.",
+        "error"
+      );
+    } finally {
+      if (ctx.metricsLoadButton) {
+        ctx.metricsLoadButton.disabled = false;
+      }
+      if (ctx.metricsFileInput) {
+        ctx.metricsFileInput.value = "";
+      }
     }
   }
 
@@ -2911,18 +3339,7 @@
       console.warn("Unable to clear stored configuration:", error);
     }
 
-    ctx.form.reset();
-    for (const [name, value] of Object.entries(defaultValues)) {
-      const control = ctx.form.elements.namedItem(name);
-      if (!control || control.type === "file" || control instanceof RadioNodeList) {
-        continue;
-      }
-      if (control.type === "checkbox") {
-        control.checked = Boolean(value);
-      } else {
-        control.value = value;
-      }
-    }
+    applyDefaultValuesToForm(ctx);
 
     if (ctx.estimateCsvFileInput) {
       ctx.estimateCsvFileInput.value = "";
@@ -2930,6 +3347,10 @@
     ctx.sampledEstimateRows = null;
     ctx.sampledEstimateSource = "";
     setPromptEstimateStatus(ctx, "Optional: sample a CSV to include real row text in the estimate.");
+    if (ctx.metricsFileInput) {
+      ctx.metricsFileInput.value = "";
+    }
+    setMetricsLoadStatus(ctx, "");
 
     ensureProviderRegistered(ctx, defaultValues.provider, defaultValues.provider);
     if (ctx.providerSelect) {
@@ -2952,6 +3373,10 @@
     ctx.form.addEventListener("input", () => handleFormChange(ctx));
     if (ctx.copyButton) {
       ctx.copyButton.addEventListener("click", () => copyCommand(ctx));
+    }
+    if (ctx.metricsLoadButton && ctx.metricsFileInput) {
+      ctx.metricsLoadButton.addEventListener("click", () => ctx.metricsFileInput.click());
+      ctx.metricsFileInput.addEventListener("change", () => handleMetricsFileSelection(ctx));
     }
     if (ctx.resetButton) {
       ctx.resetButton.addEventListener("click", () => resetConfigToDefaults(ctx));
@@ -3068,6 +3493,9 @@
       copyButtonDefaultText:
         document.getElementById("copy-button")?.textContent?.trim() || "Copy",
       resetButton: document.getElementById("reset-button"),
+      metricsLoadButton: document.getElementById("load-metrics-button"),
+      metricsFileInput: document.getElementById("load-metrics-file"),
+      metricsLoadStatus: document.getElementById("metrics-load-status"),
       providerSelect: document.getElementById("provider"),
       vertexAuthOptions: document.getElementById("vertex-auth-options"),
       apiKeyVarInput: document.getElementById("api_key_var"),

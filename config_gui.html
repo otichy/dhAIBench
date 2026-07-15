@@ -364,6 +364,20 @@
         flex-wrap: wrap;
         margin: 0.85rem 0;
       }
+      .metrics-load-status {
+        margin: -0.35rem 0 0.85rem;
+        font-size: 0.86rem;
+        color: var(--muted);
+      }
+      .metrics-load-status.is-success {
+        color: #1f6b3a;
+      }
+      .metrics-load-status.is-warning {
+        color: #8a5700;
+      }
+      .metrics-load-status.is-error {
+        color: #a12622;
+      }
       .command-preview,
       .prompt-message-preview {
         padding: 0.8rem;
@@ -765,9 +779,12 @@
         <p class="panel-note" id="sidebar-flag-count">0 non-default flags</p>
         <div class="command-actions">
           <button type="button" id="sidebar-toggle-button" class="primary">Expand</button>
+          <input type="file" id="load-metrics-file" accept=".json,application/json" hidden />
+          <button type="button" id="load-metrics-button">Load metrics config</button>
           <button type="button" id="copy-button">Copy</button>
           <button type="button" id="reset-button" class="expanded-only">Reset Defaults</button>
         </div>
+        <p id="metrics-load-status" class="metrics-load-status" role="status" aria-live="polite"></p>
         <pre id="command-output" class="command-preview">python benchmark_agent.py --input "" --model ""</pre>
       </aside>
     </div>

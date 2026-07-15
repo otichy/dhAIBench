@@ -1114,6 +1114,72 @@ def add_legacy_slug_aliases(models_map: Dict[str, Dict[str, Any]]) -> None:
         models_map[slug] = alias_entry(model_key, "legacy_slug")
 
 
+REQUESTY_SHARED_PRICING_ROUTES = (
+    ("openai-responses/", "gpt-", (("openai", ""), ("openrouter", "openai/"))),
+    ("openai/", "gpt-", (("openai", ""), ("openrouter", "openai/"))),
+    ("google/", "gemini-", (("google", "models/"), ("openrouter", "google/"))),
+    ("vertex/", "gemini-", (("vertex", ""),)),
+)
+
+
+def resolve_priced_entry(models_map: Dict[str, Dict[str, Any]], model_key: str) -> Optional[Dict[str, Any]]:
+    """Resolve a provider-local pricing alias and return a detached priced entry."""
+    current_key = str(model_key or "").strip()
+    visited = set()
+    while current_key and current_key not in visited:
+        visited.add(current_key)
+        entry = models_map.get(current_key)
+        if not isinstance(entry, dict):
+            return None
+        if is_priced_entry(entry):
+            return json.loads(json.dumps(entry))
+        current_key = str(entry.get("pricing_ref") or "").strip()
+    return None
+
+
+def populate_requesty_shared_model_prices(providers: Dict[str, Any]) -> None:
+    """Reuse upstream GPT/Gemini rates for matching Requesty direct routes.
+
+    Requesty publishes these routes at the upstream provider's per-token rates.
+    Route prefixes remain significant: Azure, Bedrock, Coding API, and other
+    Requesty backends are deliberately not inferred from an identically named
+    OpenAI or Gemini model.
+    """
+    requesty_models = ((providers.get("requesty") or {}).get("models") or {})
+    if not isinstance(requesty_models, dict):
+        return
+
+    for requesty_key, existing_entry in list(requesty_models.items()):
+        if is_priced_entry(existing_entry) or has_pricing_ref(existing_entry):
+            continue
+        for route_prefix, model_family_prefix, source_routes in REQUESTY_SHARED_PRICING_ROUTES:
+            if not requesty_key.startswith(route_prefix):
+                continue
+            model_tail = requesty_key[len(route_prefix):]
+            if not model_tail.startswith(model_family_prefix):
+                break
+            for source_provider, source_prefix in source_routes:
+                source_models = ((providers.get(source_provider) or {}).get("models") or {})
+                if not isinstance(source_models, dict):
+                    continue
+                inherited_entry = resolve_priced_entry(source_models, f"{source_prefix}{model_tail}")
+                if inherited_entry is None:
+                    continue
+                notes = list(inherited_entry.get("notes") or [])
+                direct_source = route_prefix.startswith(f"{source_provider}/")
+                if route_prefix == "openai-responses/" and source_provider == "openai":
+                    direct_source = True
+                notes.append(
+                    f"Requesty {route_prefix.rstrip('/')} route uses the upstream {source_provider} token rates."
+                    if direct_source
+                    else f"Requesty {route_prefix.rstrip('/')} route uses matching token rates from the {source_provider} catalog."
+                )
+                inherited_entry["notes"] = notes
+                requesty_models[requesty_key] = inherited_entry
+                break
+            break
+
+
 def build_pricing_catalog(
     model_catalog: Dict[str, Any],
     selected_providers: Optional[Iterable[str]] = None,
@@ -1163,6 +1229,8 @@ def build_pricing_catalog(
 
         add_legacy_slug_aliases(provider_models)
         providers_out[provider_key] = {"models": provider_models}
+
+    populate_requesty_shared_model_prices(providers_out)
 
     return {
         "updated_at": updated_at or utc_timestamp(),
@@ -1225,6 +1293,8 @@ def sync_pricing_catalog_with_model_catalog(
             )
             added_models.append((provider_key, model))
         add_legacy_slug_aliases(models_map)
+
+    populate_requesty_shared_model_prices(providers_out)
 
     return {
         "updated_at": utc_timestamp(),
