@@ -184,6 +184,7 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "system_prompt_b64",
     "few_shot_examples",
     "prompt_layout",
+    "prompt_batch_size",
     "cache_pad_target_tokens",
     "prompt_cache_key",
     "gemini_cached_content",
@@ -1934,6 +1935,19 @@ class PromptBuildArtifacts:
     variable_payload_text: str
     shared_prefix_tokens_estimate: int
     variable_payload_tokens_estimate: int
+
+
+@dataclass
+class BatchClassificationResult:
+    batch_id: str
+    predictions: Dict[str, "Prediction"]
+    fallback_reasons: Dict[str, str]
+    attempt_logs: List[Dict[str, Any]]
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    shared_prefix_tokens_estimate: Optional[int] = None
+    variable_prompt_tokens_estimate: Optional[int] = None
 
 
 @dataclass
@@ -5957,6 +5971,25 @@ def select_few_shot_examples(
     return context
 
 
+def select_few_shot_examples_for_batch(
+    examples: List[Example],
+    target_ids: Iterable[str],
+    count: int,
+) -> List[Example]:
+    """Return labeled demonstrations without leaking any batched target."""
+    if count <= 0:
+        return []
+    excluded = set(target_ids)
+    context: List[Example] = []
+    for example in examples:
+        if example.truth is None or example.example_id in excluded:
+            continue
+        context.append(example)
+        if len(context) >= count:
+            break
+    return context
+
+
 # --------------------------- OpenAI Client --------------------------------- #
 
 
@@ -7140,17 +7173,8 @@ def build_user_instruction_lines(
     return user_instructions
 
 
-def build_prompt_artifacts(
-    example: Example,
-    system_prompt: Optional[str],
-    enable_cot: bool,
-    include_explanation: bool,
-    prompt_layout: str = "standard",
-    few_shot_context: Optional[List[Example]] = None,
-    cache_padding_text: Optional[str] = None,
-    suppress_system_message: bool = False,
-) -> PromptBuildArtifacts:
-    """Construct chat messages and shared-prefix metadata for cache targeting."""
+def normalize_prompt_layout_value(prompt_layout: str) -> str:
+    """Normalize prompt-layout aliases shared by single and batch prompts."""
     layout = (prompt_layout or "standard").strip().lower()
     alias_map = {
         "legacy": "standard",
@@ -7164,12 +7188,187 @@ def build_prompt_artifacts(
             layout,
             normalized_layout,
         )
-    layout = normalized_layout
-    if layout not in {"standard", "compact"}:
+    if normalized_layout not in {"standard", "compact"}:
         logging.warning(
             "Unknown prompt layout %r; falling back to 'standard'.", prompt_layout
         )
-        layout = "standard"
+        return "standard"
+    return normalized_layout
+
+
+def serialize_prompt_payload(payload: Any, layout: str) -> str:
+    if layout == "standard":
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def build_example_prompt_payload(
+    target: Example,
+    layout: str,
+    include_label: bool,
+    include_example_id: bool = False,
+) -> Dict[str, Any]:
+    span_text, span_focus = resolve_span_contract(target.node)
+    marked_example = mark_node_in_context(
+        target.left_context, target.node, target.right_context
+    )
+    classification_target = {
+        "focus": span_focus,
+        "text": span_text,
+    }
+    if layout == "compact":
+        payload: Dict[str, Any] = {
+            "left_context": target.left_context,
+            "node": target.node,
+            "right_context": target.right_context,
+            "classification_target": classification_target,
+        }
+        if target.info:
+            payload["info"] = target.info
+    else:
+        classification_note = (
+            "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
+            if span_focus == SPAN_SOURCE_MARKED_SUBSPAN
+            else "Classify the entire node; left/right contexts simply provide supporting evidence."
+        )
+        payload = {
+            "left_context": target.left_context,
+            "node": target.node,
+            "right_context": target.right_context,
+            "info": target.info,
+            "marked_example": marked_example,
+            "classification_target": {
+                "focus": span_focus,
+                "text": span_text,
+                "note": classification_note,
+            },
+        }
+    if include_example_id:
+        payload = {"example_id": target.example_id, **payload}
+    if include_label:
+        payload["label"] = target.truth
+    return payload
+
+
+def build_batch_prompt_artifacts(
+    examples: List[Example],
+    system_prompt: Optional[str],
+    enable_cot: bool,
+    include_explanation: bool,
+    prompt_layout: str = "standard",
+    few_shot_context: Optional[List[Example]] = None,
+    cache_padding_text: Optional[str] = None,
+    suppress_system_message: bool = False,
+) -> PromptBuildArtifacts:
+    """Construct one prompt that classifies several examples independently."""
+    if len(examples) < 2:
+        raise ValueError("Batch prompt construction requires at least two examples.")
+    layout = normalize_prompt_layout_value(prompt_layout)
+    if system_prompt:
+        system_msg = system_prompt.strip()
+    else:
+        system_msg = (
+            "You are a meticulous linguistic classifier. "
+            "Classify the highlighted node word according to the task instructions."
+        )
+    system_msg = f"{system_msg.rstrip()}\n\n{MANDATORY_SYSTEM_APPEND}"
+
+    marker_pair = f"{NODE_MARKER_LEFT}...{NODE_MARKER_RIGHT}"
+    user_instructions = [
+        "You will receive a JSON array of independent classification examples.",
+        (
+            f"For each example, classify only its full node unless the node contains inner {marker_pair} "
+            "spans; in that case classify only those marked spans."
+        ),
+        "Use each example's left_context and right_context only as supporting evidence for that example.",
+    ]
+    if enable_cot:
+        user_instructions.append(
+            "Think through the linguistic evidence for each example before committing to its label."
+        )
+    result_fields = (
+        "example_id, label, explanation, confidence, node_echo, span_source"
+        if include_explanation
+        else "example_id, label, confidence, node_echo, span_source"
+    )
+    user_instructions.extend(
+        [
+            'Return one JSON object with exactly one top-level key named "results".',
+            f'"results" must be an array containing exactly one object per input example with fields: {result_fields}.',
+            "Copy every example_id exactly and return every input example exactly once; do not add unknown IDs.",
+            (
+                'Set span_source to "node" for a full-node target. For inner marked spans, set it to '
+                '"marked_subspan" and set node_echo to exactly the marked text, joining multiple spans '
+                "with one space in source order."
+            ),
+            "Confidence must be a number in [0,1].",
+            "Do not include text outside the JSON object.",
+        ]
+    )
+    if not include_explanation:
+        user_instructions.insert(-2, "Do not include an explanation field.")
+    user_content_prefix = "\n".join(user_instructions)
+
+    if few_shot_context:
+        samples = [
+            build_example_prompt_payload(
+                sample,
+                layout=layout,
+                include_label=True,
+                include_example_id=True,
+            )
+            for sample in few_shot_context
+        ]
+        user_content_prefix += (
+            f"\n\nHere are {len(samples)} labeled example(s) you should mimic when classifying:\n"
+            + serialize_prompt_payload(samples, layout)
+        )
+
+    normalized_cache_padding = (cache_padding_text or "").strip()
+    if normalized_cache_padding:
+        system_msg = system_msg.rstrip() + "\n\n" + normalized_cache_padding
+
+    targets = [
+        build_example_prompt_payload(
+            example,
+            layout=layout,
+            include_label=False,
+            include_example_id=True,
+        )
+        for example in examples
+    ]
+    user_content_prefix += "\n\nNow classify these examples:\n"
+    variable_payload_text = serialize_prompt_payload(targets, layout)
+    user_content = user_content_prefix + variable_payload_text
+    if suppress_system_message:
+        messages = [{"role": "user", "content": user_content}]
+    else:
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_content},
+        ]
+    shared_prefix_text = f"{system_msg}\n\n{user_content_prefix}"
+    return PromptBuildArtifacts(
+        messages=messages,
+        shared_prefix_text=shared_prefix_text,
+        variable_payload_text=variable_payload_text,
+        shared_prefix_tokens_estimate=estimate_token_count_from_text(shared_prefix_text),
+        variable_payload_tokens_estimate=estimate_token_count_from_text(variable_payload_text),
+    )
+
+
+def build_prompt_artifacts(
+    example: Example,
+    system_prompt: Optional[str],
+    enable_cot: bool,
+    include_explanation: bool,
+    prompt_layout: str = "standard",
+    few_shot_context: Optional[List[Example]] = None,
+    cache_padding_text: Optional[str] = None,
+    suppress_system_message: bool = False,
+) -> PromptBuildArtifacts:
+    """Construct chat messages and shared-prefix metadata for cache targeting."""
+    layout = normalize_prompt_layout_value(prompt_layout)
 
     if system_prompt:
         system_msg = system_prompt.strip()
@@ -7188,69 +7387,25 @@ def build_prompt_artifacts(
 
     user_content_prefix = "\n".join(user_instructions)
 
-    def serialize_payload(payload: Any) -> str:
-        if layout == "standard":
-            return json.dumps(payload, ensure_ascii=False, indent=2)
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-    def build_example_payload(target: Example, include_label: bool) -> Dict[str, Any]:
-        span_text, span_focus = resolve_span_contract(target.node)
-        marked_example = mark_node_in_context(
-            target.left_context, target.node, target.right_context
-        )
-        classification_target = {
-            "focus": span_focus,
-            "text": span_text,
-        }
-        payload: Dict[str, Any]
-        if layout == "compact":
-            payload = {
-                "left_context": target.left_context,
-                "node": target.node,
-                "right_context": target.right_context,
-                "classification_target": classification_target,
-            }
-            if target.info:
-                payload["info"] = target.info
-        else:
-            classification_note = (
-                "Classify only the marked sub-span; use the rest of the node plus contexts as supporting evidence."
-                if span_focus == SPAN_SOURCE_MARKED_SUBSPAN
-                else "Classify the entire node; left/right contexts simply provide supporting evidence."
-            )
-            payload = {
-                "left_context": target.left_context,
-                "node": target.node,
-                "right_context": target.right_context,
-                "info": target.info,
-                "marked_example": marked_example,
-                "classification_target": {
-                    "focus": span_focus,
-                    "text": span_text,
-                    "note": classification_note,
-                },
-            }
-        if include_label:
-            payload["label"] = target.truth
-        return payload
-
     if few_shot_context:
         samples = [
-            build_example_payload(sample, include_label=True)
+            build_example_prompt_payload(sample, layout=layout, include_label=True)
             for sample in few_shot_context
         ]
         user_content_prefix += (
             f"\n\nHere are {len(samples)} labeled example(s) you should mimic when classifying:\n"
-            + serialize_payload(samples)
+            + serialize_prompt_payload(samples, layout)
         )
 
     normalized_cache_padding = (cache_padding_text or "").strip()
     if normalized_cache_padding:
         system_msg = system_msg.rstrip() + "\n\n" + normalized_cache_padding
 
-    target_payload = build_example_payload(example, include_label=False)
+    target_payload = build_example_prompt_payload(
+        example, layout=layout, include_label=False
+    )
     user_content_prefix += "\n\nNow classify this example:\n"
-    variable_payload_text = serialize_payload(target_payload)
+    variable_payload_text = serialize_prompt_payload(target_payload, layout)
     user_content = user_content_prefix + variable_payload_text
 
     if suppress_system_message:
@@ -8808,6 +8963,398 @@ def classify_example(
     raise RuntimeError(f"Failed to classify example {example.example_id}") from last_error
 
 
+def parse_batch_member_prediction(
+    example: Example,
+    payload: Dict[str, Any],
+    raw_response: str,
+    include_explanation: bool,
+    shared_prefix_tokens_estimate: int,
+    variable_prompt_tokens_estimate: int,
+) -> Prediction:
+    """Parse and enforce the per-member response contract for a batch."""
+    label = str(payload.get("label", "")).strip()
+    if not label:
+        raise EmptyModelLabelError("Model returned empty label.")
+    explanation = str(payload.get("explanation", "")).strip()
+    if not include_explanation:
+        explanation = ""
+    confidence_raw = payload.get("confidence")
+    confidence = safe_float(confidence_raw, default=0.0)
+    if not math.isfinite(confidence):
+        confidence = 0.0
+    else:
+        confidence = min(1.0, max(0.0, confidence))
+    node_echo = str(payload.get("node_echo", "")).strip()
+    span_source = str(payload.get("span_source", "")).strip()
+    expected_node_echo, expected_span_source = resolve_span_contract(example.node)
+    if (
+        node_echo != expected_node_echo
+        or span_source.lower() != expected_span_source.lower()
+    ):
+        raise ValueError(
+            "Model failed node/span contract "
+            f"(node_echo={node_echo!r}, span_source={span_source!r}, "
+            f"expected_node_echo={expected_node_echo!r}, "
+            f"expected_span_source={expected_span_source!r})."
+        )
+    return Prediction(
+        label=label,
+        explanation=explanation,
+        confidence=confidence,
+        raw_response=raw_response,
+        node_echo=node_echo or None,
+        span_source=span_source or None,
+        shared_prefix_tokens_estimate=shared_prefix_tokens_estimate,
+        variable_prompt_tokens_estimate=variable_prompt_tokens_estimate,
+    )
+
+
+def classify_examples_batch(
+    connector: OpenAIConnector,
+    examples: List[Example],
+    batch_id: str,
+    model: str,
+    temperature: Optional[float],
+    top_p: Optional[float],
+    top_k: Optional[int],
+    verbosity: Optional[str],
+    service_tier: Optional[str],
+    reasoning_effort: Optional[str],
+    thinking_level: Optional[str],
+    effort: Optional[str],
+    system_prompt: Optional[str],
+    enable_cot: bool,
+    include_explanation: bool,
+    prompt_layout: str,
+    few_shot_context: Optional[List[Example]],
+    max_retries: int,
+    retry_delay: float,
+    validator_client: Optional[ValidatorClient] = None,
+    validator_prompt_max_candidates: int = 50,
+    validator_prompt_max_chars: int = 8000,
+    strict_control_acceptance: bool = False,
+    cache_padding_text: Optional[str] = None,
+    cache_padding_tokens_estimate: int = 0,
+    prompt_cache_key: Optional[str] = None,
+    gemini_cached_content: Optional[str] = None,
+    requesty_auto_cache: Optional[bool] = None,
+    prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
+) -> BatchClassificationResult:
+    """Classify a batch once, returning invalid/missing members for individual fallback."""
+    if len(examples) < 2:
+        raise ValueError("Batch classification requires at least two examples.")
+    prompt_artifacts = build_batch_prompt_artifacts(
+        examples=examples,
+        system_prompt=system_prompt,
+        enable_cot=enable_cot,
+        include_explanation=include_explanation,
+        prompt_layout=prompt_layout,
+        few_shot_context=few_shot_context,
+        cache_padding_text=cache_padding_text,
+        suppress_system_message=bool(gemini_cached_content),
+    )
+    base_messages = prompt_artifacts.messages
+    expected = {example.example_id: example for example in examples}
+    detail_mode = normalize_prompt_log_detail(prompt_log_detail)
+    include_full_prompt_log = detail_mode == PROMPT_LOG_DETAIL_FULL
+    attempt_logs: List[Dict[str, Any]] = []
+    latest_prompt_tokens: Optional[int] = None
+    latest_completion_tokens: Optional[int] = None
+    latest_total_tokens: Optional[int] = None
+    last_error: Optional[Exception] = None
+    resource_exhausted_retry_step = 0
+
+    attempt = 0
+    while attempt < max(1, max_retries):
+        attempt += 1
+        messages = list(base_messages)
+        log_entry: Dict[str, Any] = {
+            "attempt": attempt,
+            "timestamp": utc_timestamp(),
+            "prompt_padding": {
+                "applied": bool(cache_padding_text),
+                "padding_tokens_estimate": int(cache_padding_tokens_estimate)
+                if cache_padding_tokens_estimate > 0
+                else 0,
+            },
+            "prompt_estimate": {
+                "shared_prefix_tokens_estimate": prompt_artifacts.shared_prefix_tokens_estimate,
+                "variable_tokens_estimate": prompt_artifacts.variable_payload_tokens_estimate,
+            },
+        }
+        if include_full_prompt_log:
+            log_entry["request"] = copy.deepcopy(messages)
+        started_at = time.perf_counter()
+        try:
+            result = connector.complete(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                verbosity=verbosity,
+                service_tier=service_tier,
+                include_logprobs=False,
+                reasoning_effort=reasoning_effort,
+                thinking_level=thinking_level,
+                effort=effort,
+                prompt_cache_key=prompt_cache_key,
+                gemini_cached_content=gemini_cached_content,
+                requesty_auto_cache=requesty_auto_cache,
+            )
+            raw = result.text
+            latest_prompt_tokens = result.prompt_tokens
+            latest_completion_tokens = result.completion_tokens
+            latest_total_tokens = result.total_tokens
+            log_entry["request_controls"] = {
+                "requested": result.request_controls_requested,
+                "sent": result.request_controls_sent,
+                "rejected": result.request_controls_rejected,
+            }
+            if strict_control_acceptance and result.request_controls_requested:
+                requested_keys = set(result.request_controls_requested)
+                sent_keys = set(result.request_controls_sent)
+                rejected_keys = set(result.request_controls_rejected)
+                missing_keys = sorted((requested_keys - sent_keys) | rejected_keys)
+                if missing_keys:
+                    raise RequestedControlRejectedError(
+                        "Requested controls were not accepted: "
+                        f"{missing_keys}; rejected={result.request_controls_rejected}; "
+                        f"sent={result.request_controls_sent}."
+                    )
+            response_log: Dict[str, Any] = {
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+                "total_tokens": result.total_tokens,
+                "usage_metadata": result.usage_metadata,
+            }
+            if include_full_prompt_log:
+                response_log["text"] = raw
+            log_entry["response"] = response_log
+            log_entry["duration_seconds"] = round(time.perf_counter() - started_at, 3)
+
+            payload = extract_json_object(raw)
+            members = payload.get("results")
+            if not isinstance(members, list):
+                raise ValueError('Batch response must contain a top-level "results" array.')
+
+            predictions: Dict[str, Prediction] = {}
+            fallback_reasons: Dict[str, str] = {}
+            seen: set[str] = set()
+            unknown_ids: List[str] = []
+            validator_results: Dict[str, Any] = {}
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                example_id = str(
+                    member.get("example_id", member.get("id", ""))
+                ).strip()
+                if example_id not in expected:
+                    if example_id:
+                        unknown_ids.append(example_id)
+                    continue
+                if example_id in seen:
+                    predictions.pop(example_id, None)
+                    fallback_reasons[example_id] = "duplicate example_id in batch response"
+                    continue
+                seen.add(example_id)
+                example = expected[example_id]
+                try:
+                    prediction = parse_batch_member_prediction(
+                        example=example,
+                        payload=member,
+                        raw_response=raw,
+                        include_explanation=include_explanation,
+                        shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+                        variable_prompt_tokens_estimate=max(
+                            1,
+                            prompt_artifacts.variable_payload_tokens_estimate
+                            // len(examples),
+                        ),
+                    )
+                    if validator_client is not None:
+                        expected_node_echo, expected_span_source = resolve_span_contract(
+                            example.node
+                        )
+                        validator_request: Dict[str, Any] = {
+                            "type": "validate",
+                            "schema_version": 1,
+                            "request_id": f"{example_id}:batch:{attempt}",
+                            "attempt": {"index": 1, "max": max_retries},
+                            "example": {
+                                "id": example_id,
+                                "left_context": example.left_context,
+                                "node": example.node,
+                                "right_context": example.right_context,
+                                "info": example.info,
+                                "truth": example.truth,
+                                "classification_target": {
+                                    "focus": expected_span_source,
+                                    "text": expected_node_echo,
+                                },
+                            },
+                            "prediction": {
+                                "label": prediction.label,
+                                "confidence": prediction.confidence,
+                                "explanation": prediction.explanation,
+                                "node_echo": prediction.node_echo,
+                                "span_source": prediction.span_source,
+                                "raw_response": raw,
+                            },
+                        }
+                        validator_result = validator_client.validate(validator_request)
+                        validator_results[example_id] = (
+                            validator_result
+                            if include_full_prompt_log
+                            else _summarize_validator_result(validator_result)
+                        )
+                        action = str(validator_result.get("action", "")).strip().lower()
+                        reason = str(validator_result.get("reason", "")).strip()
+                        if action == "accept":
+                            normalized = validator_result.get("normalized") or {}
+                            normalized_label = str(normalized.get("label", "")).strip()
+                            if normalized_label:
+                                prediction.label = normalized_label
+                            prediction.validator_status = "accept"
+                            prediction.validator_reason = reason
+                        elif action == "retry":
+                            fallback_reasons[example_id] = (
+                                reason or "validator requested an individual retry"
+                            )
+                            continue
+                        elif action == "abort":
+                            raise RuntimeError(
+                                f"Validator aborted example {example_id}: {reason or 'no reason provided'}"
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"Validator returned unknown action={action!r} for example {example_id}."
+                            )
+                    predictions[example_id] = prediction
+                except (EmptyModelLabelError, ValueError) as exc:
+                    fallback_reasons[example_id] = str(exc)
+
+            for example_id in expected:
+                if example_id not in predictions and example_id not in fallback_reasons:
+                    fallback_reasons[example_id] = "missing from batch response"
+
+            if (
+                not predictions
+                and not validator_results
+                and attempt < max(1, max_retries)
+            ):
+                raise ValueError("Batch response contained no valid member predictions.")
+
+            log_entry["status"] = "success" if not fallback_reasons else "partial_success"
+            log_entry["parsed_result_ids"] = list(predictions)
+            if fallback_reasons:
+                log_entry["fallback_reasons"] = fallback_reasons
+            if unknown_ids:
+                log_entry["unknown_result_ids"] = unknown_ids
+            if validator_results:
+                log_entry["validator_results"] = validator_results
+            attempt_logs.append(log_entry)
+            total_tokens = result.total_tokens
+            if (
+                total_tokens is None
+                and result.prompt_tokens is not None
+                and result.completion_tokens is not None
+            ):
+                total_tokens = result.prompt_tokens + result.completion_tokens
+            return BatchClassificationResult(
+                batch_id=batch_id,
+                predictions=predictions,
+                fallback_reasons=fallback_reasons,
+                attempt_logs=attempt_logs,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=total_tokens,
+                shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+                variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            duration = time.perf_counter() - started_at
+            log_entry["duration_seconds"] = round(duration, 3)
+            log_entry.setdefault("status", "error")
+            log_entry["error_type"] = exc.__class__.__name__
+            log_entry["error"] = str(exc)
+            permanent_billing_error = is_permanent_provider_billing_error(exc)
+            resource_exhausted_error = is_retryable_resource_exhausted_error(exc)
+            empty_response_error = is_empty_model_response_error(exc)
+            if permanent_billing_error:
+                log_entry["error_category"] = "provider_billing"
+            elif resource_exhausted_error:
+                log_entry["error_category"] = "resource_exhausted"
+            elif is_request_timeout_error(exc):
+                log_entry["error_category"] = "request_timeout"
+            elif is_retryable_provider_server_error(exc):
+                log_entry["error_category"] = "provider_server_error"
+            attempt_logs.append(log_entry)
+            logging.warning(
+                "Attempt %d/%d failed for prompt batch %s (%d examples) after %.2fs: %s",
+                attempt,
+                max(1, max_retries),
+                batch_id,
+                len(examples),
+                duration,
+                exc,
+            )
+            if isinstance(exc, RequestedControlRejectedError) and strict_control_acceptance:
+                raise
+            if permanent_billing_error:
+                detail = str(exc).strip() or exc.__class__.__name__
+                raise ProviderQuotaExceededError(
+                    f"Provider quota/rate limit exhausted for prompt batch {batch_id}: {detail}"
+                ) from exc
+            if resource_exhausted_error:
+                if resource_exhausted_retry_step < len(
+                    RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS
+                ):
+                    wait_seconds = RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS[
+                        resource_exhausted_retry_step
+                    ]
+                    resource_exhausted_retry_step += 1
+                    time.sleep(wait_seconds)
+                    attempt -= 1
+                    continue
+                detail = str(exc).strip() or exc.__class__.__name__
+                raise ProviderQuotaExceededError(
+                    f"Provider quota/rate limit exhausted for prompt batch {batch_id}: {detail}"
+                ) from exc
+            if attempt < max(1, max_retries):
+                time.sleep(
+                    EMPTY_RESPONSE_RETRY_DELAY_SECONDS
+                    if empty_response_error
+                    else retry_delay
+                )
+                continue
+            if empty_response_error:
+                detail = str(exc).strip() or exc.__class__.__name__
+                raise ProviderEmptyResponseError(
+                    f"Provider returned empty responses for prompt batch {batch_id}: {detail}"
+                ) from exc
+            break
+
+    if last_error is not None and is_quota_or_rate_limit_error(last_error):
+        detail = str(last_error).strip() or last_error.__class__.__name__
+        raise ProviderQuotaExceededError(
+            f"Provider quota/rate limit exhausted for prompt batch {batch_id}: {detail}"
+        ) from last_error
+    reason = str(last_error or "batch response could not be parsed")
+    return BatchClassificationResult(
+        batch_id=batch_id,
+        predictions={},
+        fallback_reasons={example.example_id: reason for example in examples},
+        attempt_logs=attempt_logs,
+        prompt_tokens=latest_prompt_tokens,
+        completion_tokens=latest_completion_tokens,
+        total_tokens=latest_total_tokens,
+        shared_prefix_tokens_estimate=prompt_artifacts.shared_prefix_tokens_estimate,
+        variable_prompt_tokens_estimate=prompt_artifacts.variable_payload_tokens_estimate,
+    )
+
+
 def process_dataset(
     connector: OpenAIConnector,
     input_path: str,
@@ -8841,6 +9388,8 @@ def process_dataset(
     halted_by_quota = False
     few_shot_count = max(0, args.few_shot_examples)
     worker_threads = max(1, int(getattr(args, "threads", 1) or 1))
+    prompt_batch_size = int(getattr(args, "prompt_batch_size", 0) or 0)
+    prompt_batching_enabled = prompt_batch_size >= 2
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_reported_tokens = 0
@@ -9209,11 +9758,178 @@ def process_dataset(
                 )
                 return prediction, attempt_logs, padding_active_for_example
 
+            def merge_prediction_usage(
+                prediction: Prediction,
+                prompt_tokens: Optional[int],
+                completion_tokens: Optional[int],
+                total_tokens: Optional[int],
+            ) -> None:
+                """Attach request usage to exactly one batch member for sum-safe CSV resume."""
+                if prompt_tokens is not None:
+                    prediction.prompt_tokens = (prediction.prompt_tokens or 0) + prompt_tokens
+                if completion_tokens is not None:
+                    prediction.completion_tokens = (
+                        prediction.completion_tokens or 0
+                    ) + completion_tokens
+                if total_tokens is not None:
+                    prediction.total_tokens = (prediction.total_tokens or 0) + total_tokens
+
+            def classify_prompt_batch(
+                batch_examples: List[Example],
+                batch_index: int,
+                first_progress_index: int,
+            ) -> Tuple[
+                List[Tuple[Example, Prediction, List[Dict[str, Any]], bool, str]],
+                Optional[Dict[str, Any]],
+            ]:
+                if len(batch_examples) == 1:
+                    example = batch_examples[0]
+                    prediction, attempt_logs, padding_active = classify_single_example(
+                        example,
+                        first_progress_index,
+                    )
+                    return [
+                        (
+                            example,
+                            prediction,
+                            attempt_logs,
+                            padding_active,
+                            "individual_remainder",
+                        )
+                    ], None
+                if before_example_hook is not None:
+                    before_example_hook()
+                membership_digest = hashlib.sha1(
+                    "\0".join(example.example_id for example in batch_examples).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()[:10]
+                batch_id = f"batch-{batch_index + 1:06d}-{membership_digest}"
+                last_progress_index = first_progress_index + len(batch_examples) - 1
+                logging.info(
+                    "Classifying prompt batch %s with %d examples (%d-%d/%d)",
+                    batch_id,
+                    len(batch_examples),
+                    first_progress_index,
+                    last_progress_index,
+                    pending_total,
+                )
+                batch_ids = [example.example_id for example in batch_examples]
+                batch_few_shot = select_few_shot_examples_for_batch(
+                    examples,
+                    batch_ids,
+                    few_shot_count,
+                )
+                padding_text_for_batch = cache_padding_text
+                padding_tokens_for_batch = cache_padding_tokens_estimate
+                padding_active_for_batch = bool(padding_text_for_batch)
+                result = classify_examples_batch(
+                    connector=connector,
+                    examples=batch_examples,
+                    batch_id=batch_id,
+                    model=args.model,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    verbosity=args.verbosity,
+                    service_tier=args.service_tier,
+                    reasoning_effort=args.reasoning_effort,
+                    thinking_level=args.thinking_level,
+                    effort=args.effort,
+                    system_prompt=args.system_prompt,
+                    enable_cot=args.enable_cot,
+                    include_explanation=include_explanation,
+                    prompt_layout=args.prompt_layout,
+                    few_shot_context=batch_few_shot,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                    validator_client=validator_client,
+                    validator_prompt_max_candidates=args.validator_prompt_max_candidates,
+                    validator_prompt_max_chars=args.validator_prompt_max_chars,
+                    strict_control_acceptance=args.strict_control_acceptance,
+                    cache_padding_text=padding_text_for_batch,
+                    cache_padding_tokens_estimate=padding_tokens_for_batch,
+                    prompt_cache_key=args.prompt_cache_key,
+                    gemini_cached_content=args.gemini_cached_content,
+                    requesty_auto_cache=args.requesty_auto_cache,
+                    prompt_log_detail=prompt_log_detail,
+                )
+                member_results: List[
+                    Tuple[Example, Prediction, List[Dict[str, Any]], bool, str]
+                ] = []
+                for offset, example in enumerate(batch_examples):
+                    prediction = result.predictions.get(example.example_id)
+                    if prediction is not None:
+                        member_results.append(
+                            (
+                                example,
+                                prediction,
+                                [],
+                                padding_active_for_batch,
+                                "batch",
+                            )
+                        )
+                        continue
+                    reason = result.fallback_reasons.get(
+                        example.example_id,
+                        "batch result unavailable",
+                    )
+                    logging.warning(
+                        "Falling back to individual classification for example %s from %s: %s",
+                        example.example_id,
+                        batch_id,
+                        reason,
+                    )
+                    fallback_prediction, fallback_logs, fallback_padding = (
+                        classify_single_example(
+                            example,
+                            first_progress_index + offset,
+                        )
+                    )
+                    member_results.append(
+                        (
+                            example,
+                            fallback_prediction,
+                            fallback_logs,
+                            fallback_padding,
+                            "individual_fallback",
+                        )
+                    )
+
+                # Batch usage belongs to the request, not to every member. Store it on
+                # the first row only so CSV sums and --resume remain exact.
+                usage_owner = member_results[0][1]
+                merge_prediction_usage(
+                    usage_owner,
+                    result.prompt_tokens,
+                    result.completion_tokens,
+                    result.total_tokens,
+                )
+                if usage_owner.shared_prefix_tokens_estimate is None:
+                    usage_owner.shared_prefix_tokens_estimate = (
+                        result.shared_prefix_tokens_estimate
+                    )
+                batch_record = {
+                    "record_type": "batch_result",
+                    "batch_id": batch_id,
+                    "example_ids": batch_ids,
+                    "usage_owner_example_id": batch_examples[0].example_id,
+                    "attempts": prepare_attempt_logs_for_storage(
+                        result.attempt_logs,
+                        prompt_log_detail=prompt_log_detail,
+                    ),
+                    "batch_predictions": list(result.predictions),
+                    "individual_fallbacks": result.fallback_reasons,
+                }
+                return member_results, batch_record
+
             def commit_prediction(
                 example: Example,
                 prediction: Prediction,
                 attempt_logs: List[Dict[str, Any]],
                 padding_active_for_example: bool,
+                batch_id: Optional[str] = None,
+                batch_source: Optional[str] = None,
             ) -> None:
                 nonlocal total_prompt_tokens
                 nonlocal total_completion_tokens
@@ -9276,21 +9992,23 @@ def process_dataset(
                     attempt_logs,
                     prompt_log_detail=prompt_log_detail,
                 )
-                log_writer.write_record(
-                    {
-                        "record_type": "example_result",
-                        "example_id": example.example_id,
-                        "attempts": stored_attempt_logs,
-                        "final_prediction": {
-                            "label": prediction.label,
-                            "confidence": prediction.confidence,
-                            "explanation": prediction.explanation,
-                            "truth": example.truth,
-                            "validator_status": prediction.validator_status,
-                            "validator_reason": prediction.validator_reason,
-                        },
-                    }
-                )
+                example_record: Dict[str, Any] = {
+                    "record_type": "example_result",
+                    "example_id": example.example_id,
+                    "attempts": stored_attempt_logs,
+                    "final_prediction": {
+                        "label": prediction.label,
+                        "confidence": prediction.confidence,
+                        "explanation": prediction.explanation,
+                        "truth": example.truth,
+                        "validator_status": prediction.validator_status,
+                        "validator_reason": prediction.validator_reason,
+                    },
+                }
+                if batch_id:
+                    example_record["batch_id"] = batch_id
+                    example_record["batch_source"] = batch_source or "batch"
+                log_writer.write_record(example_record)
 
                 confidence_str = (
                     f"{prediction.confidence:.4f}" if prediction.confidence is not None else ""
@@ -9323,8 +10041,201 @@ def process_dataset(
                 flush_outputs(force=False)
                 processed_ids.add(example.example_id)
 
+            def commit_prompt_batch(
+                member_results: List[
+                    Tuple[Example, Prediction, List[Dict[str, Any]], bool, str]
+                ],
+                batch_record: Optional[Dict[str, Any]],
+            ) -> None:
+                nonlocal processed_this_run
+                batch_id = None
+                if batch_record is not None:
+                    batch_id = str(batch_record.get("batch_id") or "") or None
+                    log_writer.write_record(batch_record)
+                for (
+                    example,
+                    prediction,
+                    attempt_logs,
+                    padding_active,
+                    batch_source,
+                ) in member_results:
+                    processed_this_run += 1
+                    commit_prediction(
+                        example,
+                        prediction,
+                        attempt_logs,
+                        padding_active,
+                        batch_id=batch_id,
+                        batch_source=batch_source,
+                    )
+
             try:
-                if worker_threads <= 1 or len(pending_examples) <= 1:
+                if prompt_batching_enabled:
+                    prompt_batches = [
+                        pending_examples[index : index + prompt_batch_size]
+                        for index in range(0, len(pending_examples), prompt_batch_size)
+                    ]
+                    logging.info(
+                        "Prompt batching enabled: %d pending example(s) in %d batch(es), maximum %d per request.",
+                        len(pending_examples),
+                        len(prompt_batches),
+                        prompt_batch_size,
+                    )
+                    if worker_threads <= 1 or len(prompt_batches) <= 1:
+                        for batch_index, batch_examples in enumerate(prompt_batches):
+                            first_progress_index = batch_index * prompt_batch_size + 1
+                            try:
+                                member_results, batch_record = classify_prompt_batch(
+                                    batch_examples,
+                                    batch_index,
+                                    first_progress_index,
+                                )
+                            except ProviderQuotaExceededError as exc:
+                                halted_by_quota = True
+                                logging.error("%s", exc)
+                                logging.error(
+                                    "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                                    "Partial outputs were saved and can be resumed later."
+                                )
+                                break
+                            except ProviderEmptyResponseError as exc:
+                                halted_by_quota = True
+                                logging.error("%s", exc)
+                                logging.error(
+                                    "Stopping dataset early due to repeated empty model responses. "
+                                    "Partial outputs were saved and can be resumed later."
+                                )
+                                break
+                            commit_prompt_batch(member_results, batch_record)
+                    else:
+                        thread_count = min(worker_threads, len(prompt_batches))
+                        max_in_flight = max(thread_count * 2, thread_count)
+                        future_to_order: Dict[
+                            Future[
+                                Tuple[
+                                    List[
+                                        Tuple[
+                                            Example,
+                                            Prediction,
+                                            List[Dict[str, Any]],
+                                            bool,
+                                            str,
+                                        ]
+                                    ],
+                                    Optional[Dict[str, Any]],
+                                ]
+                            ],
+                            int,
+                        ] = {}
+                        buffered_batch_results: Dict[
+                            int,
+                            Tuple[
+                                List[
+                                    Tuple[
+                                        Example,
+                                        Prediction,
+                                        List[Dict[str, Any]],
+                                        bool,
+                                        str,
+                                    ]
+                                ],
+                                Optional[Dict[str, Any]],
+                            ],
+                        ] = {}
+                        next_submit_order = 0
+                        next_write_order = 0
+                        terminal_order: Optional[int] = None
+                        terminal_exception: Optional[Exception] = None
+                        halt_message_logged = False
+
+                        def submit_batch_available(executor: ThreadPoolExecutor) -> None:
+                            nonlocal next_submit_order
+                            while (
+                                terminal_order is None
+                                and next_submit_order < len(prompt_batches)
+                                and len(future_to_order) < max_in_flight
+                            ):
+                                order = next_submit_order
+                                batch_examples = prompt_batches[order]
+                                first_progress_index = order * prompt_batch_size + 1
+                                future = executor.submit(
+                                    classify_prompt_batch,
+                                    batch_examples,
+                                    order,
+                                    first_progress_index,
+                                )
+                                future_to_order[future] = order
+                                next_submit_order += 1
+
+                        logging.info(
+                            "Classifying %d prompt batch(es) using %d worker threads (max in flight: %d).",
+                            len(prompt_batches),
+                            thread_count,
+                            max_in_flight,
+                        )
+                        with ThreadPoolExecutor(max_workers=thread_count) as executor:
+                            submit_batch_available(executor)
+                            while future_to_order:
+                                done, _ = wait(
+                                    list(future_to_order),
+                                    return_when=FIRST_COMPLETED,
+                                )
+                                for completed_future in done:
+                                    order = future_to_order.pop(completed_future)
+                                    try:
+                                        buffered_batch_results[order] = (
+                                            completed_future.result()
+                                        )
+                                    except ProviderQuotaExceededError as exc:
+                                        halted_by_quota = True
+                                        if terminal_order is None or order < terminal_order:
+                                            terminal_order = order
+                                            terminal_exception = exc
+                                        if not halt_message_logged:
+                                            logging.error("%s", exc)
+                                            logging.error(
+                                                "Stopping dataset early due to provider quota/rate limit exhaustion. "
+                                                "Partial outputs were saved and can be resumed later."
+                                            )
+                                            halt_message_logged = True
+                                    except ProviderEmptyResponseError as exc:
+                                        halted_by_quota = True
+                                        if terminal_order is None or order < terminal_order:
+                                            terminal_order = order
+                                            terminal_exception = exc
+                                        if not halt_message_logged:
+                                            logging.error("%s", exc)
+                                            logging.error(
+                                                "Stopping dataset early due to repeated empty model responses. "
+                                                "Partial outputs were saved and can be resumed later."
+                                            )
+                                            halt_message_logged = True
+                                    except Exception as exc:  # noqa: BLE001
+                                        if terminal_order is None or order < terminal_order:
+                                            terminal_order = order
+                                            terminal_exception = exc
+
+                                if terminal_order is not None:
+                                    for future, order in list(future_to_order.items()):
+                                        if order >= terminal_order and future.cancel():
+                                            future_to_order.pop(future)
+                                    for order in list(buffered_batch_results):
+                                        if order >= terminal_order:
+                                            buffered_batch_results.pop(order, None)
+
+                                while next_write_order in buffered_batch_results:
+                                    member_results, batch_record = (
+                                        buffered_batch_results.pop(next_write_order)
+                                    )
+                                    commit_prompt_batch(member_results, batch_record)
+                                    next_write_order += 1
+
+                                if terminal_order is None:
+                                    submit_batch_available(executor)
+
+                        if terminal_exception is not None and not halted_by_quota:
+                            raise terminal_exception
+                elif worker_threads <= 1 or len(pending_examples) <= 1:
                     for example in pending_examples:
                         processed_this_run += 1
                         try:
@@ -10255,6 +11166,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--prompt-batch-size",
+        "--prompt_batch_size",
+        dest="prompt_batch_size",
+        type=int,
+        default=0,
+        help=(
+            "Maximum nodes to classify in one model request. "
+            "Values below 2 disable prompt batching (default: disabled). "
+            "Batch mode is incompatible with --logprobs."
+        ),
+    )
+    parser.add_argument(
         "--cache_pad_target_tokens",
         type=int,
         default=0,
@@ -10655,6 +11578,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.resume:
         args = apply_resume_artifact_defaults(parser, args, argv)
+
+    if int(getattr(args, "prompt_batch_size", 0) or 0) >= 2 and args.logprobs:
+        parser.error("--prompt-batch-size >= 2 cannot be used with --logprobs.")
 
     if args.system_prompt_b64:
         decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)

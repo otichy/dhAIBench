@@ -624,6 +624,7 @@
             <div class="grid">
               <label><span>Prompt Layout</span><select id="prompt_layout" name="prompt_layout"><option value="standard" selected>Standard</option><option value="compact">Compact</option></select></label>
               <label><span>Few-shot Examples</span><input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" /></label>
+              <label><span>Prompt Batch Size</span><input type="number" min="0" id="prompt_batch_size" name="prompt_batch_size" value="0" /><span class="hint">Values below 2 disable batching. Batch mode cannot be combined with logprobs.</span></label>
             </div>
             <label class="inline"><input type="checkbox" id="include_explanations" name="include_explanations" checked /><span>Include explanations in model outputs</span></label>
             <label class="inline"><input type="checkbox" id="enable_cot" name="enable_cot" checked /><span>Encourage chain-of-thought reasoning</span></label>

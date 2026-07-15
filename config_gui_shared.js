@@ -69,6 +69,7 @@
     retry_delay: "5.0",
     few_shot_examples: "0",
     prompt_layout: "standard",
+    prompt_batch_size: "0",
     cache_pad_target_tokens: "0",
     prompt_cache_key: "",
     requesty_auto_cache: false,
@@ -128,6 +129,7 @@
     ["system_prompt", "system_prompt", "system prompt"],
     ["few_shot_examples", "few_shot_examples", "few-shot examples"],
     ["prompt_layout", "prompt_layout", "prompt layout"],
+    ["prompt_batch_size", "prompt_batch_size", "prompt batch size"],
     ["cache_pad_target_tokens", "cache_pad_target_tokens", "cache padding target"],
     ["prompt_cache_key", "prompt_cache_key", "prompt cache key"],
     ["gemini_cached_content", "gemini_cached_content", "Gemini cached content"],
@@ -244,6 +246,8 @@
     few_shot_examples: "Number of few-shot examples pulled from labels to include in prompt.",
     prompt_layout:
       "Prompt payload shape. compact reduces duplicated per-example text to improve cache reuse.",
+    prompt_batch_size:
+      "Maximum nodes per model request. Values below 2 disable prompt batching; batching is incompatible with logprobs.",
     cache_pad_target_tokens:
       "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
     prompt_cache_key:
@@ -387,6 +391,11 @@
         {
           flags: ["--prompt_layout"],
           helpId: "prompt_layout",
+          modes: ["Run", "Run & Validate"],
+        },
+        {
+          flags: ["--prompt-batch-size"],
+          helpId: "prompt_batch_size",
           modes: ["Run", "Run & Validate"],
         },
       ],
@@ -2367,11 +2376,6 @@
       unavailable.push("input path");
     }
 
-    const outputPath = (payload.source_output_csv || "").toString().trim();
-    if (!outputPath || !applyImportedControlValue(ctx, "output_path", outputPath)) {
-      unavailable.push("output path");
-    }
-
     if (hasOwn(config, "provider")) {
       const provider = (config.provider || "").toString().trim();
       if (provider) {
@@ -2440,11 +2444,15 @@
     if (uniqueUnavailable.length > 0) {
       setMetricsLoadStatus(
         ctx,
-        `Loaded a partial configuration from ${sourceLabel}. ${uniqueUnavailable.length} unavailable setting(s) reverted to defaults: ${describeUnavailableMetricsFields(uniqueUnavailable)}.`,
+        `Loaded a partial configuration from ${sourceLabel}. ${uniqueUnavailable.length} unavailable setting(s) reverted to defaults: ${describeUnavailableMetricsFields(uniqueUnavailable)}. Output path was left blank for automatic generation.`,
         "warning"
       );
     } else {
-      setMetricsLoadStatus(ctx, `Loaded the complete configuration from ${sourceLabel}.`, "success");
+      setMetricsLoadStatus(
+        ctx,
+        `Loaded the complete configuration from ${sourceLabel}. Output path was left blank for automatic generation.`,
+        "success"
+      );
     }
   }
 
@@ -2876,6 +2884,10 @@
     if (promptLayout && promptLayout !== defaultValues.prompt_layout) {
       command.pushFlag("--prompt_layout", promptLayout);
     }
+    const promptBatchSize = data.get("prompt_batch_size")?.toString().trim() ?? "";
+    if (promptBatchSize && Number(promptBatchSize) >= 2) {
+      command.pushFlag("--prompt-batch-size", promptBatchSize);
+    }
     const cachePadTargetTokens = data.get("cache_pad_target_tokens")?.toString().trim() ?? "";
     if (cachePadTargetTokens && Number(cachePadTargetTokens) > 0) {
       command.pushFlag("--cache_pad_target_tokens", cachePadTargetTokens);
@@ -2938,7 +2950,11 @@
     if (!data.get("include_explanations")) {
       command.pushFlag("--no_explanation");
     }
-    if (!metricsOnly && data.get("logprobs")) {
+    if (
+      !metricsOnly &&
+      data.get("logprobs") &&
+      Number(data.get("prompt_batch_size") || 0) < 2
+    ) {
       command.pushFlag("--logprobs");
     }
     if (!noMetrics && data.get("calibration")) {
@@ -3120,6 +3136,10 @@
       if (promptLayout && promptLayout !== defaultValues.prompt_layout) {
         command.pushFlag("--prompt_layout", promptLayout);
       }
+      const promptBatchSize = data.get("prompt_batch_size")?.toString().trim() ?? "";
+      if (promptBatchSize && Number(promptBatchSize) >= 2) {
+        command.pushFlag("--prompt-batch-size", promptBatchSize);
+      }
 
       const temperature = data.get("temperature")?.trim();
       if (temperature && temperature !== defaultValues.temperature) {
@@ -3153,7 +3173,10 @@
       if (retryDelay && retryDelay !== defaultValues.retry_delay) {
         command.pushFlag("--retry_delay", retryDelay);
       }
-      if (data.get("logprobs")) {
+      if (
+        data.get("logprobs") &&
+        Number(data.get("prompt_batch_size") || 0) < 2
+      ) {
         command.pushFlag("--logprobs");
       }
 
