@@ -8380,6 +8380,7 @@ function renderTable(runs) {
         "Calibration ECE",
         run.calibrationEce !== null ? `${formatNum(run.calibrationEce, 2)}%` : '<span class="muted">N/A</span>'
       ),
+      renderTableCell("Price Estimate", formatUsd(run.estimatedCostUsd), "mono"),
       renderTableCell("Requests", formatNum(run.requestsTotal, 0), "mono"),
       renderTableCell("Cached Input Tokens", formatNum(run.cachedTokens, 0), "mono"),
       renderTableCell("File", run.fileName, "mono table-cell-full"),
