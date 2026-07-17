@@ -108,8 +108,9 @@ options:
                         it).
   --service_tier {standard,flex,priority}
                         Optional service-tier hint for providers that support
-                        differentiated throughput (OpenAI/Gemini/Vertex:
-                        standard, flex, priority; Claude: standard, priority).
+                        differentiated throughput
+                        (OpenAI/OpenRouter/Gemini/Vertex: standard, flex,
+                        priority; Claude: standard, priority).
   --verbosity {low,medium,high}
                         Optional output verbosity control for GPT models. Sent
                         as verbosity (Chat Completions) or text.verbosity
@@ -152,9 +153,10 @@ options:
                         prompt structure; subsequent prompts are padded toward
                         this shared-prefix target.
   --prompt_cache_key PROMPT_CACHE_KEY
-                        Optional provider cache-routing key (when supported)
-                        to improve prompt-cache hit consistency for stable
-                        prompt prefixes.
+                        Optional provider cache-routing key (when supported) to
+                        improve prompt-cache hit consistency for stable prompt
+                        prefixes. OpenRouter uses this as the sticky-routing key
+                        when session_id is absent.
   --gemini_cached_content GEMINI_CACHED_CONTENT
                         Optional Gemini context-cache resource name for
                         providers that expose Gemini OpenAI-compatible caching

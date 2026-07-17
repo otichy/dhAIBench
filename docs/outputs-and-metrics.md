@@ -41,7 +41,16 @@ The metrics JSON includes:
 - `task_description`
 - `tags`
 
-It also includes summaries for request-control acceptance and provider-reported cache metadata when those features are used.
+It also includes summaries for request-control acceptance and provider-reported
+cache metadata when those features are used. OpenRouter
+`usage.prompt_tokens_details.cached_tokens` and `cache_write_tokens` contribute
+to the cache-read/write totals; its per-response `cache_discount` is preserved
+in the prompt log.
+
+`overall_time_seconds` and `overall_time_human` sum the active first-to-last prompt
+window of each invocation. If a run is resumed later, idle time between the previous
+invocation and the resume is excluded. `first_prompt_timestamp` and
+`last_prompt_timestamp` still identify the full run's earliest and latest prompts.
 
 ## Agreement Summary JSON
 

@@ -233,7 +233,7 @@
     request_timeout_seconds:
       "Per-request API timeout in seconds. Set 0 to disable timeouts (requests may block for a long time).",
     service_tier:
-      "OpenAI-compatible service tier for OpenAI, Gemini/Vertex, and Claude targets. Claude supports standard and priority.",
+      "OpenAI-compatible service tier for OpenAI, OpenRouter, Gemini/Vertex, and Claude targets. Claude supports standard and priority.",
     reasoning_effort:
       "Reasoning effort level (low, medium, high, xhigh). Maps to OpenAI reasoning.effort or Gemini reasoning_effort.",
     verbosity:
@@ -251,7 +251,7 @@
     cache_pad_target_tokens:
       "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
     prompt_cache_key:
-      "Optional routing key sent as --prompt_cache_key for providers that support prompt cache keying.",
+      "Optional routing key sent as --prompt_cache_key. OpenRouter uses it for sticky routing when session_id is absent; it does not add explicit cache_control breakpoints.",
     requesty_auto_cache:
       "Enable Requesty auto caching by adding --requesty_auto_cache (maps to extra_body.requesty.auto_cache).",
     vertex_auto_adc_login:
@@ -477,7 +477,7 @@
           flags: ["--service_tier"],
           helpId: "service_tier",
           modes: ["Run", "Run & Validate"],
-          providers: ["OpenAI", "Gemini", "Vertex", "Claude"],
+          providers: ["OpenAI", "OpenRouter", "Gemini", "Vertex", "Claude"],
         },
         {
           flags: ["--reasoning_effort"],
@@ -517,6 +517,7 @@
           flags: ["--prompt_cache_key"],
           helpId: "prompt_cache_key",
           modes: ["Run", "Run & Validate"],
+          providers: ["OpenAI", "OpenRouter"],
         },
         {
           flags: ["--requesty_auto_cache"],
@@ -2513,7 +2514,12 @@
     if (isClaudeTarget(provider, modelValue)) {
       return new Set(["standard", "priority"]);
     }
-    if (provider === "openai" || provider === "vertex" || isGeminiTarget(provider, modelValue)) {
+    if (
+      provider === "openai" ||
+      provider === "openrouter" ||
+      provider === "vertex" ||
+      isGeminiTarget(provider, modelValue)
+    ) {
       return new Set(["standard", "flex", "priority"]);
     }
     return new Set(["standard"]);

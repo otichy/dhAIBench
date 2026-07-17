@@ -2709,6 +2709,73 @@ tbody tr.selected-row {
   word-break: break-word;
 }
 
+.detail-item-with-tooltip {
+  position: relative;
+  cursor: help;
+}
+
+.detail-item-with-tooltip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.detail-tooltip-hint {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  margin-left: 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line));
+  border-radius: 50%;
+  color: var(--accent);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.detail-tooltip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  display: grid;
+  gap: 0.28rem;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 3rem));
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-input);
+  color: var(--ink);
+  box-shadow: var(--shadow-hard);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.25rem);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.detail-tooltip-title {
+  color: var(--accent);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.8rem;
+}
+
+.detail-tooltip-line {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.detail-item-with-tooltip:hover .detail-tooltip,
+.detail-item-with-tooltip:focus .detail-tooltip,
+.detail-item-with-tooltip:focus-within .detail-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .detail-link {
   color: var(--accent);
   text-decoration: underline;

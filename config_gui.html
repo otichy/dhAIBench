@@ -670,8 +670,8 @@
             <summary>Provider controls</summary>
             <div class="section-card-body">
               <div class="grid">
-                <label data-provider-visible="openai gemini vertex claude">
-                  <span class="label-heading">Service Tier <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">Gemini</span><span class="field-tag">Vertex</span><span class="field-tag">Claude</span></span></span>
+                <label data-provider-visible="openai openrouter gemini vertex claude">
+                  <span class="label-heading">Service Tier <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">OpenRouter</span><span class="field-tag">Gemini</span><span class="field-tag">Vertex</span><span class="field-tag">Claude</span></span></span>
                   <select id="service_tier" name="service_tier"><option value="standard" selected>Standard (omit)</option><option value="flex">Flex</option><option value="priority">Priority</option></select>
                 </label>
                 <label data-provider-visible="openai gemini">
@@ -691,7 +691,7 @@
                   <select id="effort" name="effort"><option value="" selected>(omit)</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="max">Max</option></select>
                 </label>
                 <label>Shared Prefix Token Target<input type="number" min="0" step="1" id="cache_pad_target_tokens" name="cache_pad_target_tokens" value="0" /></label>
-                <label>Prompt Cache Key<input type="text" id="prompt_cache_key" name="prompt_cache_key" placeholder="benchmark-prefix-v1" /></label>
+                <label><span class="label-heading">Prompt Cache Key <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">OpenRouter</span></span></span><input type="text" id="prompt_cache_key" name="prompt_cache_key" placeholder="benchmark-prefix-v1" /></label>
               </div>
               <label class="inline"><input type="checkbox" id="strict_control_acceptance" name="strict_control_acceptance" checked /><span>Fail if request controls are rejected</span></label>
               <label class="inline" data-provider-visible="requesty"><input type="checkbox" id="requesty_auto_cache" name="requesty_auto_cache" /><span>Enable Requesty auto cache <span class="field-tags"><span class="field-tag">Requesty</span></span></span></label>

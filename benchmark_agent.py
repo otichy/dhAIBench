@@ -431,13 +431,36 @@ def compute_gemini_cache_ttl_refresh_interval_seconds(ttl_seconds: int) -> int:
 
 
 def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """Compute first/last prompt timestamps and elapsed seconds across prompt attempts."""
+    """Compute prompt timestamps and active elapsed time across run sessions.
+
+    Each ``run_metadata`` record starts a new invocation, including resumed runs.
+    Summing the first-to-last prompt window within each invocation avoids counting
+    the idle time between an interrupted run and a later resume. Older logs without
+    run metadata remain a single session for backwards compatibility.
+    """
     first_prompt: Optional[datetime] = None
     last_prompt: Optional[datetime] = None
+    session_first_prompt: Optional[datetime] = None
+    session_last_prompt: Optional[datetime] = None
+    elapsed_seconds = 0.0
+
+    def finish_session() -> None:
+        nonlocal elapsed_seconds
+        nonlocal session_first_prompt
+        nonlocal session_last_prompt
+        if session_first_prompt is not None and session_last_prompt is not None:
+            elapsed_seconds += max(
+                0.0,
+                (session_last_prompt - session_first_prompt).total_seconds(),
+            )
+        session_first_prompt = None
+        session_last_prompt = None
 
     for record in log_records:
         if not isinstance(record, dict):
             continue
+        if str(record.get("record_type", "")).strip() == "run_metadata":
+            finish_session()
         attempts = record.get("attempts")
         if not isinstance(attempts, list):
             continue
@@ -451,6 +474,12 @@ def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[st
                 first_prompt = attempt_time
             if last_prompt is None or attempt_time > last_prompt:
                 last_prompt = attempt_time
+            if session_first_prompt is None or attempt_time < session_first_prompt:
+                session_first_prompt = attempt_time
+            if session_last_prompt is None or attempt_time > session_last_prompt:
+                session_last_prompt = attempt_time
+
+    finish_session()
 
     if first_prompt is None or last_prompt is None:
         return {
@@ -460,7 +489,6 @@ def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[st
             "overall_time_human": None,
         }
 
-    elapsed_seconds = max(0.0, (last_prompt - first_prompt).total_seconds())
     return {
         "first_prompt_timestamp": first_prompt.isoformat().replace("+00:00", "Z"),
         "last_prompt_timestamp": last_prompt.isoformat().replace("+00:00", "Z"),
@@ -1986,12 +2014,17 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     "google": {"api_key_var": "GOOGLE_API_KEY", "api_base_var": "GOOGLE_BASE_URL"},
     "huggingface": {"api_key_var": "HF_API_KEY", "api_base_var": "HF_BASE_URL"},
     "e-infra": {"api_key_var": "E-INFRA_API_KEY", "api_base_var": "E-INFRA_BASE_URL"},
+    "openrouter": {
+        "api_key_var": "OPENROUTER_API_KEY",
+        "api_base_var": "OPENROUTER_BASE_URL",
+    },
     "requesty": {"api_key_var": "REQUESTY_API_KEY", "api_base_var": "REQUESTY_BASE_URL"},
     "vertex": {"api_key_var": "VERTEX_ACCESS_TOKEN", "api_base_var": "VERTEX_BASE_URL"},
 }
 
 PROVIDER_BASE_FALLBACKS: Dict[str, str] = {
     "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
     "requesty": "https://router.requesty.ai/v1",
 }
 
@@ -6717,6 +6750,20 @@ class OpenAIConnector:
             if isinstance(usage_metadata_payload, dict) and usage_metadata_payload:
                 metadata["usage_metadata"] = usage_metadata_payload
 
+            served_service_tier = read_field(response_obj, "service_tier", "serviceTier")
+            if served_service_tier is None:
+                served_service_tier = read_field(
+                    usage_payload,
+                    "service_tier",
+                    "serviceTier",
+                )
+            if served_service_tier is not None:
+                metadata["service_tier"] = str(served_service_tier)
+
+            cache_discount = read_field(response_obj, "cache_discount", "cacheDiscount")
+            if cache_discount is not None:
+                metadata["cache_discount"] = serialize_usage_payload(cache_discount)
+
             # Capture any remaining model_extra fields from the response that were not
             # already extracted as usage_metadata above.  This ensures provider-specific
             # extensions (e.g. Gemini's usageMetadata, thoughtsTokenCount, etc.) are
@@ -6724,7 +6771,14 @@ class OpenAIConnector:
             # searches for, making the data available for compute_usage_metadata_summary.
             response_model_extra = getattr(response_obj, "model_extra", None)
             if isinstance(response_model_extra, dict):
-                already_used = {"usage_metadata", "usageMetadata"}
+                already_used = {
+                    "usage_metadata",
+                    "usageMetadata",
+                    "service_tier",
+                    "serviceTier",
+                    "cache_discount",
+                    "cacheDiscount",
+                }
                 extra_fields: Dict[str, Any] = {}
                 for key, val in response_model_extra.items():
                     if key in already_used or val is None:
@@ -10500,7 +10554,8 @@ def process_dataset(
 
     if metrics.get("overall_time_seconds") is not None:
         logging.info(
-            "Prompt window runtime: %.2f seconds (%s -> %s)",
+            "Active prompt runtime: %.2f seconds "
+            "(first prompt: %s; last prompt: %s; resume gaps excluded)",
             metrics["overall_time_seconds"],
             metrics["first_prompt_timestamp"],
             metrics["last_prompt_timestamp"],
@@ -11083,7 +11138,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         default="standard",
         help=(
             "Optional service-tier hint for providers that support differentiated throughput "
-            "(OpenAI/Gemini/Vertex: standard, flex, priority; Claude: standard, priority)."
+            "(OpenAI/OpenRouter/Gemini/Vertex: standard, flex, priority; "
+            "Claude: standard, priority)."
         ),
     )
     parser.add_argument(
@@ -11192,7 +11248,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Optional provider cache-routing key (when supported) to improve "
-            "prompt-cache hit consistency for stable prompt prefixes."
+            "prompt-cache hit consistency for stable prompt prefixes. OpenRouter "
+            "uses this as the sticky-routing key when session_id is absent."
         ),
     )
     parser.add_argument(

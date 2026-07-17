@@ -25,7 +25,9 @@ Use only the controls supported by your target provider:
 
 - `--reasoning_effort {low,medium,high,xhigh}` for OpenAI-style reasoning
 - `--service_tier {standard,flex,priority}` for providers with throughput tiers
-  (OpenAI and Gemini/Vertex expose all three; Claude uses `standard` or `priority`)
+  (OpenAI, OpenRouter, and Gemini/Vertex expose all three; Claude uses
+  `standard` or `priority`). OpenRouter receives the selected tier as the
+  top-level `service_tier` request field; support depends on the selected model.
 - `--verbosity {low,medium,high}` for GPT output detail
 - `--thinking_level {minimal,low,medium,high}` for Gemini thinking configuration
 - `--effort {low,medium,high,max}` for Claude-style effort
@@ -35,6 +37,46 @@ Use only the controls supported by your target provider:
 - `--strict_control_acceptance` to fail when requested controls are dropped
 
 For prompt-caching experiments, start with `--prompt_layout compact`.
+
+## OpenRouter Service Tiers
+
+OpenRouter service tiers use the normal model ID plus the top-level
+`service_tier` field. For example:
+
+```bash
+python benchmark_agent.py --provider openrouter --model openai/gpt-5 \
+  --service_tier flex --input data/input/example.csv
+```
+
+`flex` is available only on selected models. OpenRouter restricts a flex request
+to flex endpoints when they exist; if the model has no flex endpoints, it may
+route at the standard tier instead. Check the response metadata and OpenRouter's
+model-endpoints listing when validating billing or routing.
+
+## OpenRouter Prompt Caching
+
+For models with automatic prompt caching, including supported OpenAI models, no
+cache-enabling request field is required. Keep the shared prefix stable and use:
+
+```bash
+python benchmark_agent.py --provider openrouter --model openai/gpt-5 \
+  --prompt_layout compact --prompt_cache_key benchmark-prefix-v1 \
+  --input data/input/example.csv
+```
+
+The cache key is sent as the top-level `prompt_cache_key` field. When no
+`session_id` is present, OpenRouter uses it as the sticky-routing key so repeated
+requests stay on the same provider endpoint. It does not itself create an
+explicit cache breakpoint.
+
+Cache reads and writes are preserved from
+`usage.prompt_tokens_details.cached_tokens` and `cache_write_tokens`. OpenRouter's
+top-level `cache_discount` is also retained in each prompt-log response's
+`usage_metadata`.
+
+Models that require explicit `cache_control` content breakpoints are outside the
+automatic-caching path described above; `--prompt_cache_key` only supplies sticky
+routing for those models.
 
 ## System Prompt Encoding
 

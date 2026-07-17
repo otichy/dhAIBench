@@ -3566,6 +3566,17 @@ function formatUsd(value) {
   })}`;
 }
 
+function formatDetailedUsd(value) {
+  const numeric = safeNum(value);
+  if (numeric === null) {
+    return "N/A";
+  }
+  return `$${numeric.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 10,
+  })}`;
+}
+
 function formatDurationHuman(totalSeconds) {
   const numericSeconds = Number(totalSeconds);
   if (!Number.isFinite(numericSeconds)) {
@@ -8389,7 +8400,9 @@ function findRunByPath(path) {
   return state.runs.find((run) => run.filePath === path) || null;
 }
 
-function createDetailItem(label, value) {
+let detailTooltipId = 0;
+
+function createDetailItem(label, value, options = {}) {
   const wrapper = document.createElement("div");
   wrapper.className = "detail-item";
   const labelEl = document.createElement("span");
@@ -8400,7 +8413,82 @@ function createDetailItem(label, value) {
   valueEl.textContent = value == null || value === "" ? "N/A" : String(value);
   wrapper.appendChild(labelEl);
   wrapper.appendChild(valueEl);
+
+  if (options.tooltip && Array.isArray(options.tooltip.lines) && options.tooltip.lines.length) {
+    detailTooltipId += 1;
+    const tooltipId = `detail-tooltip-${detailTooltipId}`;
+    wrapper.classList.add("detail-item-with-tooltip");
+    wrapper.tabIndex = 0;
+    wrapper.setAttribute("aria-describedby", tooltipId);
+
+    const hintEl = document.createElement("span");
+    hintEl.className = "detail-tooltip-hint";
+    hintEl.setAttribute("aria-hidden", "true");
+    hintEl.textContent = "i";
+    labelEl.appendChild(hintEl);
+
+    const tooltipEl = document.createElement("span");
+    tooltipEl.id = tooltipId;
+    tooltipEl.className = "detail-tooltip";
+    tooltipEl.setAttribute("role", "tooltip");
+
+    if (options.tooltip.title) {
+      const titleEl = document.createElement("strong");
+      titleEl.className = "detail-tooltip-title";
+      titleEl.textContent = options.tooltip.title;
+      tooltipEl.appendChild(titleEl);
+    }
+
+    options.tooltip.lines.forEach((line) => {
+      const lineEl = document.createElement("span");
+      lineEl.className = "detail-tooltip-line";
+      lineEl.textContent = line;
+      tooltipEl.appendChild(lineEl);
+    });
+    wrapper.appendChild(tooltipEl);
+  }
+
   return wrapper;
+}
+
+function buildRunCostTooltip(run) {
+  const pricing = run && run.pricing;
+  const calculation = pricing && pricing.pricingCalculation;
+  if (!calculation || !Array.isArray(calculation.components)) {
+    return null;
+  }
+
+  const provider = asTrimmedString(calculation.providerKey) || "unknown provider";
+  const model = asTrimmedString(calculation.modelKey) || asTrimmedString(run && run.model) || "unknown model";
+  const tier = asTrimmedString(calculation.pricingTier) || "standard";
+  const priceUnit = safeNum(calculation.tokenPriceUnit) || 1000000;
+  const priceUnitLabel = priceUnit === 1000000 ? "1M tokens" : `${formatNum(priceUnit, 0)} tokens`;
+  const lines = [
+    `Model: ${provider} / ${model}`,
+    `Pricing tier: ${tier}`,
+  ];
+
+  calculation.components.forEach((component) => {
+    const tokens = toNonNegativeNumber(component && component.tokens);
+    const rate = safeNum(component && component.rateUsdPerMillionTokens);
+    const cost = toNonNegativeNumber(component && component.costUsd);
+    const componentLabel = asTrimmedString(component && component.label) || "Tokens";
+    if (rate === null) {
+      lines.push(
+        `${componentLabel}: ${formatNum(tokens, 0)} tokens; no catalog rate (unused) = ${formatDetailedUsd(cost)}`
+      );
+      return;
+    }
+    lines.push(
+      `${componentLabel}: ${formatNum(tokens, 0)} tokens × ${formatDetailedUsd(rate)} / ${priceUnitLabel} = ${formatDetailedUsd(cost)}`
+    );
+  });
+
+  lines.push(`Estimated total: ${formatDetailedUsd(calculation.totalUsd)}`);
+  return {
+    title: "Pricing calculation",
+    lines,
+  };
 }
 
 function createLinkDetailItem(label, href, hint = "") {
@@ -8547,7 +8635,7 @@ function fillRunDetailsContent(run) {
     ["Non-Cached Input Tokens", formatNum(run.nonCachedInputTokensTotal, 0)],
     ["Output Tokens (total)", formatNum(run.outputTokensTotal, 0)],
     ["Thinking Tokens (total)", formatNum(run.thinkingTokensTotal, 0)],
-    ["Estimated Cost", formatUsd(run.estimatedCostUsd)],
+    ["Estimated Cost", formatUsd(run.estimatedCostUsd), { tooltip: buildRunCostTooltip(run) }],
     ["Pricing Tier", run.serviceTier || "standard"],
     ["Pricing Status", run.pricingStatus || "N/A"],
     ["Runtime", formatRunRuntime(run)],
@@ -8571,8 +8659,8 @@ function fillRunDetailsContent(run) {
   els.runModalMeta.textContent = run.fileName;
   els.runModalContent.innerHTML = "";
 
-  detailPairs.forEach(([label, value]) => {
-    els.runModalContent.appendChild(createDetailItem(label, value));
+  detailPairs.forEach(([label, value, options]) => {
+    els.runModalContent.appendChild(createDetailItem(label, value, options));
   });
 
   const links = buildRunResourceLinks(run);

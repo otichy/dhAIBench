@@ -375,6 +375,7 @@
     const baseResult = {
       pricingTier: serviceTier,
       estimatedCostUsd: null,
+      pricingCalculation: null,
       status: "model_missing",
       statusLabel: statusLabel("model_missing"),
       providerKey: "",
@@ -453,11 +454,45 @@
       };
     }
 
-    const estimatedCostUsd =
-      ((nonCachedInputTotal * toNonNegativeNumber(tierRates.input_usd_per_mtokens)) +
-        (cachedTotal * toNonNegativeNumber(tierRates.cached_input_usd_per_mtokens)) +
-        (outputTotal * toNonNegativeNumber(tierRates.output_usd_per_mtokens))) /
-      1000000;
+    const tokenPriceUnit = 1000000;
+    const pricingComponents = [
+      {
+        type: "input",
+        label: "Non-cached input",
+        tokens: nonCachedInputTotal,
+        rateUsdPerMillionTokens: safeNum(tierRates.input_usd_per_mtokens),
+      },
+      {
+        type: "cached_input",
+        label: "Cached input",
+        tokens: cachedTotal,
+        rateUsdPerMillionTokens: safeNum(tierRates.cached_input_usd_per_mtokens),
+      },
+      {
+        type: "output",
+        label: "Output",
+        tokens: outputTotal,
+        rateUsdPerMillionTokens: safeNum(tierRates.output_usd_per_mtokens),
+      },
+    ].map((component) => ({
+      ...component,
+      costUsd:
+        (component.tokens * toNonNegativeNumber(component.rateUsdPerMillionTokens)) /
+        tokenPriceUnit,
+    }));
+    const estimatedCostUsd = pricingComponents.reduce(
+      (total, component) => total + component.costUsd,
+      0
+    );
+    const pricingCalculation = {
+      currency: "USD",
+      tokenPriceUnit,
+      providerKey: match.providerKey,
+      modelKey: match.resolvedKey,
+      pricingTier: serviceTier,
+      components: pricingComponents,
+      totalUsd: estimatedCostUsd,
+    };
 
     return {
       ...baseResult,
@@ -467,6 +502,7 @@
       status: "priced",
       statusLabel: statusLabel("priced"),
       estimatedCostUsd,
+      pricingCalculation,
     };
   }
 
