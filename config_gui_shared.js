@@ -73,6 +73,7 @@
     cache_pad_target_tokens: "0",
     prompt_cache_key: "",
     openai_cache_breakpoint: false,
+    openrouter_cache_control: false,
     cache_warmup_delay_seconds: "5.0",
     requesty_auto_cache: false,
     vertex_auto_adc_login: true,
@@ -135,6 +136,7 @@
     ["cache_pad_target_tokens", "cache_pad_target_tokens", "cache padding target"],
     ["prompt_cache_key", "prompt_cache_key", "prompt cache key"],
     ["openai_cache_breakpoint", "openai_cache_breakpoint", "explicit cache breakpoint"],
+    ["openrouter_cache_control", "openrouter_cache_control", "OpenRouter cache control"],
     ["cache_warmup_delay_seconds", "cache_warmup_delay_seconds", "cache warm-up delay"],
     ["gemini_cached_content", "gemini_cached_content", "Gemini cached content"],
     ["requesty_auto_cache", "requesty_auto_cache", "Requesty auto cache"],
@@ -258,6 +260,8 @@
       "Optional routing key sent as --prompt_cache_key. OpenRouter uses it for sticky routing when session_id is absent.",
     openai_cache_breakpoint:
       "Marks the end of the static system/developer prompt with --openai_cache_breakpoint and requests a 30-minute explicit cache on supporting OpenAI/OpenRouter models.",
+    openrouter_cache_control:
+      "For Gemini through OpenRouter, marks the stable system/developer content with cache_control: {type: ephemeral}. OpenRouter creates and manages the cache.",
     cache_warmup_delay_seconds:
       "With multiple threads and caching enabled, the first work item runs synchronously. If it reports a cache write, wait this many seconds before starting the remaining threads; 0 disables the barrier.",
     requesty_auto_cache:
@@ -532,6 +536,12 @@
           helpId: "openai_cache_breakpoint",
           modes: ["Run", "Run & Validate"],
           providers: ["OpenAI", "OpenRouter"],
+        },
+        {
+          flags: ["--openrouter_cache_control"],
+          helpId: "openrouter_cache_control",
+          modes: ["Run", "Run & Validate"],
+          providers: ["OpenRouter Gemini"],
         },
         {
           flags: ["--cache_warmup_delay_seconds"],
@@ -2572,6 +2582,21 @@
       return true;
     }
     return tokens.some((token) => {
+      if (token === "direct-gemini") {
+        return (
+          (provider === "google" || provider === "vertex") &&
+          isGeminiTarget(provider, modelValue)
+        );
+      }
+      if (token === "openrouter-gemini") {
+        return provider === "openrouter" && isGeminiTarget(provider, modelValue);
+      }
+      if (token === "openai-cache") {
+        return (
+          (provider === "openai" || provider === "openrouter") &&
+          !isGeminiTarget(provider, modelValue)
+        );
+      }
       if (token === "vertex") return provider === "vertex";
       if (token === "requesty") return provider === "requesty";
       if (token === "gemini") return isGeminiTarget(provider, modelValue);
@@ -2922,11 +2947,16 @@
     if (promptCacheKey) {
       command.pushFlag("--prompt_cache_key", shellQuote(promptCacheKey));
     }
+    const geminiTarget = isGeminiTarget(provider, modelValue);
     if (
       (provider === "openai" || provider === "openrouter") &&
+      !geminiTarget &&
       data.get("openai_cache_breakpoint")
     ) {
       command.pushFlag("--openai_cache_breakpoint");
+    }
+    if (provider === "openrouter" && geminiTarget && data.get("openrouter_cache_control")) {
+      command.pushFlag("--openrouter_cache_control");
     }
     const cacheWarmupDelay = data.get("cache_warmup_delay_seconds")?.toString().trim() ?? "";
     if (cacheWarmupDelay && cacheWarmupDelay !== defaultValues.cache_warmup_delay_seconds) {
@@ -2937,11 +2967,11 @@
     }
 
     const geminiCachedContent = data.get("gemini_cached_content")?.toString().trim() ?? "";
-    if (geminiCachedContent) {
+    if ((provider === "google" || provider === "vertex") && geminiCachedContent) {
       command.pushFlag("--gemini_cached_content", shellQuote(geminiCachedContent));
     }
     const createGeminiCache = data.get("create_gemini_cache");
-    if (createGeminiCache) {
+    if ((provider === "google" || provider === "vertex") && createGeminiCache) {
       command.pushFlag("--create_gemini_cache");
       const geminiCacheTtl = data.get("gemini_cache_ttl")?.toString().trim() ?? "";
       if (geminiCacheTtl && Number(geminiCacheTtl) !== 3600) {
@@ -3263,9 +3293,13 @@
       }
       if (
         (provider === "openai" || provider === "openrouter") &&
+        !geminiTarget &&
         data.get("openai_cache_breakpoint")
       ) {
         command.pushFlag("--openai_cache_breakpoint");
+      }
+      if (provider === "openrouter" && geminiTarget && data.get("openrouter_cache_control")) {
+        command.pushFlag("--openrouter_cache_control");
       }
       const cacheWarmupDelay = data.get("cache_warmup_delay_seconds")?.toString().trim() ?? "";
       if (cacheWarmupDelay && cacheWarmupDelay !== defaultValues.cache_warmup_delay_seconds) {
@@ -3276,11 +3310,11 @@
       }
 
       const geminiCachedContent = data.get("gemini_cached_content")?.toString().trim() ?? "";
-      if (geminiTarget && geminiCachedContent) {
+      if ((provider === "google" || provider === "vertex") && geminiCachedContent) {
         command.pushFlag("--gemini_cached_content", shellQuote(geminiCachedContent));
       }
       const createGeminiCache = Boolean(data.get("create_gemini_cache"));
-      if (geminiTarget && createGeminiCache) {
+      if ((provider === "google" || provider === "vertex") && createGeminiCache) {
         command.pushFlag("--create_gemini_cache");
         const geminiCacheTtl = data.get("gemini_cache_ttl")?.toString().trim() ?? "";
         if (geminiCacheTtl && Number(geminiCacheTtl) !== 3600) {

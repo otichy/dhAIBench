@@ -21,6 +21,7 @@ usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
                           [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
                           [--prompt_cache_key PROMPT_CACHE_KEY]
                           [--openai_cache_breakpoint | --no-openai_cache_breakpoint]
+                          [--openrouter_cache_control | --no-openrouter_cache_control]
                           [--cache_warmup_delay_seconds CACHE_WARMUP_DELAY_SECONDS]
                           [--gemini_cached_content GEMINI_CACHED_CONTENT]
                           [--requesty_auto_cache | --no-requesty_auto_cache]
@@ -164,6 +165,11 @@ options:
                         explicit cache boundary and request a 30-minute explicit
                         prompt cache. Intended for supporting OpenAI and
                         OpenRouter models (for example GPT-5.6+).
+  --openrouter_cache_control, --no-openrouter_cache_control
+                        Add cache_control={type:ephemeral} to the stable
+                        system/developer content block. Use this for explicit
+                        Gemini prompt caching through OpenRouter; OpenRouter
+                        creates and manages the cache.
   --cache_warmup_delay_seconds CACHE_WARMUP_DELAY_SECONDS
                         With multiple threads and user-enabled caching, run the
                         first work item synchronously and wait this many seconds

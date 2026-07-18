@@ -695,7 +695,8 @@
                 <label><span class="label-heading">Cache Warm-up Delay (seconds)</span><input type="number" min="0" step="0.1" id="cache_warmup_delay_seconds" name="cache_warmup_delay_seconds" value="5.0" /></label>
               </div>
               <label class="inline"><input type="checkbox" id="strict_control_acceptance" name="strict_control_acceptance" checked /><span>Fail if request controls are rejected</span></label>
-              <label class="inline" data-provider-visible="openai openrouter"><input type="checkbox" id="openai_cache_breakpoint" name="openai_cache_breakpoint" /><span>Use explicit system/developer cache breakpoint <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">OpenRouter</span></span></span></label>
+              <label class="inline" data-provider-visible="openai-cache"><input type="checkbox" id="openai_cache_breakpoint" name="openai_cache_breakpoint" /><span>Use explicit OpenAI system/developer cache breakpoint <span class="field-tags"><span class="field-tag">OpenAI</span><span class="field-tag">OpenRouter</span></span></span></label>
+              <label class="inline" data-provider-visible="openrouter-gemini"><input type="checkbox" id="openrouter_cache_control" name="openrouter_cache_control" /><span>Use OpenRouter Gemini cache_control breakpoint <span class="field-tags"><span class="field-tag">Gemini</span><span class="field-tag">OpenRouter</span></span></span></label>
               <label class="inline" data-provider-visible="requesty"><input type="checkbox" id="requesty_auto_cache" name="requesty_auto_cache" /><span>Enable Requesty auto cache <span class="field-tags"><span class="field-tag">Requesty</span></span></span></label>
               <div id="vertex-auth-options" class="grid" style="display:none" data-provider-visible="vertex">
                 <p class="provider-subheading">Vertex Authentication <span class="field-tags"><span class="field-tag">Vertex</span></span></p>
@@ -705,7 +706,7 @@
                   <input type="number" min="60" step="1" id="vertex_access_token_refresh_seconds" name="vertex_access_token_refresh_seconds" value="3300" />
                 </label>
               </div>
-              <div data-provider-visible="gemini">
+              <div data-provider-visible="direct-gemini">
                 <p class="provider-subheading">Gemini Context Cache <span class="field-tags"><span class="field-tag">Gemini</span></span></p>
                 <label class="inline"><input type="checkbox" id="create_gemini_cache" name="create_gemini_cache" onchange="toggleGeminiCacheMode(this.checked)" /><span>Auto-create Gemini cache from system prompt <span class="field-tags"><span class="field-tag">Gemini</span></span></span></label>
                 <div id="gemini_cache_create_options" style="display:none" class="grid">

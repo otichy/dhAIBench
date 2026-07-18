@@ -33,6 +33,7 @@ Use only the controls supported by your target provider:
 - `--effort {low,medium,high,max}` for Claude-style effort
 - `--prompt_cache_key` for OpenAI-style cache routing
 - `--openai_cache_breakpoint` for the OpenAI-compatible explicit system-prefix boundary
+- `--openrouter_cache_control` for explicit Gemini caching through OpenRouter
 - `--cache_warmup_delay_seconds` for multithreaded cache propagation
 - `--gemini_cached_content` or `--create_gemini_cache` for Gemini context caching
 - `--requesty_auto_cache` for Requesty automatic caching
@@ -99,6 +100,25 @@ top-level `cache_discount` is also retained in each prompt-log response's
 Models with other provider-specific `cache_control` formats still need their own
 cache controls; `--openai_cache_breakpoint` is specifically for the
 OpenAI-compatible explicit breakpoint format.
+
+### Gemini through OpenRouter
+
+Do not use `--create_gemini_cache` or `--gemini_cached_content` through
+OpenRouter. Those controls create or attach a Google/Vertex CachedContent
+resource and therefore require a direct Google/Vertex endpoint. OpenRouter
+creates and manages Gemini caches from an explicit content breakpoint:
+
+```bash
+python benchmark_agent.py --provider openrouter \
+  --model google/gemini-3.5-flash \
+  --prompt_cache_key LModE_POS_2 \
+  --openrouter_cache_control --threads 10 \
+  --input data/input/LModE_POS_2_s.csv
+```
+
+`--openrouter_cache_control` places
+`cache_control: {"type":"ephemeral"}` on the stable system/developer content
+block. Do not combine it with `--openai_cache_breakpoint`.
 
 ## System Prompt Encoding
 

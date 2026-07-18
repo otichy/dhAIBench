@@ -189,6 +189,7 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "cache_pad_target_tokens",
     "prompt_cache_key",
     "openai_cache_breakpoint",
+    "openrouter_cache_control",
     "cache_warmup_delay_seconds",
     "gemini_cached_content",
     "requesty_auto_cache",
@@ -512,6 +513,7 @@ def compute_request_control_summary(
         "verbosity",
         "prompt_cache_key",
         "openai_cache_breakpoint",
+        "openrouter_cache_control",
         "gemini_cached_content",
         "requesty_auto_cache",
     )
@@ -6123,6 +6125,64 @@ def _strip_openai_cache_breakpoints(messages: Any) -> bool:
     return removed
 
 
+def prepare_openrouter_cache_control_messages(
+    messages: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Mark the stable system/developer prefix for OpenRouter explicit caching."""
+    prepared = copy.deepcopy(messages)
+    for message in reversed(prepared):
+        if str(message.get("role") or "").strip().lower() not in {"system", "developer"}:
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            return prepared, True
+        if isinstance(content, list):
+            for block in reversed(content):
+                if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+                    continue
+                block["cache_control"] = {"type": "ephemeral"}
+                if not block.get("type"):
+                    block["type"] = "text"
+                return prepared, True
+        break
+    return prepared, False
+
+
+def _messages_have_openrouter_cache_control(messages: Any) -> bool:
+    if not isinstance(messages, list):
+        return False
+    return any(
+        isinstance(block, dict)
+        and isinstance(block.get("cache_control"), dict)
+        and block["cache_control"].get("type") == "ephemeral"
+        for message in messages
+        if isinstance(message, dict) and isinstance(message.get("content"), list)
+        for block in message["content"]
+    )
+
+
+def _strip_openrouter_cache_controls(messages: Any) -> bool:
+    removed = False
+    if not isinstance(messages, list):
+        return removed
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and "cache_control" in block:
+                block.pop("cache_control", None)
+                removed = True
+    return removed
+
+
 class OpenAIConnector:
     """Thin wrapper supporting both legacy and modern OpenAI Python SDKs."""
 
@@ -6254,6 +6314,7 @@ class OpenAIConnector:
         gemini_cached_content: Optional[str],
         requesty_auto_cache: Optional[bool],
         openai_cache_breakpoint: bool = False,
+        openrouter_cache_control: bool = False,
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
@@ -6306,6 +6367,8 @@ class OpenAIConnector:
             requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
         if openai_cache_breakpoint:
             requested_controls["openai_cache_breakpoint"] = "explicit"
+        if openrouter_cache_control:
+            requested_controls["openrouter_cache_control"] = "ephemeral"
         if normalized_gemini_cached_content and is_gemini_target:
             requested_controls["gemini_cached_content"] = normalized_gemini_cached_content
         if normalized_requesty_auto_cache is not None and is_requesty_target:
@@ -6327,6 +6390,7 @@ class OpenAIConnector:
                 "prompt_cache_key": "prompt_cache_key",
                 "prompt_cache_options": "openai_cache_breakpoint",
                 "prompt_cache_breakpoint": "openai_cache_breakpoint",
+                "cache_control": "openrouter_cache_control",
                 "cached_content": "gemini_cached_content",
                 "gemini_cached_content": "gemini_cached_content",
                 "google_cached_content": "gemini_cached_content",
@@ -6373,6 +6437,8 @@ class OpenAIConnector:
                 "prompt_cache_options": "prompt_cache_options",
                 "promptcachebreakpoint": "prompt_cache_breakpoint",
                 "prompt_cache_breakpoint": "prompt_cache_breakpoint",
+                "cachecontrol": "cache_control",
+                "cache_control": "cache_control",
                 "cachedcontent": "cached_content",
                 "cached_content": "cached_content",
                 "google_cached_content": "cached_content",
@@ -6524,6 +6590,9 @@ class OpenAIConnector:
                         if "breakpoint" in text
                         else "prompt_cache_options"
                     )
+            if "cache_control" in text or "cache control" in text:
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return "cache_control"
             if "cached_content" in text or "cached content" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "cached_content"
@@ -6610,6 +6679,15 @@ class OpenAIConnector:
             }
             request_args["extra_body"] = extra_body
 
+        def validate_openrouter_cache_control(request_args: Dict[str, Any]) -> None:
+            if not openrouter_cache_control:
+                return
+            request_messages = request_args.get("messages", request_args.get("input"))
+            if not _messages_have_openrouter_cache_control(request_messages):
+                rejected_controls["openrouter_cache_control"] = (
+                    "missing_system_or_developer_prefix"
+                )
+
         def remove_request_parameter(request_args: Dict[str, Any], param_name: str) -> bool:
             removed = False
             if param_name == "reasoning":
@@ -6678,6 +6756,10 @@ class OpenAIConnector:
                             extra_body.pop("requesty", None)
                 if not extra_body:
                     request_args.pop("extra_body", None)
+            if param_name == "cache_control":
+                for message_key in ("messages", "input"):
+                    if _strip_openrouter_cache_controls(request_args.get(message_key)):
+                        removed = True
             text_payload = request_args.get("text")
             if isinstance(text_payload, dict):
                 if param_name in {"verbosity", "text", "text_verbosity"}:
@@ -6719,6 +6801,9 @@ class OpenAIConnector:
                 sent["prompt_cache_key"] = str(request_args["prompt_cache_key"])
             if request_args.get("cached_content") is not None:
                 sent["gemini_cached_content"] = str(request_args["cached_content"])
+            request_messages = request_args.get("messages", request_args.get("input"))
+            if _messages_have_openrouter_cache_control(request_messages):
+                sent["openrouter_cache_control"] = "ephemeral"
 
             extra_body = request_args.get("extra_body")
             if isinstance(extra_body, dict):
@@ -7060,6 +7145,7 @@ class OpenAIConnector:
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
             apply_openai_cache_controls(request_args)
+            validate_openrouter_cache_control(request_args)
             with self._state_lock:
                 known_responses_unsupported = set(
                     self._responses_unsupported_params.get(model_key, set())
@@ -7190,6 +7276,7 @@ class OpenAIConnector:
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
             apply_openai_cache_controls(request_args)
+            validate_openrouter_cache_control(request_args)
             with self._state_lock:
                 known_chat_unsupported = set(self._chat_unsupported_params.get(model_key, set()))
             for unsupported in known_chat_unsupported:
@@ -7284,6 +7371,9 @@ class OpenAIConnector:
             if openai_cache_breakpoint:
                 mark_control_rejected("prompt_cache_breakpoint", "legacy_sdk_ignored")
                 _strip_openai_cache_breakpoints(request_args["messages"])
+            if openrouter_cache_control:
+                mark_control_rejected("cache_control", "legacy_sdk_ignored")
+                _strip_openrouter_cache_controls(request_args["messages"])
             if normalized_gemini_cached_content:
                 mark_control_rejected("cached_content", "legacy_sdk_ignored")
             if normalized_requesty_auto_cache is not None and is_requesty_target:
@@ -8541,6 +8631,7 @@ def classify_example(
     gemini_cached_content: Optional[str] = None,
     requesty_auto_cache: Optional[bool] = None,
     openai_cache_breakpoint: bool = False,
+    openrouter_cache_control: bool = False,
     prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
@@ -8570,6 +8661,16 @@ def classify_example(
         if not breakpoint_applied:
             logging.warning(
                 "Explicit cache breakpoint requested for example %s, but the prompt has no "
+                "system/developer message to mark.",
+                example.example_id,
+            )
+    if openrouter_cache_control:
+        base_messages, breakpoint_applied = prepare_openrouter_cache_control_messages(
+            base_messages
+        )
+        if not breakpoint_applied:
+            logging.warning(
+                "OpenRouter cache_control requested for example %s, but the prompt has no "
                 "system/developer message to mark.",
                 example.example_id,
             )
@@ -8640,6 +8741,7 @@ def classify_example(
                 gemini_cached_content=gemini_cached_content,
                 requesty_auto_cache=requesty_auto_cache,
                 openai_cache_breakpoint=openai_cache_breakpoint,
+                openrouter_cache_control=openrouter_cache_control,
             )
             raw = result.text
             latest_raw_response = raw
@@ -9280,6 +9382,7 @@ def classify_examples_batch(
     gemini_cached_content: Optional[str] = None,
     requesty_auto_cache: Optional[bool] = None,
     openai_cache_breakpoint: bool = False,
+    openrouter_cache_control: bool = False,
     prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
 ) -> BatchClassificationResult:
     """Classify a batch once, returning invalid/missing members for individual fallback."""
@@ -9309,6 +9412,16 @@ def classify_examples_batch(
         if not breakpoint_applied:
             logging.warning(
                 "Explicit cache breakpoint requested for batch %s, but the prompt has no "
+                "system/developer message to mark.",
+                batch_id,
+            )
+    if openrouter_cache_control:
+        base_messages, breakpoint_applied = prepare_openrouter_cache_control_messages(
+            base_messages
+        )
+        if not breakpoint_applied:
+            logging.warning(
+                "OpenRouter cache_control requested for batch %s, but the prompt has no "
                 "system/developer message to mark.",
                 batch_id,
             )
@@ -9360,6 +9473,7 @@ def classify_examples_batch(
                 gemini_cached_content=gemini_cached_content,
                 requesty_auto_cache=requesty_auto_cache,
                 openai_cache_breakpoint=openai_cache_breakpoint,
+                openrouter_cache_control=openrouter_cache_control,
             )
             raw = result.text
             latest_prompt_tokens = result.prompt_tokens
@@ -9660,12 +9774,14 @@ def process_dataset(
     cache_padding_applied_examples = 0
     cache_padding_missing_prefix_warned = False
     openai_cache_breakpoint = bool(getattr(args, "openai_cache_breakpoint", False))
+    openrouter_cache_control = bool(getattr(args, "openrouter_cache_control", False))
     cache_warmup_delay_seconds = max(
         0.0,
         float(getattr(args, "cache_warmup_delay_seconds", 0.0) or 0.0),
     )
     cache_controls_enabled = bool(
         openai_cache_breakpoint
+        or openrouter_cache_control
         or getattr(args, "prompt_cache_key", None)
         or getattr(args, "gemini_cached_content", None)
         or getattr(args, "requesty_auto_cache", None) is True
@@ -10034,6 +10150,7 @@ def process_dataset(
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,
                     openai_cache_breakpoint=openai_cache_breakpoint,
+                    openrouter_cache_control=openrouter_cache_control,
                     prompt_log_detail=prompt_log_detail,
                 )
                 return prediction, attempt_logs, padding_active_for_example
@@ -10133,6 +10250,7 @@ def process_dataset(
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,
                     openai_cache_breakpoint=openai_cache_breakpoint,
+                    openrouter_cache_control=openrouter_cache_control,
                     prompt_log_detail=prompt_log_detail,
                 )
                 member_results: List[
@@ -10822,6 +10940,9 @@ def process_dataset(
         "openai_cache_breakpoint": (
             "explicit" if openai_cache_breakpoint else None
         ),
+        "openrouter_cache_control": (
+            "ephemeral" if openrouter_cache_control else None
+        ),
         "gemini_cached_content": args.gemini_cached_content,
         "requesty_auto_cache": args.requesty_auto_cache,
     }
@@ -11093,6 +11214,7 @@ def process_metrics_only_output(
         "verbosity": None,
         "prompt_cache_key": None,
         "openai_cache_breakpoint": None,
+        "openrouter_cache_control": None,
         "gemini_cached_content": None,
         "requesty_auto_cache": None,
     }
@@ -11595,6 +11717,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Mark the end of the static system/developer prompt as an explicit cache "
             "boundary and request a 30-minute explicit prompt cache. Intended for "
             "supporting OpenAI and OpenRouter models (for example GPT-5.6+)."
+        ),
+    )
+    parser.add_argument(
+        "--openrouter_cache_control",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add cache_control={type:ephemeral} to the stable system/developer "
+            "content block. Use this for explicit Gemini prompt caching through "
+            "OpenRouter; OpenRouter creates and manages the cache."
         ),
     )
     parser.add_argument(
@@ -12157,6 +12289,30 @@ def main(argv: Optional[List[str]] = None) -> int:
             "--openai_cache_breakpoint is supported only with --provider openai "
             "or --provider openrouter."
         )
+    model_lower = str(args.model or "").strip().lower()
+    is_openrouter_gemini = provider == "openrouter" and "gemini" in model_lower
+    if args.openrouter_cache_control and not is_openrouter_gemini:
+        parser.error(
+            "--openrouter_cache_control currently requires --provider openrouter "
+            "with a Gemini model."
+        )
+    if args.openai_cache_breakpoint and args.openrouter_cache_control:
+        parser.error(
+            "--openai_cache_breakpoint and --openrouter_cache_control are mutually exclusive."
+        )
+    if is_openrouter_gemini and args.openai_cache_breakpoint:
+        parser.error(
+            "Gemini through OpenRouter uses --openrouter_cache_control, not "
+            "--openai_cache_breakpoint."
+        )
+    if is_openrouter_gemini and (
+        args.create_gemini_cache or args.gemini_cached_content
+    ):
+        parser.error(
+            "Gemini CachedContent resources cannot be created or attached through "
+            "OpenRouter. Remove --create_gemini_cache/--gemini_cached_content and use "
+            "--openrouter_cache_control instead."
+        )
     if args.requesty_auto_cache is not None and provider != "requesty":
         logging.warning(
             "--requesty_auto_cache is set but provider is %s; this control is ignored unless --provider requesty.",
@@ -12194,6 +12350,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "prompt_cache_key": args.prompt_cache_key,
         "openai_cache_breakpoint": (
             "explicit" if args.openai_cache_breakpoint else None
+        ),
+        "openrouter_cache_control": (
+            "ephemeral" if args.openrouter_cache_control else None
         ),
         "gemini_cached_content": args.gemini_cached_content,
         "requesty_auto_cache": args.requesty_auto_cache,
@@ -12365,8 +12524,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Explicit OpenAI-compatible cache breakpoint enabled at the end of the "
             "system/developer prefix (30-minute cache TTL requested)."
         )
+    if args.openrouter_cache_control:
+        logging.info(
+            "OpenRouter Gemini cache_control breakpoint enabled at the end of the "
+            "stable system/developer prefix (OpenRouter-managed cache)."
+        )
     cache_controls_enabled_for_run = bool(
         args.openai_cache_breakpoint
+        or args.openrouter_cache_control
         or args.prompt_cache_key
         or args.gemini_cached_content
         or args.create_gemini_cache
@@ -12586,6 +12751,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     cache_pad_target_tokens=args.cache_pad_target_tokens,
                     prompt_cache_key=args.prompt_cache_key,
                     openai_cache_breakpoint=args.openai_cache_breakpoint,
+                    openrouter_cache_control=args.openrouter_cache_control,
                     cache_warmup_delay_seconds=args.cache_warmup_delay_seconds,
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,

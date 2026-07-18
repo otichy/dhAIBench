@@ -34,6 +34,7 @@ class ValidatorRunInfo:
     cache_pad_target_tokens: int
     prompt_cache_key: Optional[str]
     openai_cache_breakpoint: bool
+    openrouter_cache_control: bool
     cache_warmup_delay_seconds: float
     gemini_cached_content: Optional[str]
     requesty_auto_cache: Optional[bool]
@@ -115,6 +116,7 @@ class ValidatorClient:
                 "cache_pad_target_tokens": run_info.cache_pad_target_tokens,
                 "prompt_cache_key": run_info.prompt_cache_key,
                 "openai_cache_breakpoint": run_info.openai_cache_breakpoint,
+                "openrouter_cache_control": run_info.openrouter_cache_control,
                 "cache_warmup_delay_seconds": run_info.cache_warmup_delay_seconds,
                 "gemini_cached_content": run_info.gemini_cached_content,
                 "requesty_auto_cache": run_info.requesty_auto_cache,
