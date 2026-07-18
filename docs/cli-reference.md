@@ -20,6 +20,8 @@ usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
                           [--prompt_layout {standard,compact}]
                           [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
                           [--prompt_cache_key PROMPT_CACHE_KEY]
+                          [--openai_cache_breakpoint | --no-openai_cache_breakpoint]
+                          [--cache_warmup_delay_seconds CACHE_WARMUP_DELAY_SECONDS]
                           [--gemini_cached_content GEMINI_CACHED_CONTENT]
                           [--requesty_auto_cache | --no-requesty_auto_cache]
                           [--vertex_auto_adc_login | --no-vertex_auto_adc_login]
@@ -157,6 +159,16 @@ options:
                         improve prompt-cache hit consistency for stable prompt
                         prefixes. OpenRouter uses this as the sticky-routing key
                         when session_id is absent.
+  --openai_cache_breakpoint, --no-openai_cache_breakpoint
+                        Mark the end of the static system/developer prompt as an
+                        explicit cache boundary and request a 30-minute explicit
+                        prompt cache. Intended for supporting OpenAI and
+                        OpenRouter models (for example GPT-5.6+).
+  --cache_warmup_delay_seconds CACHE_WARMUP_DELAY_SECONDS
+                        With multiple threads and user-enabled caching, run the
+                        first work item synchronously and wait this many seconds
+                        before fan-out when its usage metadata reports a cache
+                        write (default: 5.0; 0 disables).
   --gemini_cached_content GEMINI_CACHED_CONTENT
                         Optional Gemini context-cache resource name for
                         providers that expose Gemini OpenAI-compatible caching

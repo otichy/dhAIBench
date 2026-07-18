@@ -72,6 +72,8 @@
     prompt_batch_size: "0",
     cache_pad_target_tokens: "0",
     prompt_cache_key: "",
+    openai_cache_breakpoint: false,
+    cache_warmup_delay_seconds: "5.0",
     requesty_auto_cache: false,
     vertex_auto_adc_login: true,
     vertex_access_token_refresh_seconds: "3300",
@@ -132,6 +134,8 @@
     ["prompt_batch_size", "prompt_batch_size", "prompt batch size"],
     ["cache_pad_target_tokens", "cache_pad_target_tokens", "cache padding target"],
     ["prompt_cache_key", "prompt_cache_key", "prompt cache key"],
+    ["openai_cache_breakpoint", "openai_cache_breakpoint", "explicit cache breakpoint"],
+    ["cache_warmup_delay_seconds", "cache_warmup_delay_seconds", "cache warm-up delay"],
     ["gemini_cached_content", "gemini_cached_content", "Gemini cached content"],
     ["requesty_auto_cache", "requesty_auto_cache", "Requesty auto cache"],
     ["vertex_auto_adc_login", "vertex_auto_adc_login", "Vertex ADC auto-login"],
@@ -251,7 +255,11 @@
     cache_pad_target_tokens:
       "Optional shared-prefix cache padding target. Runtime pads only the cacheable shared prefix and does not include row-specific payload fields in this estimate.",
     prompt_cache_key:
-      "Optional routing key sent as --prompt_cache_key. OpenRouter uses it for sticky routing when session_id is absent; it does not add explicit cache_control breakpoints.",
+      "Optional routing key sent as --prompt_cache_key. OpenRouter uses it for sticky routing when session_id is absent.",
+    openai_cache_breakpoint:
+      "Marks the end of the static system/developer prompt with --openai_cache_breakpoint and requests a 30-minute explicit cache on supporting OpenAI/OpenRouter models.",
+    cache_warmup_delay_seconds:
+      "With multiple threads and caching enabled, the first work item runs synchronously. If it reports a cache write, wait this many seconds before starting the remaining threads; 0 disables the barrier.",
     requesty_auto_cache:
       "Enable Requesty auto caching by adding --requesty_auto_cache (maps to extra_body.requesty.auto_cache).",
     vertex_auto_adc_login:
@@ -518,6 +526,18 @@
           helpId: "prompt_cache_key",
           modes: ["Run", "Run & Validate"],
           providers: ["OpenAI", "OpenRouter"],
+        },
+        {
+          flags: ["--openai_cache_breakpoint"],
+          helpId: "openai_cache_breakpoint",
+          modes: ["Run", "Run & Validate"],
+          providers: ["OpenAI", "OpenRouter"],
+        },
+        {
+          flags: ["--cache_warmup_delay_seconds"],
+          helpId: "cache_warmup_delay_seconds",
+          modes: ["Run", "Run & Validate"],
+          note: "Applied only when multiple threads and a cache control are enabled.",
         },
         {
           flags: ["--requesty_auto_cache"],
@@ -2902,6 +2922,16 @@
     if (promptCacheKey) {
       command.pushFlag("--prompt_cache_key", shellQuote(promptCacheKey));
     }
+    if (
+      (provider === "openai" || provider === "openrouter") &&
+      data.get("openai_cache_breakpoint")
+    ) {
+      command.pushFlag("--openai_cache_breakpoint");
+    }
+    const cacheWarmupDelay = data.get("cache_warmup_delay_seconds")?.toString().trim() ?? "";
+    if (cacheWarmupDelay && cacheWarmupDelay !== defaultValues.cache_warmup_delay_seconds) {
+      command.pushFlag("--cache_warmup_delay_seconds", cacheWarmupDelay);
+    }
     if (data.get("requesty_auto_cache")) {
       command.pushFlag("--requesty_auto_cache");
     }
@@ -3230,6 +3260,16 @@
       const promptCacheKey = data.get("prompt_cache_key")?.toString().trim() ?? "";
       if (promptCacheKey) {
         command.pushFlag("--prompt_cache_key", shellQuote(promptCacheKey));
+      }
+      if (
+        (provider === "openai" || provider === "openrouter") &&
+        data.get("openai_cache_breakpoint")
+      ) {
+        command.pushFlag("--openai_cache_breakpoint");
+      }
+      const cacheWarmupDelay = data.get("cache_warmup_delay_seconds")?.toString().trim() ?? "";
+      if (cacheWarmupDelay && cacheWarmupDelay !== defaultValues.cache_warmup_delay_seconds) {
+        command.pushFlag("--cache_warmup_delay_seconds", cacheWarmupDelay);
       }
       if (provider === "requesty" && data.get("requesty_auto_cache")) {
         command.pushFlag("--requesty_auto_cache");

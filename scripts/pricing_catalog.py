@@ -347,6 +347,18 @@ SAFE_OPENAI_SNAPSHOT_PREFIXES = (
     "o4-mini",
 )
 
+OPENAI_FLAGSHIP_MODELS = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.5-pro",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.4-pro",
+)
+
 
 def is_openai_text_pricing_candidate(model: str) -> bool:
     normalized = str(model or "").strip().lower()
@@ -405,25 +417,33 @@ def extract_openai_model_page_prices(page_text: str) -> Optional[Dict[str, Any]]
 
 def extract_openai_flagship_row(body: str, model: str) -> Optional[Tuple[Dict[str, Optional[float]], Optional[Dict[str, Any]]]]:
     pattern = re.compile(
-        rf"{re.escape(model)}\s+(\$[0-9.]+|-)\s+(\$[0-9.]+|-)\s+(\$[0-9.]+|-)\s+(\$[0-9.]+|-)\s+(\$[0-9.]+|-)\s+(\$[0-9.]+|-)",
+        rf"{re.escape(model)}(?P<prices>(?:\s*(?:\$[0-9.]+|-)){{6,8}})",
         flags=re.IGNORECASE,
     )
     match = pattern.search(body)
     if not match:
         return None
+    prices = [
+        price_number(token)
+        for token in re.findall(r"\$[0-9.]+|-", match.group("prices"))
+    ]
+    if len(prices) >= 8:
+        # The current table includes cache-write prices. The dashboard does not
+        # yet model that usage bucket, so retain input/cache-read/output only.
+        short_prices = (prices[0], prices[1], prices[3])
+        long_prices = (prices[4], prices[5], prices[7])
+    else:
+        short_prices = (prices[0], prices[1], prices[2])
+        long_prices = (prices[3], prices[4], prices[5])
     short_tier = service_tier_entry(
-        price_number(match.group(1)),
-        price_number(match.group(2)),
-        price_number(match.group(3)),
+        *short_prices,
     )
     long_context_prices = service_tier_entry(
-        price_number(match.group(4)),
-        price_number(match.group(5)),
-        price_number(match.group(6)),
+        *long_prices,
     )
     long_context = None
     if any(value is not None for value in long_context_prices.values()):
-        threshold = 272000 if model.startswith("gpt-5.4") else None
+        threshold = 272000 if model.startswith(("gpt-5.4", "gpt-5.6")) else None
         long_context = {
             "threshold_input_tokens": threshold,
             "service_tiers": {
@@ -451,29 +471,28 @@ def extract_openai_three_price_row(body: str, model: str) -> Optional[Tuple[Opti
 def parse_openai_pricing_page(page_text: str) -> Dict[str, Dict[str, Any]]:
     entries: Dict[str, Dict[str, Any]] = {}
     flagship_sections = {
-        "standard": "Standard Short context Long context Model Input Cached input Output Input Cached input Output",
-        "batch": "Batch Short context Long context Model Input Cached input Output Input Cached input Output",
-        "flex": "Flex Short context Long context Model Input Cached input Output Input Cached input Output",
-        "priority": "Priority Short context Long context Model Input Cached input Output Input Cached input Output",
+        "standard": "Standard",
+        "batch": "Batch",
+        "flex": "Flex",
+        "priority": "Priority",
     }
-    flagship_models = (
-        "gpt-5.5",
-        "gpt-5.5-pro",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano",
-        "gpt-5.4-pro",
-    )
-    for tier_name, marker in flagship_sections.items():
-        idx = page_text.find(marker)
-        if idx == -1:
+    table_header = r"Short context Long context Model Input Cached input(?: Cache writes)? Output Input Cached input(?: Cache writes)? Output"
+    for tier_name, tier_label in flagship_sections.items():
+        marker = re.search(
+            rf"(?<![A-Za-z]){tier_label}\s+{table_header}",
+            page_text,
+            flags=re.IGNORECASE,
+        )
+        if marker is None:
             continue
-        next_all_models = page_text.find("All models", idx + len(marker))
-        next_multimodal = page_text.find("Multimodal models", idx + len(marker))
+        idx = marker.start()
+        body_start = marker.end()
+        next_all_models = page_text.find("All models", body_start)
+        next_multimodal = page_text.find("Multimodal models", body_start)
         boundaries = [value for value in (next_all_models, next_multimodal) if value != -1]
         end_idx = min(boundaries) if boundaries else len(page_text)
-        body = page_text[idx + len(marker) : end_idx]
-        for model in flagship_models:
+        body = page_text[body_start:end_idx]
+        for model in OPENAI_FLAGSHIP_MODELS:
             row = extract_openai_flagship_row(body, model)
             if row is None:
                 continue
@@ -591,7 +610,9 @@ def build_openai_source_entries(models: Iterable[str], fetch_html: FetchHtmlFn) 
 
 
 GOOGLE_MODEL_LABELS = {
+    "models/gemini-3.5-flash": "Gemini 3.5 Flash",
     "models/gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
+    "models/gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
     "models/gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash-Lite Preview",
     "models/gemini-3-flash-preview": "Gemini 3 Flash Preview",
     "models/gemini-2.5-pro": "Gemini 2.5 Pro",
@@ -605,7 +626,9 @@ GOOGLE_EXPLICIT_ALIASES = {
     "models/gemini-2.0-flash-lite-001": "models/gemini-2.0-flash-lite",
 }
 VERTEX_MODEL_LABELS = {
+    "gemini-3.5-flash": "Gemini 3.5 Flash",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
     "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash-Lite Preview",
     "gemini-3-flash-preview": "Gemini 3 Flash Preview",
     "gemini-3-pro-preview": "Gemini 3 Pro Preview",
@@ -770,33 +793,42 @@ def parse_google_gemini_tier_block(block: str) -> Tuple[Optional[Dict[str, Optio
     return tier, long_context
 
 
-def parse_gemini_standard_and_batch(section_text: str) -> Optional[Dict[str, Any]]:
-    standard_match = re.search(
-        r"(?:###\s*)?Standard\b(.*?)(?:###\s*)?Batch\b",
-        section_text,
-        flags=re.IGNORECASE | re.DOTALL,
+def parse_gemini_service_tiers(section_text: str) -> Optional[Dict[str, Any]]:
+    tier_markers = list(
+        re.finditer(
+            r"###\s*(?P<fixture>Standard|Batch|Flex|Priority)\b"
+            r"|(?P<live>Standard|Batch|Flex|Priority)\s+Free Tier Paid Tier\b",
+            section_text,
+            flags=re.IGNORECASE,
+        )
     )
-    batch_match = re.search(r"(?:###\s*)?Batch\b(.*)$", section_text, flags=re.IGNORECASE | re.DOTALL)
-    if not standard_match:
+    if not tier_markers:
         return None
     service_tiers: Dict[str, Dict[str, Optional[float]]] = {}
     long_context: Optional[Dict[str, Any]] = None
-    standard_tier, standard_long = parse_google_gemini_tier_block(standard_match.group(1))
-    if standard_tier:
-        service_tiers["standard"] = standard_tier
-    if standard_long:
-        long_context = {"threshold_input_tokens": 200000, "service_tiers": {"standard": standard_long}}
-    if batch_match:
-        batch_tier, batch_long = parse_google_gemini_tier_block(batch_match.group(1))
-        if batch_tier:
-            service_tiers["batch"] = batch_tier
-        if batch_long:
+    for index, marker in enumerate(tier_markers):
+        tier_name = (marker.group("fixture") or marker.group("live")).lower()
+        # A model section can contain an unlisted submodel before the next known
+        # heading. Stop when the tier sequence starts again instead of letting
+        # the submodel overwrite the requested model's prices.
+        if tier_name in service_tiers:
+            break
+        block_end = tier_markers[index + 1].start() if index + 1 < len(tier_markers) else len(section_text)
+        tier, tier_long = parse_google_gemini_tier_block(section_text[marker.end():block_end])
+        if tier:
+            service_tiers[tier_name] = tier
+        if tier_long:
             if not long_context:
                 long_context = {"threshold_input_tokens": 200000, "service_tiers": {}}
-            long_context["service_tiers"]["batch"] = batch_long
-    if not service_tiers:
+            long_context["service_tiers"][tier_name] = tier_long
+    if "standard" not in service_tiers:
         return None
     return {"service_tiers": service_tiers, "long_context": long_context}
+
+
+def parse_gemini_standard_and_batch(section_text: str) -> Optional[Dict[str, Any]]:
+    """Backward-compatible wrapper for callers using the original parser name."""
+    return parse_gemini_service_tiers(section_text)
 
 
 def build_google_source_entries(fetch_html: FetchHtmlFn) -> Dict[str, Dict[str, Any]]:
@@ -807,7 +839,7 @@ def build_google_source_entries(fetch_html: FetchHtmlFn) -> Dict[str, Dict[str, 
         section = extract_section(text, heading)
         if not section:
             continue
-        parsed = parse_gemini_standard_and_batch(section)
+        parsed = parse_gemini_service_tiers(section)
         if not parsed:
             continue
         entries[model] = priced_entry(
@@ -1137,6 +1169,129 @@ def resolve_priced_entry(models_map: Dict[str, Dict[str, Any]], model_key: str) 
     return None
 
 
+def copy_missing_service_tiers(
+    target_entry: Dict[str, Any],
+    source_entry: Dict[str, Any],
+    tier_names: Iterable[str],
+    note: Optional[str] = None,
+) -> None:
+    """Copy explicitly sourced tiers without replacing route-specific rates."""
+    if not is_priced_entry(target_entry) or not is_priced_entry(source_entry):
+        return
+    target_tiers = target_entry.setdefault("service_tiers", {})
+    source_tiers = source_entry.get("service_tiers") or {}
+    copied_tiers = []
+    for tier_name in tier_names:
+        source_tier = source_tiers.get(tier_name)
+        if tier_name in target_tiers or not isinstance(source_tier, dict):
+            continue
+        target_tiers[tier_name] = dict(source_tier)
+        copied_tiers.append(tier_name)
+    if not copied_tiers:
+        return
+
+    target_long = target_entry.get("long_context")
+    source_long = source_entry.get("long_context")
+    if isinstance(source_long, dict):
+        if not isinstance(target_long, dict):
+            target_long = {
+                "threshold_input_tokens": source_long.get("threshold_input_tokens"),
+                "service_tiers": {},
+            }
+            target_entry["long_context"] = target_long
+        target_long_tiers = target_long.setdefault("service_tiers", {})
+        source_long_tiers = source_long.get("service_tiers") or {}
+        for tier_name in copied_tiers:
+            source_long_tier = source_long_tiers.get(tier_name)
+            if tier_name not in target_long_tiers and isinstance(source_long_tier, dict):
+                target_long_tiers[tier_name] = dict(source_long_tier)
+
+    target_entry["sources"] = dedupe_sources(
+        list(target_entry.get("sources") or []) + list(source_entry.get("sources") or [])
+    )
+    if note:
+        target_entry["notes"] = sorted(set(list(target_entry.get("notes") or []) + [note]))
+
+
+def populate_documented_flex_prices(providers: Dict[str, Any]) -> None:
+    """Fill Flex tiers documented upstream and propagate them to proxy routes."""
+    openai_models = ((providers.get("openai") or {}).get("models") or {})
+    if isinstance(openai_models, dict):
+        for model in OPENAI_FLAGSHIP_MODELS:
+            entry = openai_models.get(model)
+            if not is_priced_entry(entry):
+                continue
+            tiers = entry.setdefault("service_tiers", {})
+            if "flex" in tiers:
+                continue
+            batch_tier = tiers.get("batch")
+            standard_tier = tiers.get("standard")
+            if isinstance(batch_tier, dict):
+                flex_tier = dict(batch_tier)
+            elif isinstance(standard_tier, dict):
+                flex_tier = {
+                    key: value * 0.5 if isinstance(value, (int, float)) else None
+                    for key, value in standard_tier.items()
+                }
+            else:
+                continue
+            tiers["flex"] = flex_tier
+            entry["sources"] = dedupe_sources(
+                list(entry.get("sources") or [])
+                + [{"label": "OpenAI Pricing", "url": OPENAI_PRICING_URL}]
+            )
+
+    google_models = ((providers.get("google") or {}).get("models") or {})
+    if isinstance(google_models, dict):
+        for model in GOOGLE_MODEL_LABELS:
+            entry = google_models.get(model)
+            if not is_priced_entry(entry):
+                continue
+            tiers = entry.setdefault("service_tiers", {})
+            batch_tier = tiers.get("batch")
+            if "flex" not in tiers and isinstance(batch_tier, dict):
+                tiers["flex"] = dict(batch_tier)
+                entry["sources"] = dedupe_sources(
+                    list(entry.get("sources") or [])
+                    + [{"label": "Gemini Developer API Pricing", "url": GOOGLE_PRICING_URL}]
+                )
+            long_context = entry.get("long_context")
+            if isinstance(long_context, dict):
+                long_tiers = long_context.setdefault("service_tiers", {})
+                if "flex" not in long_tiers and isinstance(long_tiers.get("batch"), dict):
+                    long_tiers["flex"] = dict(long_tiers["batch"])
+
+    route_sources = (
+        ("openrouter", "openai/", "openai", ""),
+        ("openrouter", "google/", "google", "models/"),
+        ("requesty", "openai/", "openai", ""),
+        ("requesty", "openai-responses/", "openai", ""),
+        ("requesty", "google/", "google", "models/"),
+        ("requesty", "vertex/", "vertex", ""),
+    )
+    for target_provider, route_prefix, source_provider, source_prefix in route_sources:
+        target_models = ((providers.get(target_provider) or {}).get("models") or {})
+        source_models = ((providers.get(source_provider) or {}).get("models") or {})
+        if not isinstance(target_models, dict) or not isinstance(source_models, dict):
+            continue
+        for target_key, target_entry in target_models.items():
+            if not target_key.startswith(route_prefix) or has_pricing_ref(target_entry):
+                continue
+            model_tail = target_key[len(route_prefix):]
+            source_entry = resolve_priced_entry(source_models, f"{source_prefix}{model_tail}")
+            if source_entry is None:
+                continue
+            copy_missing_service_tiers(
+                target_entry,
+                source_entry,
+                ("flex",),
+                note=(
+                    f"{target_provider.capitalize()} {route_prefix.rstrip('/')} route uses the "
+                    f"upstream {source_provider} Flex token rates."
+                ),
+            )
+
+
 def populate_requesty_shared_model_prices(providers: Dict[str, Any]) -> None:
     """Reuse upstream GPT/Gemini rates for matching Requesty direct routes.
 
@@ -1230,7 +1385,9 @@ def build_pricing_catalog(
         add_legacy_slug_aliases(provider_models)
         providers_out[provider_key] = {"models": provider_models}
 
+    populate_documented_flex_prices(providers_out)
     populate_requesty_shared_model_prices(providers_out)
+    populate_documented_flex_prices(providers_out)
 
     return {
         "updated_at": updated_at or utc_timestamp(),

@@ -57,6 +57,7 @@ MANDATORY_SYSTEM_APPEND = (
 EMPTY_RESPONSE_RETRY_DELAY_SECONDS = 120.0
 RESOURCE_EXHAUSTED_RETRY_DELAYS_SECONDS: Tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_CACHE_WARMUP_DELAY_SECONDS = 5.0
 GEMINI_CACHE_HTTP_FALLBACK_TIMEOUT_SECONDS = 60.0
 GEMINI_CACHE_CREATE_MAX_ATTEMPTS = 3
 GEMINI_CACHE_CREATE_RETRY_BASE_DELAY_SECONDS = 2.0
@@ -187,6 +188,8 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "prompt_batch_size",
     "cache_pad_target_tokens",
     "prompt_cache_key",
+    "openai_cache_breakpoint",
+    "cache_warmup_delay_seconds",
     "gemini_cached_content",
     "requesty_auto_cache",
     "vertex_auto_adc_login",
@@ -508,6 +511,7 @@ def compute_request_control_summary(
         "effort",
         "verbosity",
         "prompt_cache_key",
+        "openai_cache_breakpoint",
         "gemini_cached_content",
         "requesty_auto_cache",
     )
@@ -634,6 +638,31 @@ def _normalize_metric_number(value: float) -> Any:
     if math.isfinite(value) and abs(value - rounded) < 1e-9:
         return int(rounded)
     return value
+
+
+def cache_write_tokens_from_attempt_logs(attempt_logs: Any) -> float:
+    """Return cache-write/create tokens reported by a set of request attempts."""
+    total = 0.0
+    if not isinstance(attempt_logs, list):
+        return total
+    for attempt in attempt_logs:
+        if not isinstance(attempt, dict):
+            continue
+        response_payload = attempt.get("response")
+        if not isinstance(response_payload, dict):
+            continue
+        usage_metadata = response_payload.get("usage_metadata")
+        if not isinstance(usage_metadata, dict):
+            continue
+        for field_path, value in _flatten_numeric_metrics(usage_metadata).items():
+            lowered = field_path.lower()
+            if (
+                ("cache" in lowered or "cached" in lowered)
+                and "token" in lowered
+                and any(marker in lowered for marker in ("write", "creation", "create"))
+            ):
+                total += value
+    return total
 
 
 def compute_usage_metadata_summary(log_records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1958,7 +1987,7 @@ class CompletionResult:
 
 @dataclass
 class PromptBuildArtifacts:
-    messages: List[Dict[str, str]]
+    messages: List[Dict[str, Any]]
     shared_prefix_text: str
     variable_payload_text: str
     shared_prefix_tokens_estimate: int
@@ -6026,6 +6055,74 @@ def select_few_shot_examples_for_batch(
 # --------------------------- OpenAI Client --------------------------------- #
 
 
+def prepare_openai_explicit_cache_messages(
+    messages: List[Dict[str, Any]],
+    *,
+    content_type: str = "text",
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Mark the end of the static system/developer prefix for explicit caching."""
+    prepared = copy.deepcopy(messages)
+    for message in reversed(prepared):
+        if str(message.get("role") or "").strip().lower() not in {"system", "developer"}:
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = [
+                {
+                    "type": content_type,
+                    "text": content,
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }
+            ]
+            return prepared, True
+        if isinstance(content, list):
+            for block in reversed(content):
+                if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+                    continue
+                block["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                if not block.get("type"):
+                    block["type"] = content_type
+                return prepared, True
+        break
+    return prepared, False
+
+
+def _messages_have_openai_cache_breakpoint(messages: Any) -> bool:
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and isinstance(block.get("prompt_cache_breakpoint"), dict)
+                and block["prompt_cache_breakpoint"].get("mode") == "explicit"
+            ):
+                return True
+    return False
+
+
+def _strip_openai_cache_breakpoints(messages: Any) -> bool:
+    removed = False
+    if not isinstance(messages, list):
+        return removed
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and "prompt_cache_breakpoint" in block:
+                block.pop("prompt_cache_breakpoint", None)
+                removed = True
+    return removed
+
+
 class OpenAIConnector:
     """Thin wrapper supporting both legacy and modern OpenAI Python SDKs."""
 
@@ -6143,7 +6240,7 @@ class OpenAIConnector:
     def complete(
         self,
         model: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         temperature: Optional[float],
         top_p: Optional[float],
         top_k: Optional[int],
@@ -6156,6 +6253,7 @@ class OpenAIConnector:
         prompt_cache_key: Optional[str],
         gemini_cached_content: Optional[str],
         requesty_auto_cache: Optional[bool],
+        openai_cache_breakpoint: bool = False,
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
@@ -6206,6 +6304,8 @@ class OpenAIConnector:
             requested_controls["service_tier"] = service_tier
         if normalized_prompt_cache_key:
             requested_controls["prompt_cache_key"] = normalized_prompt_cache_key
+        if openai_cache_breakpoint:
+            requested_controls["openai_cache_breakpoint"] = "explicit"
         if normalized_gemini_cached_content and is_gemini_target:
             requested_controls["gemini_cached_content"] = normalized_gemini_cached_content
         if normalized_requesty_auto_cache is not None and is_requesty_target:
@@ -6225,6 +6325,8 @@ class OpenAIConnector:
                 "verbosity": "verbosity",
                 "service_tier": "service_tier",
                 "prompt_cache_key": "prompt_cache_key",
+                "prompt_cache_options": "openai_cache_breakpoint",
+                "prompt_cache_breakpoint": "openai_cache_breakpoint",
                 "cached_content": "gemini_cached_content",
                 "gemini_cached_content": "gemini_cached_content",
                 "google_cached_content": "gemini_cached_content",
@@ -6267,6 +6369,10 @@ class OpenAIConnector:
                 "logprobs": "logprobs",
                 "promptcachekey": "prompt_cache_key",
                 "prompt_cache_key": "prompt_cache_key",
+                "promptcacheoptions": "prompt_cache_options",
+                "prompt_cache_options": "prompt_cache_options",
+                "promptcachebreakpoint": "prompt_cache_breakpoint",
+                "prompt_cache_breakpoint": "prompt_cache_breakpoint",
                 "cachedcontent": "cached_content",
                 "cached_content": "cached_content",
                 "google_cached_content": "cached_content",
@@ -6406,6 +6512,18 @@ class OpenAIConnector:
             if "prompt_cache_key" in text or "prompt cache key" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "prompt_cache_key"
+            if (
+                "prompt_cache_options" in text
+                or "prompt cache options" in text
+                or "prompt_cache_breakpoint" in text
+                or "prompt cache breakpoint" in text
+            ):
+                if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
+                    return (
+                        "prompt_cache_breakpoint"
+                        if "breakpoint" in text
+                        else "prompt_cache_options"
+                    )
             if "cached_content" in text or "cached content" in text:
                 if any(marker in text for marker in ("unsupported", "unknown", "unrecognized", "invalid", "not allowed")):
                     return "cached_content"
@@ -6475,6 +6593,23 @@ class OpenAIConnector:
             extra_body["requesty"] = requesty_payload
             request_args["extra_body"] = extra_body
 
+        def apply_openai_cache_controls(request_args: Dict[str, Any]) -> None:
+            if not openai_cache_breakpoint:
+                return
+            request_messages = request_args.get("messages", request_args.get("input"))
+            if not _messages_have_openai_cache_breakpoint(request_messages):
+                rejected_controls["openai_cache_breakpoint"] = "missing_system_or_developer_prefix"
+                return
+            extra_body: Dict[str, Any] = {}
+            existing_extra = request_args.get("extra_body")
+            if isinstance(existing_extra, dict):
+                extra_body.update(existing_extra)
+            extra_body["prompt_cache_options"] = {
+                "mode": "explicit",
+                "ttl": "30m",
+            }
+            request_args["extra_body"] = extra_body
+
         def remove_request_parameter(request_args: Dict[str, Any], param_name: str) -> bool:
             removed = False
             if param_name == "reasoning":
@@ -6497,6 +6632,13 @@ class OpenAIConnector:
                 extra_body.pop(param_name, None)
                 removed = True
             if isinstance(extra_body, dict):
+                if param_name in {"prompt_cache_options", "prompt_cache_breakpoint"}:
+                    if "prompt_cache_options" in extra_body:
+                        extra_body.pop("prompt_cache_options", None)
+                        removed = True
+                    for message_key in ("messages", "input"):
+                        if _strip_openai_cache_breakpoints(request_args.get(message_key)):
+                            removed = True
                 if param_name in {"thinkingLevel", "thinking_level", "thinking_config", "google_thinking_config"}:
                     gemini_inner = extra_body.get("extra_body")
                     if isinstance(gemini_inner, dict):
@@ -6580,6 +6722,14 @@ class OpenAIConnector:
 
             extra_body = request_args.get("extra_body")
             if isinstance(extra_body, dict):
+                prompt_cache_options = extra_body.get("prompt_cache_options")
+                request_messages = request_args.get("messages", request_args.get("input"))
+                if (
+                    isinstance(prompt_cache_options, dict)
+                    and prompt_cache_options.get("mode") == "explicit"
+                    and _messages_have_openai_cache_breakpoint(request_messages)
+                ):
+                    sent["openai_cache_breakpoint"] = "explicit"
                 extra_reasoning = extra_body.get("reasoning")
                 if isinstance(extra_reasoning, dict):
                     effort_value = extra_reasoning.get("effort")
@@ -6871,9 +7021,23 @@ class OpenAIConnector:
             return message_text, token_logprobs
 
         def complete_with_responses_api() -> CompletionResult:
+            response_messages = messages
+            if openai_cache_breakpoint:
+                response_messages = copy.deepcopy(messages)
+                for message in response_messages:
+                    content = message.get("content") if isinstance(message, dict) else None
+                    if not isinstance(content, list):
+                        continue
+                    for block in content:
+                        if (
+                            isinstance(block, dict)
+                            and "prompt_cache_breakpoint" in block
+                            and block.get("type") == "text"
+                        ):
+                            block["type"] = "input_text"
             request_args = {
                 "model": request_model,
-                "input": messages,
+                "input": response_messages,
             }
             if self._request_timeout_seconds is not None:
                 request_args["timeout"] = self._request_timeout_seconds
@@ -6895,6 +7059,7 @@ class OpenAIConnector:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
+            apply_openai_cache_controls(request_args)
             with self._state_lock:
                 known_responses_unsupported = set(
                     self._responses_unsupported_params.get(model_key, set())
@@ -7024,6 +7189,7 @@ class OpenAIConnector:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
             apply_reasoning_controls(request_args)
             apply_requesty_controls(request_args)
+            apply_openai_cache_controls(request_args)
             with self._state_lock:
                 known_chat_unsupported = set(self._chat_unsupported_params.get(model_key, set()))
             for unsupported in known_chat_unsupported:
@@ -7115,6 +7281,9 @@ class OpenAIConnector:
                 request_args["service_tier"] = service_tier
             if normalized_prompt_cache_key:
                 request_args["prompt_cache_key"] = normalized_prompt_cache_key
+            if openai_cache_breakpoint:
+                mark_control_rejected("prompt_cache_breakpoint", "legacy_sdk_ignored")
+                _strip_openai_cache_breakpoints(request_args["messages"])
             if normalized_gemini_cached_content:
                 mark_control_rejected("cached_content", "legacy_sdk_ignored")
             if normalized_requesty_auto_cache is not None and is_requesty_target:
@@ -8371,6 +8540,7 @@ def classify_example(
     prompt_cache_key: Optional[str] = None,
     gemini_cached_content: Optional[str] = None,
     requesty_auto_cache: Optional[bool] = None,
+    openai_cache_breakpoint: bool = False,
     prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
 ) -> Tuple[Prediction, List[Dict[str, Any]]]:
     """Query the model and parse the prediction, returning attempt logs."""
@@ -8387,6 +8557,22 @@ def classify_example(
         suppress_system_message=bool(gemini_cached_content),
     )
     base_messages = prompt_artifacts.messages
+    if openai_cache_breakpoint:
+        content_type = (
+            "input_text"
+            if getattr(connector, "client_type", "chat_v1") == "responses_v1"
+            else "text"
+        )
+        base_messages, breakpoint_applied = prepare_openai_explicit_cache_messages(
+            base_messages,
+            content_type=content_type,
+        )
+        if not breakpoint_applied:
+            logging.warning(
+                "Explicit cache breakpoint requested for example %s, but the prompt has no "
+                "system/developer message to mark.",
+                example.example_id,
+            )
     validator_patch_message: Optional[Dict[str, str]] = None
     validator_status: Optional[str] = None
     validator_reason: Optional[str] = None
@@ -8406,7 +8592,7 @@ def classify_example(
     while True:
         attempt += 1
         attempt_max_for_telemetry = max(max_retries, attempt)
-        messages = list(base_messages)
+        messages = copy.deepcopy(base_messages)
         if validator_patch_message is not None:
             messages.append(validator_patch_message)
 
@@ -8453,6 +8639,7 @@ def classify_example(
                 prompt_cache_key=prompt_cache_key,
                 gemini_cached_content=gemini_cached_content,
                 requesty_auto_cache=requesty_auto_cache,
+                openai_cache_breakpoint=openai_cache_breakpoint,
             )
             raw = result.text
             latest_raw_response = raw
@@ -9092,6 +9279,7 @@ def classify_examples_batch(
     prompt_cache_key: Optional[str] = None,
     gemini_cached_content: Optional[str] = None,
     requesty_auto_cache: Optional[bool] = None,
+    openai_cache_breakpoint: bool = False,
     prompt_log_detail: str = DEFAULT_PROMPT_LOG_DETAIL,
 ) -> BatchClassificationResult:
     """Classify a batch once, returning invalid/missing members for individual fallback."""
@@ -9108,6 +9296,22 @@ def classify_examples_batch(
         suppress_system_message=bool(gemini_cached_content),
     )
     base_messages = prompt_artifacts.messages
+    if openai_cache_breakpoint:
+        content_type = (
+            "input_text"
+            if getattr(connector, "client_type", "chat_v1") == "responses_v1"
+            else "text"
+        )
+        base_messages, breakpoint_applied = prepare_openai_explicit_cache_messages(
+            base_messages,
+            content_type=content_type,
+        )
+        if not breakpoint_applied:
+            logging.warning(
+                "Explicit cache breakpoint requested for batch %s, but the prompt has no "
+                "system/developer message to mark.",
+                batch_id,
+            )
     expected = {example.example_id: example for example in examples}
     detail_mode = normalize_prompt_log_detail(prompt_log_detail)
     include_full_prompt_log = detail_mode == PROMPT_LOG_DETAIL_FULL
@@ -9121,7 +9325,7 @@ def classify_examples_batch(
     attempt = 0
     while attempt < max(1, max_retries):
         attempt += 1
-        messages = list(base_messages)
+        messages = copy.deepcopy(base_messages)
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
             "timestamp": utc_timestamp(),
@@ -9155,6 +9359,7 @@ def classify_examples_batch(
                 prompt_cache_key=prompt_cache_key,
                 gemini_cached_content=gemini_cached_content,
                 requesty_auto_cache=requesty_auto_cache,
+                openai_cache_breakpoint=openai_cache_breakpoint,
             )
             raw = result.text
             latest_prompt_tokens = result.prompt_tokens
@@ -9454,6 +9659,26 @@ def process_dataset(
     cache_padding_calibration_example_id: Optional[str] = None
     cache_padding_applied_examples = 0
     cache_padding_missing_prefix_warned = False
+    openai_cache_breakpoint = bool(getattr(args, "openai_cache_breakpoint", False))
+    cache_warmup_delay_seconds = max(
+        0.0,
+        float(getattr(args, "cache_warmup_delay_seconds", 0.0) or 0.0),
+    )
+    cache_controls_enabled = bool(
+        openai_cache_breakpoint
+        or getattr(args, "prompt_cache_key", None)
+        or getattr(args, "gemini_cached_content", None)
+        or getattr(args, "requesty_auto_cache", None) is True
+        or cache_pad_target_tokens > 0
+    )
+    cache_warmup_enabled = bool(
+        worker_threads > 1
+        and cache_controls_enabled
+        and cache_warmup_delay_seconds > 0
+    )
+    cache_warmup_attempted = False
+    cache_warmup_wait_applied = False
+    cache_warmup_write_tokens = 0.0
 
     # When --create_gemini_cache pre-computed a fixed padding, use it for every request
     # instead of calibrating at runtime.  This ensures the system message in each request
@@ -9808,6 +10033,7 @@ def process_dataset(
                     prompt_cache_key=args.prompt_cache_key,
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,
+                    openai_cache_breakpoint=openai_cache_breakpoint,
                     prompt_log_detail=prompt_log_detail,
                 )
                 return prediction, attempt_logs, padding_active_for_example
@@ -9906,6 +10132,7 @@ def process_dataset(
                     prompt_cache_key=args.prompt_cache_key,
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,
+                    openai_cache_breakpoint=openai_cache_breakpoint,
                     prompt_log_detail=prompt_log_detail,
                 )
                 member_results: List[
@@ -10123,6 +10350,64 @@ def process_dataset(
                         batch_source=batch_source,
                     )
 
+            def wait_for_cache_propagation(attempt_logs: Any) -> None:
+                """Pause before fan-out only when the warm-up request wrote a cache entry."""
+                nonlocal cache_warmup_attempted
+                nonlocal cache_warmup_wait_applied
+                nonlocal cache_warmup_write_tokens
+                cache_warmup_attempted = True
+                cache_warmup_write_tokens = cache_write_tokens_from_attempt_logs(
+                    attempt_logs
+                )
+                if cache_warmup_write_tokens <= 0:
+                    logging.info(
+                        "Cache warm-up request reported no cache-write tokens; "
+                        "starting the remaining worker threads immediately."
+                    )
+                    return
+                cache_warmup_wait_applied = True
+                logging.info(
+                    "Cache warm-up request wrote approximately %s token(s); waiting %.1f "
+                    "second(s) for cache propagation before starting remaining worker threads.",
+                    _normalize_metric_number(cache_warmup_write_tokens),
+                    cache_warmup_delay_seconds,
+                )
+                time.sleep(cache_warmup_delay_seconds)
+
+            if (
+                not prompt_batching_enabled
+                and cache_warmup_enabled
+                and len(pending_examples) > 1
+            ):
+                logging.info(
+                    "Running the first example synchronously to warm the provider cache."
+                )
+                warm_example = pending_examples[0]
+                processed_this_run += 1
+                try:
+                    (
+                        warm_prediction,
+                        warm_attempt_logs,
+                        warm_padding_active,
+                    ) = classify_single_example(warm_example, processed_this_run)
+                except (ProviderQuotaExceededError, ProviderEmptyResponseError) as exc:
+                    halted_by_quota = True
+                    pending_examples = []
+                    logging.error("%s", exc)
+                    logging.error(
+                        "Stopping dataset early during cache warm-up. Partial outputs were "
+                        "saved and can be resumed later."
+                    )
+                else:
+                    commit_prediction(
+                        warm_example,
+                        warm_prediction,
+                        warm_attempt_logs,
+                        warm_padding_active,
+                    )
+                    pending_examples = pending_examples[1:]
+                    wait_for_cache_propagation(warm_attempt_logs)
+
             try:
                 if prompt_batching_enabled:
                     prompt_batches = [
@@ -10135,7 +10420,40 @@ def process_dataset(
                         len(prompt_batches),
                         prompt_batch_size,
                     )
-                    if worker_threads <= 1 or len(prompt_batches) <= 1:
+                    warm_batch_completed = False
+                    if cache_warmup_enabled and len(prompt_batches) > 1:
+                        logging.info(
+                            "Running the first prompt batch synchronously to warm the provider cache."
+                        )
+                        try:
+                            warm_member_results, warm_batch_record = classify_prompt_batch(
+                                prompt_batches[0],
+                                0,
+                                1,
+                            )
+                        except (ProviderQuotaExceededError, ProviderEmptyResponseError) as exc:
+                            halted_by_quota = True
+                            logging.error("%s", exc)
+                            logging.error(
+                                "Stopping dataset early during cache warm-up. Partial outputs "
+                                "were saved and can be resumed later."
+                            )
+                        else:
+                            commit_prompt_batch(warm_member_results, warm_batch_record)
+                            warm_batch_completed = True
+                            warm_attempt_logs = (
+                                warm_batch_record.get("attempts", [])
+                                if isinstance(warm_batch_record, dict)
+                                else (
+                                    warm_member_results[0][2]
+                                    if warm_member_results
+                                    else []
+                                )
+                            )
+                            wait_for_cache_propagation(warm_attempt_logs)
+                    if halted_by_quota:
+                        pass
+                    elif worker_threads <= 1 or len(prompt_batches) <= 1:
                         for batch_index, batch_examples in enumerate(prompt_batches):
                             first_progress_index = batch_index * prompt_batch_size + 1
                             try:
@@ -10162,7 +10480,11 @@ def process_dataset(
                                 break
                             commit_prompt_batch(member_results, batch_record)
                     else:
-                        thread_count = min(worker_threads, len(prompt_batches))
+                        first_parallel_batch_order = 1 if warm_batch_completed else 0
+                        parallel_batch_count = (
+                            len(prompt_batches) - first_parallel_batch_order
+                        )
+                        thread_count = min(worker_threads, parallel_batch_count)
                         max_in_flight = max(thread_count * 2, thread_count)
                         future_to_order: Dict[
                             Future[
@@ -10196,8 +10518,8 @@ def process_dataset(
                                 Optional[Dict[str, Any]],
                             ],
                         ] = {}
-                        next_submit_order = 0
-                        next_write_order = 0
+                        next_submit_order = first_parallel_batch_order
+                        next_write_order = first_parallel_batch_order
                         terminal_order: Optional[int] = None
                         terminal_exception: Optional[Exception] = None
                         halt_message_logged = False
@@ -10223,7 +10545,7 @@ def process_dataset(
 
                         logging.info(
                             "Classifying %d prompt batch(es) using %d worker threads (max in flight: %d).",
-                            len(prompt_batches),
+                            parallel_batch_count,
                             thread_count,
                             max_in_flight,
                         )
@@ -10335,7 +10657,7 @@ def process_dataset(
                     buffered_results: Dict[int, Tuple[Prediction, List[Dict[str, Any]], bool]] = {}
                     next_submit_order = 0
                     next_write_order = 0
-                    submitted_total = 0
+                    submitted_total = processed_this_run
                     terminal_order: Optional[int] = None
                     terminal_exception: Optional[Exception] = None
                     halt_message_logged = False
@@ -10497,6 +10819,9 @@ def process_dataset(
         "effort": args.effort,
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
+        "openai_cache_breakpoint": (
+            "explicit" if openai_cache_breakpoint else None
+        ),
         "gemini_cached_content": args.gemini_cached_content,
         "requesty_auto_cache": args.requesty_auto_cache,
     }
@@ -10530,6 +10855,15 @@ def process_dataset(
         "task_description": str(getattr(args, "task_description", "") or "").strip(),
         "tags": normalize_metrics_tags_value(getattr(args, "tags", "")),
         "cache_padding": cache_padding_summary,
+        "cache_warmup": {
+            "enabled": cache_warmup_enabled,
+            "delay_seconds": cache_warmup_delay_seconds,
+            "attempted": cache_warmup_attempted,
+            "wait_applied": cache_warmup_wait_applied,
+            "reported_cache_write_tokens": _normalize_metric_number(
+                cache_warmup_write_tokens
+            ),
+        },
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
         "token_usage_totals": token_usage_totals,
@@ -10758,6 +11092,7 @@ def process_metrics_only_output(
         "effort": None,
         "verbosity": None,
         "prompt_cache_key": None,
+        "openai_cache_breakpoint": None,
         "gemini_cached_content": None,
         "requesty_auto_cache": None,
     }
@@ -11253,6 +11588,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--openai_cache_breakpoint",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Mark the end of the static system/developer prompt as an explicit cache "
+            "boundary and request a 30-minute explicit prompt cache. Intended for "
+            "supporting OpenAI and OpenRouter models (for example GPT-5.6+)."
+        ),
+    )
+    parser.add_argument(
+        "--cache_warmup_delay_seconds",
+        type=float,
+        default=DEFAULT_CACHE_WARMUP_DELAY_SECONDS,
+        help=(
+            "With multiple threads and user-enabled caching, run the first work item "
+            "synchronously and wait this many seconds before fan-out when its usage "
+            "metadata reports a cache write (default: 5.0; 0 disables)."
+        ),
+    )
+    parser.add_argument(
         "--gemini_cached_content",
         default=None,
         help=(
@@ -11702,6 +12057,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--request_timeout_seconds must be a finite number.")
     if args.threads <= 0:
         parser.error("--threads must be > 0.")
+    if (
+        not math.isfinite(args.cache_warmup_delay_seconds)
+        or args.cache_warmup_delay_seconds < 0
+    ):
+        parser.error("--cache_warmup_delay_seconds must be a finite number >= 0.")
     if args.flush_rows <= 0:
         parser.error("--flush_rows must be > 0.")
     if args.flush_seconds < 0:
@@ -11792,6 +12152,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     env_map = parse_env_file(".env")
 
     provider = (args.provider or "openai").lower()
+    if args.openai_cache_breakpoint and provider not in {"openai", "openrouter"}:
+        parser.error(
+            "--openai_cache_breakpoint is supported only with --provider openai "
+            "or --provider openrouter."
+        )
     if args.requesty_auto_cache is not None and provider != "requesty":
         logging.warning(
             "--requesty_auto_cache is set but provider is %s; this control is ignored unless --provider requesty.",
@@ -11827,6 +12192,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "effort": args.effort,
         "verbosity": args.verbosity,
         "prompt_cache_key": args.prompt_cache_key,
+        "openai_cache_breakpoint": (
+            "explicit" if args.openai_cache_breakpoint else None
+        ),
         "gemini_cached_content": args.gemini_cached_content,
         "requesty_auto_cache": args.requesty_auto_cache,
     }
@@ -11992,6 +12360,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             logging.info(
                 "Prompt cache key is shared across threads; stable shared prefixes can reuse cache entries."
             )
+    if args.openai_cache_breakpoint:
+        logging.info(
+            "Explicit OpenAI-compatible cache breakpoint enabled at the end of the "
+            "system/developer prefix (30-minute cache TTL requested)."
+        )
+    cache_controls_enabled_for_run = bool(
+        args.openai_cache_breakpoint
+        or args.prompt_cache_key
+        or args.gemini_cached_content
+        or args.create_gemini_cache
+        or args.requesty_auto_cache is True
+        or args.cache_pad_target_tokens > 0
+    )
+    if args.threads > 1 and cache_controls_enabled_for_run:
+        if args.cache_warmup_delay_seconds > 0:
+            logging.info(
+                "Cache warm-up barrier enabled: the first work item will run synchronously; "
+                "a reported cache write triggers a %.1f-second propagation delay before fan-out.",
+                args.cache_warmup_delay_seconds,
+            )
+        else:
+            logging.info("Cache warm-up barrier disabled by a 0-second delay.")
     if args.gemini_cached_content:
         logging.info("Gemini cached content configured: %s", args.gemini_cached_content)
         if args.threads > 1:
@@ -12195,6 +12585,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     verbosity=args.verbosity,
                     cache_pad_target_tokens=args.cache_pad_target_tokens,
                     prompt_cache_key=args.prompt_cache_key,
+                    openai_cache_breakpoint=args.openai_cache_breakpoint,
+                    cache_warmup_delay_seconds=args.cache_warmup_delay_seconds,
                     gemini_cached_content=args.gemini_cached_content,
                     requesty_auto_cache=args.requesty_auto_cache,
                     max_retries=args.max_retries,

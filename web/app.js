@@ -155,7 +155,7 @@ const PERCENT_METRIC_KEYS = new Set([
   "calibration_ece",
 ]);
 const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision", "macro_recall"]);
-const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece"]);
+const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece", "estimated_cost_usd"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
 const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar", "agreement"]);
@@ -165,6 +165,7 @@ const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
 const PRICE_SCATTER_COST_MODE_KEYS = new Set(["total", "per_prompt"]);
 const AGREEMENT_REPRESENTATIVE_POLICY_KEYS = new Set(["latest", "best_accuracy"]);
 const LEADERBOARD_TABLE_METRICS = [
+  "estimated_cost_usd",
   "accuracy",
   "cohen_kappa",
   "repeat_alpha",
@@ -180,6 +181,7 @@ let urlStateSyncEnabled = false;
 let shareButtonResetTimer = null;
 
 const METRIC_LABELS = {
+  estimated_cost_usd: "Price Estimate",
   accuracy: "Accuracy",
   cohen_kappa: "Cohen's Kappa",
   repeat_alpha: "Repeat α",
@@ -3269,6 +3271,7 @@ function setupSourceControls() {
 }
 
 function getMetricValueForRun(run, key) {
+  if (key === "estimated_cost_usd") return run.estimatedCostUsd;
   if (key === "accuracy") return run.accuracy;
   if (key === "cohen_kappa") return run.cohenKappa;
   if (key === "repeat_alpha") {
@@ -3303,6 +3306,9 @@ function resolveLeaderboardBarMax(metricKey, values) {
 function formatMetric(metricKey, value, digits = 2, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "N/A";
+  }
+  if (metricKey === "estimated_cost_usd") {
+    return formatUsd(value);
   }
   const unit = isPercentMetric(metricKey) ? "%" : "";
   return `${formatNum(value, digits)}${unit}${suffix}`;
@@ -8380,7 +8386,6 @@ function renderTable(runs) {
         "Calibration ECE",
         run.calibrationEce !== null ? `${formatNum(run.calibrationEce, 2)}%` : '<span class="muted">N/A</span>'
       ),
-      renderTableCell("Price Estimate", formatUsd(run.estimatedCostUsd), "mono"),
       renderTableCell("Requests", formatNum(run.requestsTotal, 0), "mono"),
       renderTableCell("Cached Input Tokens", formatNum(run.cachedTokens, 0), "mono"),
       renderTableCell("File", run.fileName, "mono table-cell-full"),

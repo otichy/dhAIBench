@@ -32,6 +32,8 @@ Use only the controls supported by your target provider:
 - `--thinking_level {minimal,low,medium,high}` for Gemini thinking configuration
 - `--effort {low,medium,high,max}` for Claude-style effort
 - `--prompt_cache_key` for OpenAI-style cache routing
+- `--openai_cache_breakpoint` for the OpenAI-compatible explicit system-prefix boundary
+- `--cache_warmup_delay_seconds` for multithreaded cache propagation
 - `--gemini_cached_content` or `--create_gemini_cache` for Gemini context caching
 - `--requesty_auto_cache` for Requesty automatic caching
 - `--strict_control_acceptance` to fail when requested controls are dropped
@@ -55,8 +57,7 @@ model-endpoints listing when validating billing or routing.
 
 ## OpenRouter Prompt Caching
 
-For models with automatic prompt caching, including supported OpenAI models, no
-cache-enabling request field is required. Keep the shared prefix stable and use:
+For models with automatic prompt caching, keep the shared prefix stable and use:
 
 ```bash
 python benchmark_agent.py --provider openrouter --model openai/gpt-5 \
@@ -69,14 +70,35 @@ The cache key is sent as the top-level `prompt_cache_key` field. When no
 requests stay on the same provider endpoint. It does not itself create an
 explicit cache breakpoint.
 
+For supporting OpenAI models that expose explicit prompt caching (for example,
+GPT-5.6+), add a boundary after the static system/developer prompt:
+
+```bash
+python benchmark_agent.py --provider openrouter --model openai/gpt-5.6 \
+  --prompt_layout compact --prompt_cache_key benchmark-prefix-v1 \
+  --openai_cache_breakpoint --threads 10 --cache_warmup_delay_seconds 5 \
+  --input data/input/example.csv
+```
+
+`--openai_cache_breakpoint` adds `prompt_cache_breakpoint: {"mode":"explicit"}`
+to the last text block of the system/developer message and sends
+`prompt_cache_options: {"mode":"explicit","ttl":"30m"}`. This keeps the
+row-specific user message outside the explicit cache boundary.
+
+When caching is enabled with multiple threads, the first work item is sent
+synchronously. If its usage metadata reports cache-write/create tokens, the
+runner waits `--cache_warmup_delay_seconds` (5 seconds by default) before starting
+the remaining threads. Set the delay to `0` to disable this barrier. No delay is
+applied when the first response reports no cache write.
+
 Cache reads and writes are preserved from
 `usage.prompt_tokens_details.cached_tokens` and `cache_write_tokens`. OpenRouter's
 top-level `cache_discount` is also retained in each prompt-log response's
 `usage_metadata`.
 
-Models that require explicit `cache_control` content breakpoints are outside the
-automatic-caching path described above; `--prompt_cache_key` only supplies sticky
-routing for those models.
+Models with other provider-specific `cache_control` formats still need their own
+cache controls; `--openai_cache_breakpoint` is specifically for the
+OpenAI-compatible explicit breakpoint format.
 
 ## System Prompt Encoding
 
