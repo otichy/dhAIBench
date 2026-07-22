@@ -610,6 +610,8 @@ def build_openai_source_entries(models: Iterable[str], fetch_html: FetchHtmlFn) 
 
 
 GOOGLE_MODEL_LABELS = {
+    "models/gemini-3.6-flash": "Gemini 3.6 Flash",
+    "models/gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "models/gemini-3.5-flash": "Gemini 3.5 Flash",
     "models/gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
     "models/gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
@@ -626,6 +628,8 @@ GOOGLE_EXPLICIT_ALIASES = {
     "models/gemini-2.0-flash-lite-001": "models/gemini-2.0-flash-lite",
 }
 VERTEX_MODEL_LABELS = {
+    "gemini-3.6-flash": "Gemini 3.6 Flash",
+    "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
     "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
@@ -638,6 +642,22 @@ VERTEX_MODEL_LABELS = {
 }
 
 GOOGLE_TEXT_RATE_OVERRIDES = {
+    "models/gemini-3.6-flash": {
+        "service_tiers": {
+            "standard": service_tier_entry(1.5, 0.15, 7.5),
+            "batch": service_tier_entry(0.75, 0.075, 3.75),
+            "flex": service_tier_entry(0.75, 0.075, 3.75),
+            "priority": service_tier_entry(2.7, 0.27, 13.5),
+        },
+    },
+    "models/gemini-3.5-flash-lite": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.3, 0.03, 2.5),
+            "batch": service_tier_entry(0.15, 0.02, 1.25),
+            "flex": service_tier_entry(0.15, 0.02, 1.25),
+            "priority": service_tier_entry(0.54, 0.05, 4.5),
+        },
+    },
     "models/gemini-3-pro-image": {
         "service_tiers": {
             "standard": service_tier_entry(2.0, None, 12.0),
@@ -679,6 +699,22 @@ GOOGLE_TEXT_RATE_ALIASES = {
 }
 
 VERTEX_TEXT_RATE_OVERRIDES = {
+    "gemini-3.6-flash": {
+        "service_tiers": {
+            "standard": service_tier_entry(1.5, 0.15, 7.5),
+            "batch": service_tier_entry(0.75, 0.075, 3.75),
+            "flex": service_tier_entry(0.75, 0.075, 3.75),
+            "priority": service_tier_entry(2.7, 0.27, 13.5),
+        },
+    },
+    "gemini-3.5-flash-lite": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.3, 0.03, 2.5),
+            "batch": service_tier_entry(0.15, 0.015, 1.25),
+            "flex": service_tier_entry(0.15, 0.015, 1.25),
+            "priority": service_tier_entry(0.54, 0.054, 4.5),
+        },
+    },
     "gemini-3-pro-image": {
         "service_tiers": {
             "standard": service_tier_entry(2.0, None, 12.0),
