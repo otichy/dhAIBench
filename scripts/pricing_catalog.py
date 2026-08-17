@@ -610,6 +610,7 @@ def build_openai_source_entries(models: Iterable[str], fetch_html: FetchHtmlFn) 
 
 
 GOOGLE_MODEL_LABELS = {
+    "models/gemini-3.7-flash": "Gemini 3.7 Flash",
     "models/gemini-3.6-flash": "Gemini 3.6 Flash",
     "models/gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "models/gemini-3.5-flash": "Gemini 3.5 Flash",
@@ -628,6 +629,7 @@ GOOGLE_EXPLICIT_ALIASES = {
     "models/gemini-2.0-flash-lite-001": "models/gemini-2.0-flash-lite",
 }
 VERTEX_MODEL_LABELS = {
+    "gemini-3.7-flash": "Gemini 3.7 Flash",
     "gemini-3.6-flash": "Gemini 3.6 Flash",
     "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
@@ -642,6 +644,15 @@ VERTEX_MODEL_LABELS = {
 }
 
 GOOGLE_TEXT_RATE_OVERRIDES = {
+    "models/gemini-3.7-flash": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.75, 0.075, 3.75),
+            "batch": service_tier_entry(0.375, 0.0375, 1.875),
+            "flex": service_tier_entry(0.375, 0.0375, 1.875),
+            "priority": service_tier_entry(1.35, 0.135, 6.75),
+        },
+        "notes": ["Introductory pricing through December 31, 2026."],
+    },
     "models/gemini-3.6-flash": {
         "service_tiers": {
             "standard": service_tier_entry(1.5, 0.15, 7.5),
@@ -699,6 +710,15 @@ GOOGLE_TEXT_RATE_ALIASES = {
 }
 
 VERTEX_TEXT_RATE_OVERRIDES = {
+    "gemini-3.7-flash": {
+        "service_tiers": {
+            "standard": service_tier_entry(0.75, 0.075, 3.75),
+            "batch": service_tier_entry(0.375, 0.0375, 1.875),
+            "flex": service_tier_entry(0.375, 0.0375, 1.875),
+            "priority": service_tier_entry(1.35, 0.135, 6.75),
+        },
+        "notes": ["Introductory pricing through December 31, 2026."],
+    },
     "gemini-3.6-flash": {
         "service_tiers": {
             "standard": service_tier_entry(1.5, 0.15, 7.5),
@@ -1353,7 +1373,12 @@ def populate_requesty_shared_model_prices(providers: Dict[str, Any]) -> None:
                 source_models = ((providers.get(source_provider) or {}).get("models") or {})
                 if not isinstance(source_models, dict):
                     continue
-                inherited_entry = resolve_priced_entry(source_models, f"{source_prefix}{model_tail}")
+                source_model = f"{source_prefix}{model_tail}"
+                inherited_entry = resolve_priced_entry(source_models, source_model)
+                if inherited_entry is None and source_provider == "vertex":
+                    regional_match = re.fullmatch(r"(.+)@(eu|us)", source_model)
+                    if regional_match:
+                        inherited_entry = resolve_priced_entry(source_models, regional_match.group(1))
                 if inherited_entry is None:
                     continue
                 notes = list(inherited_entry.get("notes") or [])
