@@ -158,6 +158,7 @@
     ["logprobs", "logprobs", "logprobs"],
     ["calibration", "calibration", "calibration plot"],
     ["confusion_heatmap", "confusion_heatmap", "confusion heatmap"],
+    ["repeat_unclassified", "repeat_unclassified", "auto-repeat unclassified rows"],
     ["max_retries", "max_retries", "maximum retries"],
     ["retry_delay", "retry_delay", "retry delay"],
     ["request_interval_ms", "request_interval_ms", "request interval"],

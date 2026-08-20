@@ -204,6 +204,7 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "logprobs",
     "calibration",
     "confusion_heatmap",
+    "repeat_unclassified",
     "api_key_var",
     "api_base_var",
     "max_retries",
@@ -1560,6 +1561,102 @@ def collect_explicit_cli_dests(
     return explicit
 
 
+def extract_load_params_path(argv: Optional[List[str]]) -> Optional[str]:
+    """Return the last metrics path supplied through --load_params/--load-params."""
+    raw_tokens = list(sys.argv[1:] if argv is None else argv)
+    selected: Optional[str] = None
+    index = 0
+    while index < len(raw_tokens):
+        token = str(raw_tokens[index])
+        if token in {"--load_params", "--load-params"}:
+            if index + 1 >= len(raw_tokens):
+                return ""
+            selected = str(raw_tokens[index + 1])
+            index += 2
+            continue
+        for option in ("--load_params=", "--load-params="):
+            if token.startswith(option):
+                selected = token[len(option):]
+                break
+        index += 1
+    return selected
+
+
+def validate_loaded_parameter_value(
+    parser: argparse.ArgumentParser,
+    dest: str,
+    value: Any,
+) -> Any:
+    """Validate and normalize one stored run_config value for an argparse action."""
+    action = next((item for item in parser._actions if item.dest == dest), None)
+    if action is None:
+        raise ValueError(f"unsupported parameter {dest!r}")
+
+    normalized = normalize_resume_value(dest, value)
+    if isinstance(action, argparse.BooleanOptionalAction) and normalized is None:
+        return None
+    if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)) or isinstance(
+        action, argparse.BooleanOptionalAction
+    ):
+        if not isinstance(normalized, bool):
+            raise ValueError(f"{dest!r} must be a boolean")
+        return normalized
+
+    values = normalized if isinstance(normalized, list) else [normalized]
+    if isinstance(normalized, list) and action.nargs not in ("+", "*"):
+        raise ValueError(f"{dest!r} must not be a list")
+    converted: List[Any] = []
+    for item in values:
+        converted_item = item
+        if item is not None and action.type is not None:
+            try:
+                converted_item = action.type(item)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid value for {dest!r}: {item!r}") from exc
+        if converted_item is not None and action.choices is not None and converted_item not in action.choices:
+            choices = ", ".join(str(choice) for choice in action.choices)
+            raise ValueError(f"invalid value for {dest!r}: {converted_item!r} (choose from {choices})")
+        converted.append(converted_item)
+    return converted if isinstance(normalized, list) else converted[0]
+
+
+def apply_metrics_parameter_defaults(
+    parser: argparse.ArgumentParser,
+    argv: Optional[List[str]],
+) -> Optional[str]:
+    """Load run_config from a metrics artifact and install it as parser defaults."""
+    raw_path = extract_load_params_path(argv)
+    if raw_path is None:
+        return None
+    if not str(raw_path).strip():
+        parser.error("--load_params requires a metrics JSON path.")
+
+    resolved = resolve_user_path(raw_path)
+    if not os.path.isfile(resolved):
+        parser.error(f"--load_params file not found: {resolved}")
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        parser.error(f"Could not load --load_params file {resolved}: {exc}")
+    if not isinstance(payload, dict):
+        parser.error("--load_params metrics JSON must contain an object.")
+    run_config = payload.get("run_config")
+    if not isinstance(run_config, dict):
+        parser.error("--load_params metrics JSON must contain a run_config object.")
+
+    defaults: Dict[str, Any] = {}
+    for dest in RESUME_RECOVERABLE_ARG_DESTS:
+        if dest not in run_config:
+            continue
+        try:
+            defaults[dest] = validate_loaded_parameter_value(parser, dest, run_config[dest])
+        except ValueError as exc:
+            parser.error(f"Invalid --load_params run_config: {exc}")
+    parser.set_defaults(**defaults)
+    return resolved
+
+
 def normalize_recorded_argv_for_parser(recorded_argv: Optional[List[Any]]) -> List[str]:
     """Normalize stored run-command argv into parser-ready tokens."""
     if not recorded_argv:
@@ -1663,6 +1760,12 @@ def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
             snapshot[dest] = normalize_metrics_path_reference(normalized_value, DEFAULT_INPUT_DIR)
             continue
         snapshot[dest] = normalized_value
+    load_params_value = str(getattr(args, "load_params", "") or "").strip()
+    if load_params_value:
+        snapshot["load_params"] = normalize_metrics_path_reference(
+            load_params_value,
+            DEFAULT_METRICS_DIR,
+        )
     raw_system_prompt = getattr(args, "system_prompt", None)
     encoded_system_prompt = getattr(args, "system_prompt_b64", None)
     if encoded_system_prompt:
@@ -11600,6 +11703,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--load_params",
+        "--load-params",
+        dest="load_params",
+        help=(
+            "Load command defaults from the run_config object in a previous metrics JSON. "
+            "Explicitly supplied CLI arguments take precedence."
+        ),
+    )
+    parser.add_argument(
         "--verbosity",
         choices=["low", "medium", "high"],
         default=None,
@@ -12091,6 +12203,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
 
+    apply_metrics_parameter_defaults(parser, argv)
     args = parser.parse_args(argv)
     invocation_tokens = resolve_invocation_tokens(argv)
     invocation_command = render_cli_command(invocation_tokens)
@@ -12099,6 +12212,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--summarize-log-errors and --update-models cannot be used together.")
     if args.resume and args.update_models:
         parser.error("--resume and --update-models cannot be used together.")
+    if args.resume and args.load_params:
+        parser.error("--resume and --load_params cannot be used together.")
     if args.resume and args.summarize_log_errors:
         parser.error("--resume and --summarize-log-errors cannot be used together.")
     if args.metrics_only and args.update_models:

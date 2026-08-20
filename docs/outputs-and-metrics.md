@@ -41,6 +41,14 @@ The metrics JSON includes:
 - `task_description`
 - `tags`
 
+The stored `run_config` can be reused as command defaults with
+`--load_params path/to/run__metrics.json`. Explicit command-line arguments override
+loaded values. `--load_params` and `--resume` are intentionally mutually exclusive:
+the former starts a new run from a configuration template, while the latter continues
+an existing output artifact. The new `run_config` records the normalized `load_params`
+path for troubleshooting and provenance, but that field is not imported if the new
+metrics file is later used as another `--load_params` source.
+
 It also includes summaries for request-control acceptance and provider-reported
 cache metadata when those features are used. OpenRouter
 `usage.prompt_tokens_details.cached_tokens` and `cache_write_tokens` contribute

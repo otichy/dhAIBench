@@ -69,6 +69,20 @@ Refresh only the aggregate agreement files from existing `*_metrics.json` artifa
 python benchmark_agent.py --metrics_only
 ```
 
+Reuse the parameters from an earlier metrics file while overriding the model and input:
+
+```bash
+python benchmark_agent.py \
+  --load_params data/metrics/previous_run__metrics.json \
+  --model gpt-5.6 \
+  --input data/input/task.csv
+```
+
+Only the earlier file's reusable `run_config` parameters are loaded. Explicit CLI
+arguments take precedence. The new metrics artifact records both the resolved values
+used by the run and the `load_params` source path for provenance; that provenance field
+is not itself loaded by a subsequent run.
+
 Run a quick benchmark without writing run metrics or refreshing agreement artifacts:
 
 ```bash
