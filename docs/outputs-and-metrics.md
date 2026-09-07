@@ -60,6 +60,26 @@ window of each invocation. If a run is resumed later, idle time between the prev
 invocation and the resume is excluded. `first_prompt_timestamp` and
 `last_prompt_timestamp` still identify the full run's earliest and latest prompts.
 
+Metrics are also written when no prediction/truth pairs can be evaluated. In that
+case, `label_metrics_available` is false and `label_metrics_reason` distinguishes:
+
+- `no_predictions`: no predictions were saved (checked first).
+- `no_ground_truth_labels`: predictions exist, but no truth labels are available.
+- `no_evaluable_pairs`: predictions and truth labels exist, but their IDs do not overlap.
+
+`truth_label_count` counts available labels independently of predictions;
+`evaluated_example_count` counts only the prediction/truth pairs used for scoring.
+Normal runs count labels in the input after label overrides. Metrics-only runs
+count distinct labelled IDs in the output and any supplied labels CSV, including
+unmatched labels. Older artifacts used `truth_label_count` for evaluated pairs.
+
+`stop_reason` records the first handled early-stop cause in the current invocation:
+`quota_or_rate_limit` (including billing failures) or `repeated_empty_responses`.
+It is null if no such stop was recorded; metrics-only processing preserves a
+previously recorded value. A stopped run can still have accuracy from partial
+results. Existing artifacts are not automatically rewritten, and absent stop
+reasons cannot be inferred reliably from zero counts alone.
+
 ## Agreement Summary JSON
 
 `data/metrics/agreement_summary.json` is rebuilt after normal runs and `--metrics_only`.

@@ -9831,6 +9831,15 @@ def classify_examples_batch(
     )
 
 
+def missing_label_metrics_diagnostic(prediction_count: int, truth_label_count: int) -> Tuple[str, str]:
+    """Explain why no prediction/truth pairs could be evaluated."""
+    if not prediction_count:
+        return "no_predictions", "No predictions available; accuracy and other label-based metrics cannot be computed."
+    if not truth_label_count:
+        return "no_ground_truth_labels", "No ground-truth labels available; accuracy and other label-based metrics cannot be computed."
+    return "no_evaluable_pairs", "Predictions and ground-truth labels exist, but none match for evaluation; label-based metrics cannot be computed."
+
+
 def process_dataset(
     connector: OpenAIConnector,
     input_path: str,
@@ -9862,6 +9871,7 @@ def process_dataset(
 
     predictions: Dict[str, Prediction] = {}
     halted_by_quota = False
+    stop_reason: Optional[str] = None
     few_shot_count = max(0, args.few_shot_examples)
     worker_threads = max(1, int(getattr(args, "threads", 1) or 1))
     prompt_batch_size = int(getattr(args, "prompt_batch_size", 0) or 0)
@@ -10613,6 +10623,10 @@ def process_dataset(
                     ) = classify_single_example(warm_example, processed_this_run)
                 except (ProviderQuotaExceededError, ProviderEmptyResponseError) as exc:
                     halted_by_quota = True
+                    stop_reason = stop_reason or (
+                        "repeated_empty_responses" if isinstance(exc, ProviderEmptyResponseError)
+                        else "quota_or_rate_limit"
+                    )
                     pending_examples = []
                     logging.error("%s", exc)
                     logging.error(
@@ -10654,6 +10668,10 @@ def process_dataset(
                             )
                         except (ProviderQuotaExceededError, ProviderEmptyResponseError) as exc:
                             halted_by_quota = True
+                            stop_reason = stop_reason or (
+                                "repeated_empty_responses" if isinstance(exc, ProviderEmptyResponseError)
+                                else "quota_or_rate_limit"
+                            )
                             logging.error("%s", exc)
                             logging.error(
                                 "Stopping dataset early during cache warm-up. Partial outputs "
@@ -10685,6 +10703,7 @@ def process_dataset(
                                 )
                             except ProviderQuotaExceededError as exc:
                                 halted_by_quota = True
+                                stop_reason = stop_reason or "quota_or_rate_limit"
                                 logging.error("%s", exc)
                                 logging.error(
                                     "Stopping dataset early due to provider quota/rate limit exhaustion. "
@@ -10693,6 +10712,7 @@ def process_dataset(
                                 break
                             except ProviderEmptyResponseError as exc:
                                 halted_by_quota = True
+                                stop_reason = stop_reason or "repeated_empty_responses"
                                 logging.error("%s", exc)
                                 logging.error(
                                     "Stopping dataset early due to repeated empty model responses. "
@@ -10785,6 +10805,7 @@ def process_dataset(
                                         )
                                     except ProviderQuotaExceededError as exc:
                                         halted_by_quota = True
+                                        stop_reason = stop_reason or "quota_or_rate_limit"
                                         if terminal_order is None or order < terminal_order:
                                             terminal_order = order
                                             terminal_exception = exc
@@ -10797,6 +10818,7 @@ def process_dataset(
                                             halt_message_logged = True
                                     except ProviderEmptyResponseError as exc:
                                         halted_by_quota = True
+                                        stop_reason = stop_reason or "repeated_empty_responses"
                                         if terminal_order is None or order < terminal_order:
                                             terminal_order = order
                                             terminal_exception = exc
@@ -10842,6 +10864,7 @@ def process_dataset(
                             )
                         except ProviderQuotaExceededError as exc:
                             halted_by_quota = True
+                            stop_reason = stop_reason or "quota_or_rate_limit"
                             logging.error("%s", exc)
                             logging.error(
                                 "Stopping dataset early due to provider quota/rate limit exhaustion. "
@@ -10850,6 +10873,7 @@ def process_dataset(
                             break
                         except ProviderEmptyResponseError as exc:
                             halted_by_quota = True
+                            stop_reason = stop_reason or "repeated_empty_responses"
                             logging.error("%s", exc)
                             logging.error(
                                 "Stopping dataset early due to repeated empty model responses. "
@@ -10914,6 +10938,7 @@ def process_dataset(
                                     buffered_results[order] = completed_future.result()
                                 except ProviderQuotaExceededError as exc:
                                     halted_by_quota = True
+                                    stop_reason = stop_reason or "quota_or_rate_limit"
                                     if terminal_order is None or order < terminal_order:
                                         terminal_order = order
                                         terminal_exception = exc
@@ -10926,6 +10951,7 @@ def process_dataset(
                                         halt_message_logged = True
                                 except ProviderEmptyResponseError as exc:
                                     halted_by_quota = True
+                                    stop_reason = stop_reason or "repeated_empty_responses"
                                     if terminal_order is None or order < terminal_order:
                                         terminal_order = order
                                         terminal_exception = exc
@@ -11091,7 +11117,8 @@ def process_dataset(
         "request_control_summary": request_control_summary,
         "usage_metadata_summary": usage_metadata_summary,
         "token_usage_totals": token_usage_totals,
-        "truth_label_count": len(evaluated_truths),
+        "truth_label_count": sum(ex.truth is not None for ex in examples),
+        "stop_reason": stop_reason,
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),
         "calibration_metrics": compute_calibration_metrics(confidences, correctness),
@@ -11102,8 +11129,9 @@ def process_dataset(
         metrics["label_metrics_available"] = True
     else:
         metrics["label_metrics_available"] = False
-        metrics["label_metrics_reason"] = "no_ground_truth_labels"
-        logging.warning("No ground-truth labels available; skipping label-based metric computation.")
+        reason, message = missing_label_metrics_diagnostic(len(predictions), metrics["truth_label_count"])
+        metrics["label_metrics_reason"] = reason
+        logging.warning("%s", message)
 
     metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
@@ -11251,7 +11279,7 @@ def process_metrics_only_output(
     truth_by_id, has_truth_column = read_truth_labels_from_output(resolved_output)
     if not has_truth_column and not label_map:
         logging.warning(
-            "Output CSV %s has no truth column and --labels was not provided; metrics will be skipped.",
+            "Output CSV %s has no truth column and --labels was not provided; checking existing metrics for recoverable scores.",
             resolved_output,
         )
 
@@ -11407,7 +11435,11 @@ def process_metrics_only_output(
         "usage_metadata_summary": usage_metadata_summary,
         "token_usage_totals": token_usage_totals,
         "mode": "metrics_only",
-        "truth_label_count": len(evaluated_truths),
+        "truth_label_count": sum(
+            bool(str(truth or "").strip())
+            for truth in {**truth_by_id, **(label_map or {})}.values()
+        ),
+        "stop_reason": (existing_metrics_payload or {}).get("stop_reason"),
         "prediction_count": len(predictions),
         "evaluated_example_count": len(evaluated_truths),
         "calibration_metrics": compute_calibration_metrics(confidences, correctness),
@@ -11438,11 +11470,9 @@ def process_metrics_only_output(
             )
         else:
             metrics["label_metrics_available"] = False
-            metrics["label_metrics_reason"] = "no_ground_truth_labels"
-            logging.warning(
-                "No ground-truth labels available in %s; skipping label-based metric computation.",
-                resolved_output,
-            )
+            reason, message = missing_label_metrics_diagnostic(len(predictions), metrics["truth_label_count"])
+            metrics["label_metrics_reason"] = reason
+            logging.warning("%s: %s", resolved_output, message)
 
     metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
