@@ -177,6 +177,15 @@ zero or a partial average. Such models remain in the table but are omitted from
 the numeric chart. Zero-cost estimates remain valid chart points. Select a point
 with the mouse or keyboard to open its model breakdown.
 
+Each model/configuration has a matching color and shape in the chart, model legend
+and leaderboard table. These markers remain stable when weights, rankings or
+filters change within the loaded catalogue. Hover or focus a point, legend entry
+or model row to highlight its counterparts. Select a legend entry to open the
+task breakdown, including for models with unknown cost or incomplete coverage.
+The table emphasizes model names and scores, with secondary configuration text,
+alternating row backgrounds and matching score bars. Full configuration details
+remain available in the expanded model row.
+
 Weights and the metric persist in browser storage and the existing share URL.
 Saved tasks that disappear from the source remain required until deselected.
 `Export CSV` includes task contributions, coverage, pricing date and underlying

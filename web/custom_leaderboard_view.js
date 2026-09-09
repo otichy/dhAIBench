@@ -2,6 +2,9 @@
 function renderCustomLeaderboard(container, runs) {
   const api = window.DHAIBenchCustomLeaderboard;
   const settings = state.customLeaderboard;
+  // Use the full loaded catalogue, not rank or the filtered rows, for stable styles.
+  const modelNames = new Map(state.runs.map((run) => [api.modelIdentity(run).key, run.model]));
+  const seriesStyles = buildModelSeriesStyleMap([...modelNames.keys()].sort());
   const taskNames = state.selectedTasks.length ? state.selectedTasks
     : uniqueNonEmptyStrings([...state.tasks, ...Object.keys(settings.weights)]);
   let addedTask = false;
@@ -162,8 +165,49 @@ function renderCustomLeaderboard(container, runs) {
     results.append(exportButton);
     if (!complete.length) results.append(element("p", "No configuration has eligible results for every selected task. Review the missing-task details below, select fewer tasks, or broaden the sidebar filters.", "muted"));
     const detailTargets = new Map();
+    const linkedNodes = new Map();
+    const highlight = (key) => {
+      linkedNodes.forEach((nodes, seriesKey) => nodes.forEach((node) => {
+        node.classList.toggle("is-highlighted", seriesKey === key);
+        node.classList.toggle("is-muted", Boolean(key) && seriesKey !== key && node.classList.contains("custom-point"));
+      }));
+    };
+    const linkSeries = (node, row) => {
+      node.dataset.customSeries = row.key;
+      node.style.setProperty("--series-color", seriesStyles.get(row.key).color);
+      if (!linkedNodes.has(row.key)) linkedNodes.set(row.key, []);
+      linkedNodes.get(row.key).push(node);
+      node.addEventListener("mouseenter", () => highlight(row.key));
+      node.addEventListener("mouseleave", () => highlight(document.activeElement?.closest("[data-custom-series]")?.dataset.customSeries));
+      node.addEventListener("focusin", () => highlight(row.key));
+      node.addEventListener("focusout", (event) => highlight(event.relatedTarget?.closest("[data-custom-series]")?.dataset.customSeries));
+    };
+    const selectRow = (row) => {
+      const target = detailTargets.get(row.key);
+      target.details.open = true;
+      target.title.focus();
+      highlight(row.key);
+      target.details.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
     const chart = element("div", null, "custom-chart");
     results.append(chart);
+    const legend = element("div", null, "custom-legend");
+    legend.setAttribute("role", "group");
+    legend.setAttribute("aria-label", "Model colors and shapes");
+    result.rows.forEach((row) => {
+      const item = button("", () => selectRow(row));
+      item.className = "custom-legend-item";
+      item.title = row.label;
+      item.setAttribute("aria-label", `Show task breakdown for ${row.label}`);
+      item.append(createCustomSeriesMarker(seriesStyles.get(row.key)), createCustomSeriesLabel(row, modelNames.get(row.key)));
+      const status = row.rank === null ? "Unranked" : `#${row.rank} · ${formatNum(row.score, 2)}%${row.cost === null ? " · cost unknown" : ""}`;
+      item.append(element("span", status, "custom-legend-status"));
+      linkSeries(item, row);
+      legend.append(item);
+    });
+    if (result.rows.length) {
+      results.append(element("p", "Model legend · Hover or focus to highlight; select to open task details.", "muted custom-legend-heading"), legend);
+    }
     const tableWrap = element("div", null, "custom-table-wrap");
     const table = element("table", null, "custom-ranking");
     table.append(element("caption", `Custom leaderboard by ${METRIC_LABELS[settings.metric]}`));
@@ -176,13 +220,19 @@ function renderCustomLeaderboard(container, runs) {
     const body = element("tbody");
     result.rows.forEach((row) => {
       const tr = element("tr", null, row.complete ? "" : "custom-incomplete");
-      tr.append(element("td", row.rank ?? "Unranked"));
+      linkSeries(tr, row);
+      const rankCell = element("td");
+      rankCell.append(element("span", row.rank === null ? "Unranked" : `#${row.rank}`, "custom-rank-badge"));
+      tr.append(rankCell);
       const modelCell = element("td");
       const details = element("details");
-      const title = element("summary", row.label);
+      const title = element("summary", null, "custom-model-summary");
+      title.title = row.label;
+      title.append(createCustomSeriesMarker(seriesStyles.get(row.key)), createCustomSeriesLabel(row, modelNames.get(row.key)));
       details.append(title);
       detailTargets.set(row.key, { details, title });
       const breakdown = element("div", null, "custom-breakdown");
+      breakdown.append(element("p", row.label, "muted"));
       row.breakdown.forEach((task) => {
         const section = element("div", null, "custom-task-detail");
         section.append(element("strong", `${task.task} · ${formatNum(task.share * 100, 1)}% weight`));
@@ -196,21 +246,44 @@ function renderCustomLeaderboard(container, runs) {
         breakdown.append(section);
       });
       details.append(breakdown); modelCell.append(details); tr.append(modelCell);
-      tr.append(element("td", row.score === null ? "—" : `${formatNum(row.score, 2)}%`), element("td", row.cost === null ? "Unknown" : formatUsd(row.cost)), element("td", `${row.coveredTasks}/${result.tasks.length} tasks · ${formatNum(row.coverage * 100, 1)}% weight`));
+      const scoreCell = element("td", null, "custom-score-cell");
+      scoreCell.append(element("strong", row.score === null ? "—" : `${formatNum(row.score, 2)}%`));
+      if (row.score !== null) {
+        const track = element("div", null, "custom-score-track");
+        track.setAttribute("aria-hidden", "true");
+        const fill = element("span");
+        fill.style.width = `${Math.max(0, Math.min(100, row.score))}%`;
+        track.append(fill); scoreCell.append(track);
+      }
+      const coverageCell = element("td", `${row.coveredTasks}/${result.tasks.length} tasks`);
+      coverageCell.append(element("small", `${formatNum(row.coverage * 100, 1)}% weight`, "custom-cell-secondary"));
+      tr.append(scoreCell, element("td", row.cost === null ? "Unknown" : formatUsd(row.cost)), coverageCell);
       body.append(tr);
     });
     table.append(body); tableWrap.append(table); results.append(tableWrap);
-    renderCustomLeaderboardScatter(chart, complete, settings.metric, (row) => {
-      const target = detailTargets.get(row.key);
-      target.details.open = true;
-      target.title.focus();
-      target.details.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
+    renderCustomLeaderboardScatter(chart, complete, settings.metric, selectRow, seriesStyles, linkSeries);
   }
   refresh();
 }
 
-function renderCustomLeaderboardScatter(container, rows, metric, onSelect) {
+function createCustomSeriesMarker(style) {
+  const svg = createSvgNode("svg", { viewBox: "0 0 24 24", class: "custom-series-marker", "aria-hidden": "true", "data-shape": style.shape, "data-color": style.color });
+  svg.append(buildTimeSeriesShape(style.shape, 12, 12, 16, style.color, "var(--ink)", 1));
+  return svg;
+}
+
+function createCustomSeriesLabel(row, modelName = row.label) {
+  const copy = document.createElement("span");
+  copy.className = "custom-series-copy";
+  const name = document.createElement("strong");
+  name.textContent = modelName;
+  const configuration = document.createElement("small");
+  configuration.textContent = row.label.startsWith(modelName + " · ") ? row.label.slice(modelName.length + 3) : row.label;
+  copy.append(name, configuration);
+  return copy;
+}
+
+function renderCustomLeaderboardScatter(container, rows, metric, onSelect, seriesStyles, linkSeries) {
   const numeric = rows.filter((row) => row.cost !== null);
   const note = document.createElement("p");
   note.className = "muted";
@@ -240,7 +313,13 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect) {
     const label = `${row.label}: ${formatNum(row.score, 2)}%, ${formatUsd(row.cost)} per 1,000 predictions, rank ${row.rank}`;
     const point = createSvgNode("g", { role: "button", tabindex: "0", "aria-label": label, class: "custom-point" });
     const title = createSvgNode("title"); title.textContent = label; point.append(title);
-    point.append(createSvgNode("circle", { cx: x(row.cost), cy: y(row.score), r: 8 }));
+    const style = seriesStyles.get(row.key);
+    point.dataset.shape = style.shape;
+    point.dataset.color = style.color;
+    const marker = buildTimeSeriesShape(style.shape, x(row.cost), y(row.score), 18, style.color, "var(--ink)", 1.3);
+    marker.classList.add("custom-point-mark");
+    point.append(marker);
+    linkSeries(point, row);
     const rank = createSvgNode("text", { x: x(row.cost) + 10, y: y(row.score) - 10 });
     rank.textContent = `#${row.rank}`; point.append(rank);
     point.addEventListener("click", () => onSelect(row));
