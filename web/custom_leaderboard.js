@@ -47,30 +47,30 @@
     tasks.forEach((task) => { task.share = (task.weight / maxWeight) / scaledTotal; });
     const required = new Set(tasks.map((task) => task.task));
     const groups = new Map();
-    const variants = new Map();
     records.forEach((record) => {
       if (!required.has(record.task)) return;
       if (!groups.has(record.key)) groups.set(record.key, { key: record.key, label: record.label, records: [] });
       groups.get(record.key).records.push(record);
-      // Missing historical metadata is not evidence of a distinct dataset.
-      if (record.dataset) {
-        if (!variants.has(record.task)) variants.set(record.task, new Set());
-        variants.get(record.task).add(record.dataset);
-      }
     });
     const rows = [...groups.values()].map((group) => {
       const breakdown = tasks.map((task) => {
         const all = group.records.filter((record) => record.task === task.task);
         const eligible = all.filter((record) => finite(record.metric) && !record.partial);
+        // Validate only the runs being averaged for this model/task. A dataset
+        // used by another model (or an excluded run) cannot remove its coverage.
+        // Missing historical metadata is not evidence of a distinct dataset.
+        const datasets = [...new Set(eligible.map((record) => record.dataset).filter(Boolean))].sort();
         const differentPrompts = new Set(eligible.map((record) => record.protocol).filter(Boolean)).size > 1;
-        const ambiguous = (variants.get(task.task)?.size || 0) > 1 || differentPrompts;
+        const ambiguous = datasets.length > 1 || differentPrompts;
         const score = ambiguous ? null : mean(eligible.map((record) => record.metric));
         const prices = eligible.map((record) => finite(record.cost) && record.cost >= 0 && finite(record.predictions) && record.predictions > 0
           ? record.cost / record.predictions * 1000 : null);
         const cost = score !== null && prices.length && prices.every(finite) ? mean(prices) : null;
         return { ...task, score, cost, contribution: score === null ? null : score * task.share,
           runs: eligible, excludedRuns: all.filter((record) => !eligible.includes(record)),
-          reason: ambiguous ? "Multiple datasets or prompts; narrow the filters" : score === null ? "No eligible result" : "" };
+          reason: datasets.length > 1 ? `Multiple datasets in this model's runs (${datasets.join(", ")}); narrow the filters`
+            : differentPrompts ? "Multiple system prompts in this model's runs; narrow the filters"
+            : score === null ? "No eligible result" : "" };
       });
       const covered = breakdown.filter((task) => task.score !== null);
       const complete = tasks.length > 0 && covered.length === tasks.length;

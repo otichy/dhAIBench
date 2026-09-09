@@ -79,6 +79,29 @@ class CustomLeaderboardTests(unittest.TestCase):
         self.assertFalse(row["complete"])
         self.assertIn("Multiple datasets", row["breakdown"][0]["reason"])
 
+    def test_other_models_datasets_do_not_remove_task_coverage(self):
+        rows = calculate([
+            record("A", 90, "kimi-k3", dataset="normalization3.csv", protocol="same"),
+            record("A", 92, "kimi-k3", dataset="normalization3.csv", protocol="same"),
+            record("B", 96, "kimi-k3", dataset="POS_2.csv"),
+            record("A", 75, "other", dataset="normalization.csv"),
+            record("B", 80, "other", dataset="POS_2_s.csv"),
+        ])["rows"]
+        kimi = next(row for row in rows if row["key"] == "kimi-k3")
+        self.assertTrue(kimi["complete"])
+        self.assertEqual(kimi["coveredTasks"], 2)
+        self.assertEqual(kimi["score"], 93.5)
+        self.assertEqual(kimi["rank"], 1)
+
+    def test_excluded_runs_cannot_create_dataset_conflicts(self):
+        row = calculate([
+            record("A", 90, dataset="current.csv"),
+            record("A", 100, dataset="stopped.csv", partial=True),
+            record("A", None, dataset="unscored.csv"),
+        ], tasks=["A"])["rows"][0]
+        self.assertTrue(row["complete"])
+        self.assertEqual(row["score"], 90)
+
     def test_same_model_groups_across_providers_and_settings(self):
         identities = run_js('[{provider:"openai",model:"m"}, {provider:"other",model:"m"}, {provider:"openai",model:"m",runConfig:{reasoning_effort:"high"}}].map(api.modelIdentity)')
         self.assertEqual(len({item["key"] for item in identities}), 1)

@@ -164,10 +164,13 @@ Only models with a score on every enabled, positively weighted task
 receive a rank. Incomplete models appear below them with task-count and
 weighted coverage. Expand a model row to inspect task scores, contributions,
 evaluated sample counts and individual runs. Known stopped/partial runs are
-excluded. Different known input filenames under the same task, or different known
-system prompts within a task/model, are flagged as ambiguous; narrow
+excluded. Different known input filenames or system prompts among the eligible
+runs being averaged for the same model/task are flagged as ambiguous; narrow
 filters before ranking them. Older artifacts may lack enough
 metadata to verify dataset or prompt comparability.
+Dataset filenames used by other models or excluded runs do not remove a model's
+task coverage. Grouping by task name does not verify that different models used
+identical datasets; use the run details and filters to choose comparable results.
 
 The scatterplot compares weighted score with **estimated USD per 1,000
 predictions**. Each run's estimated cost is divided by its recorded prediction

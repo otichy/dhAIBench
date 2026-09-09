@@ -149,7 +149,7 @@ function renderCustomLeaderboard(container, runs) {
     methodology.append(element("summary", "How scores and costs are calculated"));
     methodology.append(element("p", "Runs with the same model name are grouped across providers and settings, as in the Chart tab. Scores are averaged across eligible runs within each task, then combined using the task weights. Cost is the mean of run costs per 1,000 predictions within each task, then the weighted mean across tasks. Unknown prices or prediction counts are never treated as zero.", "muted"));
     methodology.append(element("p", `Estimates use catalogue pricing updated ${pricingDate}. Shared links require the same metrics source; results can change when data or prices change.`, "muted"));
-    methodology.append(element("p", "Only models with all selected task scores are ranked. Known partial/stopped runs are excluded. Distinct known input filenames or system prompts under one task require narrower filters. Older artifacts may lack dataset, prompt or completion metadata; task names alone cannot establish full comparability.", "muted"));
+    methodology.append(element("p", "Only models with all selected task scores are ranked. Known partial/stopped runs are excluded. Distinct known input filenames or system prompts within one model's eligible task runs require narrower filters. Dataset differences in other models do not remove coverage. Older artifacts may lack dataset, prompt or completion metadata; task names alone cannot establish full comparability.", "muted"));
     results.append(methodology);
     const exportButton = button("Export CSV", () => {
       const blob = new Blob(["\uFEFF", api.csv(result, pricingDate, buildShareUrl())], { type: "text/csv;charset=utf-8" });
