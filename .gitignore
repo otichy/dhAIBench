@@ -1,6 +1,8 @@
 .env
 config_models.js
-/tests/
+/tests/*
+!/tests/test_web_custom_leaderboard.py
+!/tests/test_web_custom_leaderboard_browser.py
 /*.sh
 /verification_tmp/*
 /data/analysis/*

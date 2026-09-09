@@ -141,6 +141,48 @@ Available tabs:
 - `Scatter`: either metric vs price or metric vs time
 - `Table`: sortable metric table
 - `Radar`: model profiles across tasks or tags
+- `Custom Leaderboard`: task-weighted model/configuration ranking and cost comparison
+
+### Custom Leaderboard Tab
+
+Choose tasks from within the sidebar task filter using the tab's checkboxes, then
+enter relative weights (for example, 3 and 1 become 75% and 25%). Deselected tasks
+retain their weights. `Clear` disables all tasks; `Equal weights` sets weights to
+1 without changing the checkboxes. The tab has its own Accuracy/Macro F1 selector.
+Model, tag and time filters restrict eligible runs, but cannot silently remove a
+required task from the calculation.
+
+Scores are averaged within each model/configuration and task first, then combined
+as `sum(weight * task_score) / sum(weight)`. Repeat counts and dataset sizes do not
+change task importance. Providers, service tiers and recorded generation/prompt
+settings remain separate configurations. Unspecified historical settings remain
+distinct from explicitly recorded settings.
+
+Only configurations with a score on every enabled, positively weighted task
+receive a rank. Incomplete configurations appear below them with task-count and
+weighted coverage. Expand a model row to inspect task scores, contributions,
+evaluated sample counts and individual runs. Known stopped/partial runs are
+excluded. Different known input filenames under the same task, or different known
+system prompts within a task/configuration, are flagged as ambiguous; narrow
+filters before ranking them. Older artifacts may lack enough
+metadata to verify dataset or prompt comparability.
+
+The scatterplot compares weighted score with **estimated USD per 1,000
+predictions**. Each run's estimated cost is divided by its recorded prediction
+count and multiplied by 1,000. These rates are averaged within tasks, then combined
+with the same task weights used for scoring. This describes a mix whose task
+shares follow the chosen weights; it is not the total cost of the benchmark files.
+Missing costs or prediction counts make the aggregate cost unknown rather than
+zero or a partial average. Such models remain in the table but are omitted from
+the numeric chart. Zero-cost estimates remain valid chart points. Select a point
+with the mouse or keyboard to open its model breakdown.
+
+Weights and the metric persist in browser storage and the existing share URL.
+Saved tasks that disappear from the source remain required until deselected.
+`Export CSV` includes task contributions, coverage, pricing date and underlying
+run references. Shared views require the same metrics source, and updated metrics
+or catalogue prices can change the result. Composite confidence intervals are
+not displayed because repeated runs may evaluate the same examples.
 
 ### Chart Tab
 

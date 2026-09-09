@@ -40,6 +40,7 @@ const state = {
   leaderboardTableSortKey: null,
   leaderboardTableSortDirection: null,
   leaderboardTab: "chart",
+  customLeaderboard: window.DHAIBenchCustomLeaderboard.normalizeSettings(),
   agreementViewMode: "same_model",
   leaderboardChartGroupBy: "model",
   leaderboardScatterGroupBy: "none",
@@ -158,7 +159,7 @@ const APPROX_CI_METRIC_KEYS = new Set(["accuracy", "macro_f1", "macro_precision"
 const LOWER_IS_BETTER_METRIC_KEYS = new Set(["calibration_ece", "estimated_cost_usd"]);
 const RADAR_AXIS_KEYS = new Set(["task", "tag"]);
 const RADAR_SCALE_KEYS = new Set(["linear", "contrast"]);
-const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar", "agreement"]);
+const LEADERBOARD_TAB_KEYS = new Set(["chart", "scatter", "table", "radar", "agreement", "custom"]);
 const AGREEMENT_VIEW_MODE_KEYS = new Set(["same_model", "cross_model"]);
 const LEADERBOARD_CHART_GROUP_BY_KEYS = new Set(["none", "model", "task"]);
 const LEADERBOARD_SCATTER_X_AXIS_KEYS = new Set(["price", "time"]);
@@ -1856,6 +1857,7 @@ function persistUiState() {
     leaderboardTableSortKey: state.leaderboardTableSortKey,
     leaderboardTableSortDirection: state.leaderboardTableSortDirection,
     leaderboardTab: state.leaderboardTab,
+    customLeaderboard: state.customLeaderboard,
     agreementViewMode: state.agreementViewMode,
     leaderboardChartGroupBy: state.leaderboardChartGroupBy,
     leaderboardScatterGroupBy: state.leaderboardScatterGroupBy,
@@ -1888,6 +1890,7 @@ function restoreUiState() {
     }
     const payload = JSON.parse(raw);
     if (payload && typeof payload === "object") {
+      state.customLeaderboard = window.DHAIBenchCustomLeaderboard.normalizeSettings(payload.customLeaderboard);
       if (Array.isArray(payload.selectedTasks)) {
         state.selectedTasks = uniqueNonEmptyStrings(payload.selectedTasks);
       } else if (typeof payload.selectedTask === "string" && payload.selectedTask !== "ALL") {
@@ -2165,6 +2168,9 @@ function buildShareSearchParams() {
   if (state.leaderboardTab !== "chart") {
     params.set("tab", state.leaderboardTab);
   }
+  if (state.leaderboardTab === "custom" || Object.keys(state.customLeaderboard.weights).length) {
+    params.set("custom", JSON.stringify(state.customLeaderboard));
+  }
   if (state.leaderboardTableSortKey && state.leaderboardTableSortDirection) {
     params.set("tableSort", `${state.leaderboardTableSortKey}:${state.leaderboardTableSortDirection}`);
   }
@@ -2263,6 +2269,7 @@ function applyShareStateFromUrl() {
     "hide",
     "metric",
     "tab",
+    "custom",
     "tableSort",
     "agreement",
     "rep",
@@ -2294,6 +2301,14 @@ function applyShareStateFromUrl() {
   state.leaderboardTableSortKey = null;
   state.leaderboardTableSortDirection = null;
   state.leaderboardTab = "chart";
+  state.customLeaderboard = window.DHAIBenchCustomLeaderboard.normalizeSettings();
+  if (params.has("custom")) {
+    try {
+      state.customLeaderboard = window.DHAIBenchCustomLeaderboard.normalizeSettings(JSON.parse(params.get("custom")));
+    } catch (_) {
+      // Invalid shared settings fall back to equal weights and accuracy.
+    }
+  }
   state.agreementViewMode = "same_model";
   state.leaderboardChartGroupBy = "model";
   state.leaderboardScatterGroupBy = "none";
@@ -3745,11 +3760,13 @@ async function runWithLoadingNotice(message, loader) {
 }
 
 function renderTaskControls() {
-  const visibleTasks = getVisibleFilterOptions(state.tasks, state.selectedTasks);
+  const allowedTasks = state.leaderboardTab === "custom"
+    ? uniqueNonEmptyStrings([...state.tasks, ...state.selectedTasks]) : state.tasks;
+  const visibleTasks = getVisibleFilterOptions(allowedTasks, state.selectedTasks);
   const tasks = ["ALL", ...visibleTasks];
   syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task));
 
-  state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+  state.selectedTasks = sanitizeSelections(state.selectedTasks, allowedTasks);
   syncTaskSelectValue();
 
   renderChoiceChipList(els.taskChipList, visibleTasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
@@ -4164,6 +4181,7 @@ function createLeaderboardTabIcon(tabKey) {
   });
   const append = (...nodes) => nodes.forEach((node) => svg.appendChild(node));
   switch (tabKey) {
+    case "custom":
     case "chart":
       append(
         createSvgNode("line", { x1: 4, y1: 19.5, x2: 20, y2: 19.5 }),
@@ -4223,7 +4241,7 @@ function renderLeaderboardTabControls() {
     els.leaderboardChartToggle.innerHTML = "";
   }
   if (els.leaderboardMetricField) {
-    const hideMetricField = state.leaderboardTab === "agreement";
+    const hideMetricField = state.leaderboardTab === "agreement" || state.leaderboardTab === "custom";
     els.leaderboardMetricField.hidden = hideMetricField;
     els.leaderboardMetricField.style.display = hideMetricField ? "none" : "";
   }
@@ -4235,6 +4253,7 @@ function renderLeaderboardTabControls() {
     { key: "table", label: "Table" },
     { key: "radar", label: "Radar" },
     { key: "agreement", label: "Agreement" },
+    { key: "custom", label: "Custom Leaderboard" },
   ];
   tabs.forEach((tab) => {
     const button = document.createElement("button");
@@ -4250,6 +4269,15 @@ function renderLeaderboardTabControls() {
     button.addEventListener("click", () => setLeaderboardTab(tab.key));
     els.leaderboardTabs.appendChild(button);
   });
+  if (state.leaderboardTab === "custom") {
+    requestAnimationFrame(() => {
+      const active = els.leaderboardTabs.querySelector(".active");
+      if (!active) return;
+      const bounds = els.leaderboardTabs.getBoundingClientRect();
+      const tabBounds = active.getBoundingClientRect();
+      if (tabBounds.right > bounds.right) els.leaderboardTabs.scrollLeft += tabBounds.right - bounds.right;
+    });
+  }
 }
 
 function renderLeaderboardChart(container, runs) {
@@ -6600,6 +6628,10 @@ function renderLeaderboard(runs) {
   }`;
   els.leaderboardChart.appendChild(panel);
 
+  if (state.leaderboardTab === "custom") {
+    renderCustomLeaderboard(panel, runs);
+    return;
+  }
   if (state.leaderboardTab === "scatter") {
     renderLeaderboardScatter(panel, runs);
     return;
@@ -8885,7 +8917,9 @@ function applyLoadedResult(result) {
   state.bestByTaskVisibleCount = BEST_BY_TASK_PAGE_SIZE;
   state.radarVisibleSeriesCount = RADAR_MODEL_PAGE_SIZE;
 
-  state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+  if (state.leaderboardTab !== "custom") {
+    state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+  }
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
   state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
   if (state.selectedRunPath && !findRunByPath(state.selectedRunPath)) {
