@@ -285,6 +285,38 @@ function createCustomSeriesLabel(row, modelName = row.label) {
   return copy;
 }
 
+function customRectOverlapArea(left, right, padding = 3) {
+  const width = Math.max(0, Math.min(left.x + left.width + padding, right.x + right.width + padding)
+    - Math.max(left.x - padding, right.x - padding));
+  const height = Math.max(0, Math.min(left.y + left.height + padding, right.y + right.height + padding)
+    - Math.max(left.y - padding, right.y - padding));
+  return width * height;
+}
+
+function customLabelCandidates(pointX, pointY, width, height) {
+  const candidates = [];
+  [10, 20, 32, 46, 64].forEach((gap) => {
+    candidates.push(
+      { x: pointX + gap, y: pointY - gap - height, anchor: "start" },
+      { x: pointX - gap - width, y: pointY - gap - height, anchor: "end" },
+      { x: pointX + gap, y: pointY + gap, anchor: "start" },
+      { x: pointX - gap - width, y: pointY + gap, anchor: "end" },
+      { x: pointX - width / 2, y: pointY - gap - height, anchor: "middle" },
+      { x: pointX - width / 2, y: pointY + gap, anchor: "middle" },
+      { x: pointX + gap, y: pointY - height / 2, anchor: "start" },
+      { x: pointX - gap - width, y: pointY - height / 2, anchor: "end" }
+    );
+  });
+  return candidates.map((candidate) => ({ ...candidate, width, height }));
+}
+
+function customLabelConnector(pointX, pointY, rect) {
+  return {
+    x: Math.max(rect.x, Math.min(pointX, rect.x + rect.width)),
+    y: Math.max(rect.y, Math.min(pointY, rect.y + rect.height)),
+  };
+}
+
 function renderCustomLeaderboardScatter(container, rows, metric, onSelect, seriesStyles, linkSeries) {
   const numeric = rows.filter((row) => row.cost !== null);
   if (!numeric.length) return;
@@ -340,8 +372,13 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
     marker.classList.add("custom-point-mark");
     point.append(marker);
     linkSeries(point, row);
+    const connector = createSvgNode("line", {
+      x1: x(row.cost), y1: y(row.score), x2: x(row.cost), y2: y(row.score),
+      class: "custom-point-label-connector", "aria-hidden": "true",
+    });
+    point.append(connector);
     const rank = createSvgNode("text", { x: x(row.cost) + 10, y: y(row.score) - 10, class: "custom-point-label" });
-    labels.push({ node: rank, row });
+    labels.push({ node: rank, connector, row, pointX: x(row.cost), pointY: y(row.score) });
     point.append(rank);
     point.addEventListener("click", () => onSelect(row));
     point.addEventListener("keydown", (event) => {
@@ -354,21 +391,64 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
   viewport.append(svg);
   container.append(viewport);
   function updateLabels() {
+    const plotBounds = {
+      x: margin.left + 3,
+      y: margin.top + 3,
+      width: width - margin.left - margin.right - 6,
+      height: height - margin.top - margin.bottom - 6,
+    };
+    const markerRects = labels.map((entry) => ({
+      entry, x: entry.pointX - 11, y: entry.pointY - 11, width: 22, height: 22,
+    }));
+    const occupied = [];
     labels.forEach(({ node, row }) => {
       node.textContent = `#${row.rank}${state.customLeaderboard.showModelNames ? " " + row.label : ""}`;
       node.removeAttribute("textLength");
       node.removeAttribute("lengthAdjust");
       const measured = node.getComputedTextLength();
-      const available = width - margin.left - margin.right - 20;
-      const labelWidth = Math.min(measured, available);
-      if (measured > available) {
-        node.setAttribute("textLength", available);
+      const maxLabelWidth = Math.min(220, plotBounds.width * 0.42);
+      if (measured > maxLabelWidth) {
+        node.setAttribute("textLength", maxLabelWidth);
         node.setAttribute("lengthAdjust", "spacingAndGlyphs");
       }
-      // Keep names at the expensive end of the chart inside the SVG bounds.
-      const placeLeft = x(row.cost) + 10 + labelWidth > width - 8;
-      node.setAttribute("text-anchor", placeLeft ? "end" : "start");
-      node.setAttribute("x", placeLeft ? Math.max(margin.left + labelWidth, x(row.cost) - 10) : x(row.cost) + 10);
+    });
+    // Place the highest-ranked labels first, then find the first nearby free slot.
+    labels.sort((left, right) => left.row.rank - right.row.rank).forEach((entry, labelIndex) => {
+      const { node, connector, pointX, pointY } = entry;
+      const box = node.getBBox();
+      const labelWidth = Math.max(box.width, 1);
+      const labelHeight = Math.max(box.height, 13);
+      const candidates = customLabelCandidates(pointX, pointY, labelWidth, labelHeight);
+      let best = null;
+      candidates.forEach((candidate, candidateIndex) => {
+        const outside = candidate.x < plotBounds.x || candidate.y < plotBounds.y
+          || candidate.x + candidate.width > plotBounds.x + plotBounds.width
+          || candidate.y + candidate.height > plotBounds.y + plotBounds.height;
+        const overlap = occupied.reduce((sum, rect) => sum + customRectOverlapArea(candidate, rect), 0)
+          + markerRects.reduce((sum, rect) => rect.entry === entry
+            ? sum : sum + customRectOverlapArea(candidate, rect, 2), 0);
+        const penalty = overlap + (outside ? 1e9 : 0) + candidateIndex;
+        if (!best || penalty < best.penalty) best = { ...candidate, penalty, overlap, outside };
+      });
+      if (best.outside) {
+        best.x = Math.max(plotBounds.x, Math.min(best.x, plotBounds.x + plotBounds.width - best.width));
+        best.y = Math.max(plotBounds.y, Math.min(best.y, plotBounds.y + plotBounds.height - best.height));
+      }
+      const baselineY = best.y + best.height * 0.82;
+      const textX = best.anchor === "end" ? best.x + best.width
+        : best.anchor === "middle" ? best.x + best.width / 2 : best.x;
+      node.setAttribute("x", textX);
+      node.setAttribute("y", baselineY);
+      node.setAttribute("text-anchor", best.anchor);
+      const endpoint = customLabelConnector(pointX, pointY, best);
+      const connectorLength = Math.hypot(endpoint.x - pointX, endpoint.y - pointY);
+      const markerOffset = connectorLength > 0 ? Math.min(10, connectorLength / 2) : 0;
+      connector.setAttribute("x1", pointX + (endpoint.x - pointX) / (connectorLength || 1) * markerOffset);
+      connector.setAttribute("y1", pointY + (endpoint.y - pointY) / (connectorLength || 1) * markerOffset);
+      connector.setAttribute("x2", endpoint.x);
+      connector.setAttribute("y2", endpoint.y);
+      connector.classList.toggle("is-visible", connectorLength > 18);
+      occupied.push(best);
     });
   }
   updateLabels();

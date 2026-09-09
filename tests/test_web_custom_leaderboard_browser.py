@@ -75,6 +75,7 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 self.assertEqual(page.locator(".custom-point-label").text_content(), "#1 complete")
                 self.assertTrue(page.get_by_role("switch", name="Model names: on", exact=True).evaluate("node => node === document.activeElement"))
                 self.assertTrue(page.locator(".custom-point-label").evaluate("node => { const box = node.getBBox(); return box.x >= 0 && box.x + box.width <= 900; }"))
+                self.assertTrue(page.locator(".custom-point-label").evaluate("node => { const box = node.getBBox(); return box.y >= 0 && box.y + box.height <= 410; }"))
                 self.assertEqual(page.locator(".custom-legend-item").count(), 1)
                 self.assertEqual(page.locator(".custom-ranking tbody tr").count(), 3)
                 self.assertIn("alternate", page.locator(".custom-ranking tbody tr").first.inner_text())
@@ -130,6 +131,12 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 self.assertEqual(len(set(page.locator(".custom-point").evaluate_all("nodes => nodes.map(n => n.dataset.color)"))), 2)
                 # Ranking changes after selecting one task; styles do not.
                 self.assertEqual(page.locator(".custom-legend-item").first.locator("strong").inner_text(), "incomplete")
+                page.get_by_role("switch", name="Model names: off", exact=True).click()
+                label_boxes = page.locator(".custom-point-label").evaluate_all("nodes => nodes.map(node => { const box = node.getBBox(); return {x: box.x, y: box.y, width: box.width, height: box.height}; })")
+                for index, left in enumerate(label_boxes):
+                    for right in label_boxes[index + 1:]:
+                        overlaps = left["x"] < right["x"] + right["width"] and left["x"] + left["width"] > right["x"] and left["y"] < right["y"] + right["height"] and left["y"] + left["height"] > right["y"]
+                        self.assertFalse(overlaps, (left, right))
                 page.locator("#customTask1").check()
                 # A model filter must not renormalize away its missing B task.
                 page.locator("#modelSelect").select_option("incomplete")

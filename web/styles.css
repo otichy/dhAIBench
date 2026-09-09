@@ -88,6 +88,9 @@ html[data-theme="light"] {
 .custom-point.is-muted { opacity: 0.25; }
 .custom-point.is-highlighted .custom-point-mark { stroke-width: 3; filter: drop-shadow(0 0 4px var(--series-color)); }
 .custom-point.is-highlighted text { fill: var(--ink); font-weight: 700; }
+.custom-point-label { paint-order: stroke; stroke: var(--paper-strong); stroke-width: 3px; stroke-linejoin: round; }
+.custom-point-label-connector { stroke: var(--muted); stroke-width: 1; opacity: 0; pointer-events: none; }
+.custom-point-label-connector.is-visible { opacity: 0.7; }
 .custom-series-marker { width: 24px; height: 24px; flex: 0 0 24px; vertical-align: middle; }
 .custom-series-copy { display: inline-flex; flex-direction: column; min-width: 0; gap: 4px; text-align: left; vertical-align: middle; }
 .custom-series-copy strong { color: var(--ink); font-size: 0.9rem; }

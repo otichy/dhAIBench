@@ -183,7 +183,11 @@ the numeric chart. Zero-cost estimates remain valid chart points. Select a point
 with the mouse or keyboard to open its model breakdown.
 The `Model names` switch adds the model name after each point's rank number
 (for example, `#1 kimi-k3`). It defaults to off and is saved with the view and
-included in share links.
+included in share links. Labels are placed automatically around their points,
+prioritizing the highest-ranked models and trying progressively more distant
+positions to avoid other labels, point markers and chart edges. A connector line
+appears when a label has to move farther from its point. Very dense plots can still
+have overlaps when no free position is available.
 
 Each model has a matching color and shape in the chart, model legend
 and leaderboard table. These markers remain stable when weights, rankings or
