@@ -76,7 +76,11 @@ html[data-theme="light"] {
 .custom-summary { font-weight: 600; }
 .custom-methodology { margin: 12px 0; }
 .custom-methodology summary { cursor: pointer; color: var(--muted); }
-.custom-chart { overflow-x: auto; margin: 20px 0; }
+.custom-chart { margin: 20px 0; }
+.custom-chart-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-soft); }
+.custom-chart-toolbar-label { font-weight: 700; color: var(--ink); }
+.custom-chart-note { margin: 0 0 10px; }
+.custom-chart-viewport { max-width: 100%; overflow-x: auto; }
 .custom-scatter { display: block; width: 100%; min-width: 580px; }
 .custom-scatter text { fill: var(--muted); font-size: 13px; font-family: inherit; }
 .custom-grid-line { stroke: var(--line-strong); }

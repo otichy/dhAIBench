@@ -68,6 +68,8 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 self.assertIn("2 ranked models", page.locator(".custom-summary").inner_text())
                 self.assertEqual(page.locator(".custom-point").count(), 1)
                 self.assertEqual(page.locator(".custom-point-label").text_content(), "#1")
+                self.assertTrue(page.locator(".custom-chart-toolbar").is_visible())
+                self.assertEqual(page.locator(".custom-chart-toolbar-label").inner_text(), "Point labels")
                 names_switch = page.get_by_role("switch", name="Model names: off", exact=True)
                 names_switch.click()
                 self.assertEqual(page.locator(".custom-point-label").text_content(), "#1 complete")

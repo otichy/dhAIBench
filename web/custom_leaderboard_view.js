@@ -287,13 +287,13 @@ function createCustomSeriesLabel(row, modelName = row.label) {
 
 function renderCustomLeaderboardScatter(container, rows, metric, onSelect, seriesStyles, linkSeries) {
   const numeric = rows.filter((row) => row.cost !== null);
-  const note = document.createElement("p");
-  note.className = "muted";
-  const unknownCount = rows.length - numeric.length;
-  note.textContent = `${unknownCount ? `${unknownCount} with unknown cost shown only in the table. ` : ""}Select a point for task details. Higher and further left is better.`;
-  container.append(note);
   if (!numeric.length) return;
   const labels = [];
+  const toolbar = document.createElement("div");
+  toolbar.className = "custom-chart-toolbar";
+  const toolbarLabel = document.createElement("span");
+  toolbarLabel.className = "custom-chart-toolbar-label";
+  toolbarLabel.textContent = "Point labels";
   const namesToggle = createTimeSeriesToggleControl("Model names", state.customLeaderboard.showModelNames, () => {
     state.customLeaderboard.showModelNames = !state.customLeaderboard.showModelNames;
     const enabled = state.customLeaderboard.showModelNames;
@@ -304,7 +304,13 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
     updateLabels();
     persistUiState();
   });
-  container.append(namesToggle);
+  toolbar.append(toolbarLabel, namesToggle);
+  container.append(toolbar);
+  const note = document.createElement("p");
+  note.className = "muted custom-chart-note";
+  const unknownCount = rows.length - numeric.length;
+  note.textContent = `${unknownCount ? `${unknownCount} with unknown cost shown only in the table. ` : ""}Select a point for task details. Higher and further left is better.`;
+  container.append(note);
   const width = 900, height = 410;
   const margin = { left: 78, right: 32, top: 30, bottom: 65 };
   const svg = createSvgNode("svg", { viewBox: `0 0 ${width} ${height}`, role: "group", "aria-label": `Weighted ${METRIC_LABELS[metric]} versus estimated USD per 1,000 predictions`, class: "custom-scatter" });
@@ -343,7 +349,10 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
     });
     svg.append(point);
   });
-  container.append(svg);
+  const viewport = document.createElement("div");
+  viewport.className = "custom-chart-viewport";
+  viewport.append(svg);
+  container.append(viewport);
   function updateLabels() {
     labels.forEach(({ node, row }) => {
       node.textContent = `#${row.rank}${state.customLeaderboard.showModelNames ? " " + row.label : ""}`;
