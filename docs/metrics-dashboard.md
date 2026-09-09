@@ -181,6 +181,9 @@ Missing costs or prediction counts make the aggregate cost unknown rather than
 zero or a partial average. Such models remain in the table but are omitted from
 the numeric chart. Zero-cost estimates remain valid chart points. Select a point
 with the mouse or keyboard to open its model breakdown.
+The `Model names` switch adds the model name after each point's rank number
+(for example, `#1 kimi-k3`). It defaults to off and is saved with the view and
+included in share links.
 
 Each model has a matching color and shape in the chart, model legend
 and leaderboard table. These markers remain stable when weights, rankings or

@@ -293,6 +293,18 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
   note.textContent = `${unknownCount ? `${unknownCount} with unknown cost shown only in the table. ` : ""}Select a point for task details. Higher and further left is better.`;
   container.append(note);
   if (!numeric.length) return;
+  const labels = [];
+  const namesToggle = createTimeSeriesToggleControl("Model names", state.customLeaderboard.showModelNames, () => {
+    state.customLeaderboard.showModelNames = !state.customLeaderboard.showModelNames;
+    const enabled = state.customLeaderboard.showModelNames;
+    namesToggle.classList.toggle("active", enabled);
+    namesToggle.setAttribute("aria-checked", String(enabled));
+    namesToggle.setAttribute("aria-label", `Model names: ${enabled ? "on" : "off"}`);
+    namesToggle.querySelector(".time-series-toggle-status").textContent = enabled ? "On" : "Off";
+    updateLabels();
+    persistUiState();
+  });
+  container.append(namesToggle);
   const width = 900, height = 410;
   const margin = { left: 78, right: 32, top: 30, bottom: 65 };
   const svg = createSvgNode("svg", { viewBox: `0 0 ${width} ${height}`, role: "group", "aria-label": `Weighted ${METRIC_LABELS[metric]} versus estimated USD per 1,000 predictions`, class: "custom-scatter" });
@@ -322,8 +334,9 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
     marker.classList.add("custom-point-mark");
     point.append(marker);
     linkSeries(point, row);
-    const rank = createSvgNode("text", { x: x(row.cost) + 10, y: y(row.score) - 10 });
-    rank.textContent = `#${row.rank}`; point.append(rank);
+    const rank = createSvgNode("text", { x: x(row.cost) + 10, y: y(row.score) - 10, class: "custom-point-label" });
+    labels.push({ node: rank, row });
+    point.append(rank);
     point.addEventListener("click", () => onSelect(row));
     point.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(row); }
@@ -331,4 +344,23 @@ function renderCustomLeaderboardScatter(container, rows, metric, onSelect, serie
     svg.append(point);
   });
   container.append(svg);
+  function updateLabels() {
+    labels.forEach(({ node, row }) => {
+      node.textContent = `#${row.rank}${state.customLeaderboard.showModelNames ? " " + row.label : ""}`;
+      node.removeAttribute("textLength");
+      node.removeAttribute("lengthAdjust");
+      const measured = node.getComputedTextLength();
+      const available = width - margin.left - margin.right - 20;
+      const labelWidth = Math.min(measured, available);
+      if (measured > available) {
+        node.setAttribute("textLength", available);
+        node.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      }
+      // Keep names at the expensive end of the chart inside the SVG bounds.
+      const placeLeft = x(row.cost) + 10 + labelWidth > width - 8;
+      node.setAttribute("text-anchor", placeLeft ? "end" : "start");
+      node.setAttribute("x", placeLeft ? Math.max(margin.left + labelWidth, x(row.cost) - 10) : x(row.cost) + 10);
+    });
+  }
+  updateLabels();
 }

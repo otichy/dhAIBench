@@ -12,7 +12,8 @@
         weights[task] = { weight: setting.weight, enabled: setting.enabled !== false };
       }
     });
-    return { metric: source.metric === "macro_f1" ? "macro_f1" : "accuracy", weights };
+    return { metric: source.metric === "macro_f1" ? "macro_f1" : "accuracy", weights,
+      showModelNames: source.showModelNames === true };
   }
 
   function taskSetting(settings, task) {
