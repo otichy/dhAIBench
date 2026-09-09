@@ -79,9 +79,19 @@ class CustomLeaderboardTests(unittest.TestCase):
         self.assertFalse(row["complete"])
         self.assertIn("Multiple datasets", row["breakdown"][0]["reason"])
 
-    def test_provider_and_reasoning_configurations_stay_separate(self):
+    def test_same_model_groups_across_providers_and_settings(self):
         identities = run_js('[{provider:"openai",model:"m"}, {provider:"other",model:"m"}, {provider:"openai",model:"m",runConfig:{reasoning_effort:"high"}}].map(api.modelIdentity)')
-        self.assertEqual(len({item["key"] for item in identities}), 3)
+        self.assertEqual(len({item["key"] for item in identities}), 1)
+        self.assertEqual(len({item["runLabel"] for item in identities}), 3)
+
+    def test_provider_runs_are_averaged_within_tasks_before_weighting(self):
+        result = run_js('api.calculate([{...api.modelIdentity({model:"m",provider:"p1"}),task:"A",metric:100,cost:1,predictions:100}, {...api.modelIdentity({model:"m",provider:"p2"}),task:"A",metric:80,cost:3,predictions:100}, {...api.modelIdentity({model:"m",provider:"p2"}),task:"B",metric:70,cost:4,predictions:100}], ["A","B"], {weights:{A:{weight:3},B:{weight:1}}})')
+        self.assertEqual(len(result["rows"]), 1)
+        row = result["rows"][0]
+        self.assertEqual(row["score"], 85)
+        self.assertEqual(row["cost"], 25)
+        self.assertEqual(row["providers"], ["p1", "p2"])
+        self.assertTrue(row["complete"])
 
     def test_different_known_system_prompts_are_not_averaged(self):
         row = calculate([record("A", 90, protocol="first prompt"), record("A", 70, protocol="second prompt")], tasks=["A"])["rows"][0]
@@ -102,7 +112,7 @@ class CustomLeaderboardTests(unittest.TestCase):
         records = [record("A", 90, '=SUM(1,2)\n"model"', samples=100)]
         text = run_js(f'api.csv(api.calculate({json.dumps(records)}, ["A"], {{}}), "2026-09-09", "https://example.test/#tab=custom")')
         row = list(csv.DictReader(io.StringIO(text)))[0]
-        self.assertEqual(row["Model / configuration"], '\'=SUM(1,2)\n"model"')
+        self.assertEqual(row["Model"], '\'=SUM(1,2)\n"model"')
         self.assertEqual(row["Contribution (percentage points)"], "90")
         self.assertEqual(row["Pricing updated"], "2026-09-09")
         self.assertEqual(row["Evaluated examples by run"], "100")

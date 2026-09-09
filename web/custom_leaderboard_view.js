@@ -139,16 +139,17 @@ function renderCustomLeaderboard(container, runs) {
       return;
     }
     const complete = result.rows.filter((row) => row.complete);
+    const plotted = complete.filter((row) => row.cost !== null);
     const pricingDate = window.MODEL_PRICING_CATALOG?.updated_at || "Unknown";
-    const summary = element("p", `${complete.length} ranked configurations · ${result.rows.length - complete.length} incomplete · ${result.tasks.length} tasks`, "custom-summary");
+    const summary = element("p", `${complete.length} ranked models · ${result.rows.length - complete.length} incomplete · ${result.tasks.length} tasks`, "custom-summary");
     summary.setAttribute("role", "status");
     summary.setAttribute("aria-live", "polite");
     results.append(summary);
     const methodology = element("details", null, "custom-methodology");
     methodology.append(element("summary", "How scores and costs are calculated"));
-    methodology.append(element("p", "Scores are averaged across eligible repeats within each task, then combined using the task weights. Cost is the mean of run costs per 1,000 predictions within each task, then the weighted mean across tasks. Unknown prices or prediction counts are never treated as zero.", "muted"));
+    methodology.append(element("p", "Runs with the same model name are grouped across providers and settings, as in the Chart tab. Scores are averaged across eligible runs within each task, then combined using the task weights. Cost is the mean of run costs per 1,000 predictions within each task, then the weighted mean across tasks. Unknown prices or prediction counts are never treated as zero.", "muted"));
     methodology.append(element("p", `Estimates use catalogue pricing updated ${pricingDate}. Shared links require the same metrics source; results can change when data or prices change.`, "muted"));
-    methodology.append(element("p", "Only configurations with all selected task scores are ranked. Known partial/stopped runs are excluded. Distinct known input filenames or system prompts under one task require narrower filters. Older artifacts may lack dataset, prompt or completion metadata; task names alone cannot establish full comparability.", "muted"));
+    methodology.append(element("p", "Only models with all selected task scores are ranked. Known partial/stopped runs are excluded. Distinct known input filenames or system prompts under one task require narrower filters. Older artifacts may lack dataset, prompt or completion metadata; task names alone cannot establish full comparability.", "muted"));
     results.append(methodology);
     const exportButton = button("Export CSV", () => {
       const blob = new Blob(["\uFEFF", api.csv(result, pricingDate, buildShareUrl())], { type: "text/csv;charset=utf-8" });
@@ -163,7 +164,8 @@ function renderCustomLeaderboard(container, runs) {
     });
     exportButton.disabled = !result.rows.length;
     results.append(exportButton);
-    if (!complete.length) results.append(element("p", "No configuration has eligible results for every selected task. Review the missing-task details below, select fewer tasks, or broaden the sidebar filters.", "muted"));
+    if (!complete.length) results.append(element("p", "No model has eligible results for every selected task. Review the missing-task details below, select fewer tasks, or broaden the sidebar filters.", "muted"));
+    else if (!plotted.length) results.append(element("p", "No ranked model has a known cost to plot. Scores are available in the table below.", "muted"));
     const detailTargets = new Map();
     const linkedNodes = new Map();
     const highlight = (key) => {
@@ -190,22 +192,22 @@ function renderCustomLeaderboard(container, runs) {
       target.details.scrollIntoView({ block: "nearest", behavior: "smooth" });
     };
     const chart = element("div", null, "custom-chart");
-    results.append(chart);
+    if (plotted.length) results.append(chart);
     const legend = element("div", null, "custom-legend");
     legend.setAttribute("role", "group");
     legend.setAttribute("aria-label", "Model colors and shapes");
-    result.rows.forEach((row) => {
+    plotted.forEach((row) => {
       const item = button("", () => selectRow(row));
       item.className = "custom-legend-item";
       item.title = row.label;
       item.setAttribute("aria-label", `Show task breakdown for ${row.label}`);
       item.append(createCustomSeriesMarker(seriesStyles.get(row.key)), createCustomSeriesLabel(row, modelNames.get(row.key)));
-      const status = row.rank === null ? "Unranked" : `#${row.rank} · ${formatNum(row.score, 2)}%${row.cost === null ? " · cost unknown" : ""}`;
+      const status = `#${row.rank} · ${formatNum(row.score, 2)}%`;
       item.append(element("span", status, "custom-legend-status"));
       linkSeries(item, row);
       legend.append(item);
     });
-    if (result.rows.length) {
+    if (plotted.length) {
       results.append(element("p", "Model legend · Hover or focus to highlight; select to open task details.", "muted custom-legend-heading"), legend);
     }
     const tableWrap = element("div", null, "custom-table-wrap");
@@ -213,7 +215,7 @@ function renderCustomLeaderboard(container, runs) {
     table.append(element("caption", `Custom leaderboard by ${METRIC_LABELS[settings.metric]}`));
     const head = element("thead");
     const headings = element("tr");
-    ["Rank", "Model / configuration and task breakdown", "Weighted score", "USD / 1,000 predictions", "Task coverage"].forEach((text) => {
+    ["Rank", "Model and task breakdown", "Weighted score", "USD / 1,000 predictions", "Task coverage"].forEach((text) => {
       const th = element("th", text); th.scope = "col"; headings.append(th);
     });
     head.append(headings); table.append(head);
@@ -238,8 +240,8 @@ function renderCustomLeaderboard(container, runs) {
         section.append(element("strong", `${task.task} · ${formatNum(task.share * 100, 1)}% weight`));
         section.append(element("p", task.score === null ? task.reason : `Score ${formatNum(task.score, 2)}% · contribution ${formatNum(task.contribution, 2)} percentage points · ${task.cost === null ? "unknown cost" : formatUsd(task.cost) + " / 1,000 predictions"}`));
         task.runs.forEach((record) => {
-          const link = button(`${record.run.timestamp || record.path} · ${record.samples ?? "unknown"} evaluated examples`, () => openRunModal(record.run));
-          link.title = record.path;
+          const link = button(`${record.provider} · ${record.run.timestamp || record.path} · ${record.samples ?? "unknown"} evaluated examples`, () => openRunModal(record.run));
+          link.title = `${record.runLabel} · ${record.path}`;
           section.append(link);
         });
         task.excludedRuns.forEach((record) => section.append(button(`Excluded: ${record.partial ? "partial/stopped run" : "missing metric"} · ${record.path}`, () => openRunModal(record.run))));
@@ -261,7 +263,7 @@ function renderCustomLeaderboard(container, runs) {
       body.append(tr);
     });
     table.append(body); tableWrap.append(table); results.append(tableWrap);
-    renderCustomLeaderboardScatter(chart, complete, settings.metric, selectRow, seriesStyles, linkSeries);
+    if (plotted.length) renderCustomLeaderboardScatter(chart, complete, settings.metric, selectRow, seriesStyles, linkSeries);
   }
   refresh();
 }
@@ -278,7 +280,7 @@ function createCustomSeriesLabel(row, modelName = row.label) {
   const name = document.createElement("strong");
   name.textContent = modelName;
   const configuration = document.createElement("small");
-  configuration.textContent = row.label.startsWith(modelName + " · ") ? row.label.slice(modelName.length + 3) : row.label;
+  configuration.textContent = (row.providers || []).join(" · ");
   copy.append(name, configuration);
   return copy;
 }

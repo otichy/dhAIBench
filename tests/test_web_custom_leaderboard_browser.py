@@ -42,6 +42,15 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
             model: {"service_tiers": {"standard": {"input_usd_per_mtokens": 1, "output_usd_per_mtokens": 1}}}
             for model in ["complete", "incomplete"]
         }}}}
+        # Same model and task, different provider/settings: one combined model row.
+        fixtures["fixture5__alternate__complete__2026-09-09-12-00__metrics.json"] = {
+            **fixtures["fixture0__fixture__complete__2026-09-09-12-00__metrics.json"],
+            "model_details": {"provider": "alternate", "model_requested": "complete"},
+            "run_config": {"task_name": "A", "reasoning_effort": "high"},
+        }
+        catalog["providers"]["alternate"] = {"models": {"complete": {"service_tiers": {
+            "standard": {"input_usd_per_mtokens": 3, "output_usd_per_mtokens": 1}
+        }}}}
         try:
             with sync_playwright() as p:
                 options = {"headless": True}
@@ -56,9 +65,12 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 page.route("**/config_prices.js", lambda route: route.fulfill(content_type="text/javascript", body="window.MODEL_PRICING_CATALOG=" + json.dumps(catalog)))
                 page.goto(f"http://127.0.0.1:{server.server_port}/web/#tab=custom&v=1")
                 page.locator(".custom-ranking").wait_for()
-                self.assertIn("2 ranked configurations", page.locator(".custom-summary").inner_text())
+                self.assertIn("2 ranked models", page.locator(".custom-summary").inner_text())
                 self.assertEqual(page.locator(".custom-point").count(), 1)
-                self.assertEqual(page.locator(".custom-legend-item").count(), 3)
+                self.assertEqual(page.locator(".custom-legend-item").count(), 1)
+                self.assertEqual(page.locator(".custom-ranking tbody tr").count(), 3)
+                self.assertIn("alternate", page.locator(".custom-ranking tbody tr").first.inner_text())
+                self.assertIn("$1.50", page.locator(".custom-ranking tbody tr").first.inner_text())
                 def marker_styles():
                     return page.locator(".custom-ranking tbody tr").evaluate_all("rows => Object.fromEntries(rows.map(row => { const marker = row.querySelector('.custom-series-marker'); return [row.dataset.customSeries, [marker.dataset.shape, marker.dataset.color]]; }))")
                 initial_styles = marker_styles()
@@ -74,6 +86,7 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 field.fill("3")
                 self.assertTrue(field.evaluate("node => node === document.activeElement"))
                 self.assertIn("85%", page.locator(".custom-ranking tbody tr").first.inner_text())
+                self.assertIn("$1.75", page.locator(".custom-ranking tbody tr").first.inner_text())
                 self.assertIn("75%", page.locator(".custom-weights").inner_text())
                 self.assertEqual(marker_styles(), initial_styles)
                 page.locator(".custom-point").focus()
@@ -93,12 +106,14 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 self.assertIn("fixture0", exported)
                 page.get_by_role("button", name="Clear", exact=True).click()
                 self.assertEqual(page.locator(".custom-ranking").count(), 0)
+                self.assertEqual(page.locator(".custom-legend").count(), 0)
                 page.get_by_role("button", name="Select all", exact=True).click()
                 field.fill("-1")
                 self.assertEqual(page.locator(".custom-ranking").count(), 0)
                 field.fill("3")
                 page.locator("#customTask1").uncheck()
-                self.assertIn("3 ranked configurations", page.locator(".custom-summary").inner_text())
+                self.assertIn("3 ranked models", page.locator(".custom-summary").inner_text())
+                self.assertEqual(page.locator(".custom-legend-item").count(), 2)
                 self.assertEqual(marker_styles(), initial_styles)
                 self.assertEqual(len(set(page.locator(".custom-point").evaluate_all("nodes => nodes.map(n => n.dataset.shape)"))), 2)
                 self.assertEqual(len(set(page.locator(".custom-point").evaluate_all("nodes => nodes.map(n => n.dataset.color)"))), 2)
@@ -107,7 +122,11 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                 page.locator("#customTask1").check()
                 # A model filter must not renormalize away its missing B task.
                 page.locator("#modelSelect").select_option("incomplete")
-                self.assertIn("0 ranked configurations", page.locator(".custom-summary").inner_text())
+                self.assertIn("0 ranked models", page.locator(".custom-summary").inner_text())
+                self.assertEqual(page.locator(".custom-chart, .custom-legend, .custom-legend-heading").count(), 0)
+                page.locator("#modelSelect").select_option("unpriced")
+                self.assertIn("1 ranked models", page.locator(".custom-summary").inner_text())
+                self.assertEqual(page.locator(".custom-chart, .custom-legend, .custom-legend-heading").count(), 0)
                 page.evaluate("localStorage.clear()")
                 page.goto(shared)
                 page.reload()
@@ -133,7 +152,7 @@ class CustomLeaderboardBrowserTests(unittest.TestCase):
                         del fixtures[name]
                 page.reload()
                 page.locator(".custom-ranking").wait_for()
-                self.assertIn("0 ranked configurations", page.locator(".custom-summary").inner_text())
+                self.assertIn("0 ranked models", page.locator(".custom-summary").inner_text())
                 self.assertEqual(page.get_by_role("spinbutton", name="Weight for B", exact=True).count(), 1)
                 self.assertEqual(errors, [])
                 browser.close()

@@ -28,8 +28,11 @@
     const tier = run.serviceTier || "standard";
     const details = values.filter(([, value]) => value !== null && value !== "").map(([key, value]) => `${key}=${value}`);
     return {
-      key: JSON.stringify([provider, run.model, tier, values]),
-      label: `${run.model} · ${provider} · ${tier}${details.length ? " · " + details.join(", ") : " · unspecified settings"}`,
+      // Match the Chart tab's Model grouping, including across providers/settings.
+      key: run.model,
+      label: run.model,
+      provider,
+      runLabel: `${run.model} · ${provider} · ${tier}${details.length ? " · " + details.join(", ") : " · unspecified settings"}`,
     };
   }
 
@@ -72,6 +75,7 @@
       const covered = breakdown.filter((task) => task.score !== null);
       const complete = tasks.length > 0 && covered.length === tasks.length;
       return { key: group.key, label: group.label, breakdown, complete,
+        providers: [...new Set(group.records.map((record) => record.provider).filter(Boolean))].sort(),
         coverage: covered.reduce((sum, task) => sum + task.share, 0),
         coveredTasks: covered.length,
         score: complete ? breakdown.reduce((sum, task) => sum + task.contribution, 0) : null,
@@ -96,11 +100,12 @@
       if (/^[=+@\-\t\r]/.test(text)) text = "'" + text;
       return '"' + text.replace(/"/g, '""') + '"';
     }).join(",");
-    const lines = [cells(["Rank", "Model / configuration", "Metric", "Weighted score (%)", "USD / 1000 predictions", "Coverage (%)", "Task", "Weight", "Share (%)", "Task score (%)", "Contribution (percentage points)", "Task USD / 1000 predictions", "Eligible runs", "Evaluated examples by run", "Run references", "Excluded run references", "Status", "Pricing updated", "Share URL"])];
+    const lines = [cells(["Rank", "Model", "Metric", "Weighted score (%)", "USD / 1000 predictions", "Coverage (%)", "Task", "Weight", "Share (%)", "Task score (%)", "Contribution (percentage points)", "Task USD / 1000 predictions", "Eligible runs", "Evaluated examples by run", "Run references", "Excluded run references", "Status", "Pricing updated", "Share URL", "Providers", "Run configurations"])];
     result.rows.forEach((row) => row.breakdown.forEach((task) => {
       lines.push(cells([row.rank, row.label, result.metric, row.score, row.cost, row.coverage * 100, task.task, task.weight, task.share * 100, task.score, task.contribution, task.cost, task.runs.length,
         task.runs.map((run) => run.samples ?? "unknown").join("; "), task.runs.map((run) => run.path).join("; "),
-        task.excludedRuns.map((run) => run.path).join("; "), task.reason, pricingDate, shareUrl]));
+        task.excludedRuns.map((run) => run.path).join("; "), task.reason, pricingDate, shareUrl,
+        row.providers.join("; "), task.runs.map((run) => run.runLabel || run.label).join("; ")]));
     }));
     return lines.join("\r\n");
   }

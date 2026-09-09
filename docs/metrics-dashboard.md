@@ -141,7 +141,7 @@ Available tabs:
 - `Scatter`: either metric vs price or metric vs time
 - `Table`: sortable metric table
 - `Radar`: model profiles across tasks or tags
-- `Custom Leaderboard`: task-weighted model/configuration ranking and cost comparison
+- `Custom Leaderboard`: task-weighted model ranking and cost comparison
 
 ### Custom Leaderboard Tab
 
@@ -152,18 +152,20 @@ retain their weights. `Clear` disables all tasks; `Equal weights` sets weights t
 Model, tag and time filters restrict eligible runs, but cannot silently remove a
 required task from the calculation.
 
-Scores are averaged within each model/configuration and task first, then combined
+Scores are averaged within each model and task first, then combined
 as `sum(weight * task_score) / sum(weight)`. Repeat counts and dataset sizes do not
-change task importance. Providers, service tiers and recorded generation/prompt
-settings remain separate configurations. Unspecified historical settings remain
-distinct from explicitly recorded settings.
+change task importance. Runs with the same model name are grouped across providers,
+service tiers and generation settings, matching `Group By: Model` in the Chart
+tab. Provider names are listed under each model; individual run details retain
+the provider and configuration. Cost uses each run's own provider pricing before
+averaging within tasks.
 
-Only configurations with a score on every enabled, positively weighted task
-receive a rank. Incomplete configurations appear below them with task-count and
+Only models with a score on every enabled, positively weighted task
+receive a rank. Incomplete models appear below them with task-count and
 weighted coverage. Expand a model row to inspect task scores, contributions,
 evaluated sample counts and individual runs. Known stopped/partial runs are
 excluded. Different known input filenames under the same task, or different known
-system prompts within a task/configuration, are flagged as ambiguous; narrow
+system prompts within a task/model, are flagged as ambiguous; narrow
 filters before ranking them. Older artifacts may lack enough
 metadata to verify dataset or prompt comparability.
 
@@ -177,14 +179,16 @@ zero or a partial average. Such models remain in the table but are omitted from
 the numeric chart. Zero-cost estimates remain valid chart points. Select a point
 with the mouse or keyboard to open its model breakdown.
 
-Each model/configuration has a matching color and shape in the chart, model legend
+Each model has a matching color and shape in the chart, model legend
 and leaderboard table. These markers remain stable when weights, rankings or
 filters change within the loaded catalogue. Hover or focus a point, legend entry
 or model row to highlight its counterparts. Select a legend entry to open the
-task breakdown, including for models with unknown cost or incomplete coverage.
-The table emphasizes model names and scores, with secondary configuration text,
+task breakdown. The legend contains only models plotted in the chart: incomplete
+models and models with unknown cost appear only in the table. If no model can be
+plotted, both the chart and legend are hidden.
+The table emphasizes model names and scores, with secondary provider text,
 alternating row backgrounds and matching score bars. Full configuration details
-remain available in the expanded model row.
+remain available through the individual runs in the expanded model row.
 
 Weights and the metric persist in browser storage and the existing share URL.
 Saved tasks that disappear from the source remain required until deselected.
