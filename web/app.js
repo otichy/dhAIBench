@@ -3516,13 +3516,14 @@ function getDistributionStats(values) {
   };
 }
 
-function getFilteredRuns() {
+function getFilteredRuns(options = {}) {
+  const ignoreTasks = options.ignoreTasks === true;
   const selectedTasks = state.selectedTasks;
   const selectedModels = state.selectedModels;
   const selectedTags = state.selectedTags;
   const activeTimeRanges = getActiveTimeRanges();
   let runs = state.runs.filter((run) => {
-    if (!isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
+    if (!ignoreTasks && !isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
       return false;
     }
     if (!isAllSelected(selectedModels) && !selectedModels.includes(run.model)) {

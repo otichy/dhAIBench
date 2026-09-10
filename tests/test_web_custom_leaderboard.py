@@ -102,6 +102,20 @@ class CustomLeaderboardTests(unittest.TestCase):
         self.assertTrue(row["complete"])
         self.assertEqual(row["score"], 90)
 
+    def test_finds_task_intersection_for_filtered_models(self):
+        records = [
+            record("A", 90, "first"), record("B", 80, "first"), record("C", 70, "first"),
+            record("A", 85, "second"), record("B", 75, "second"),
+            record("A", 60, "unselected"),
+        ]
+        expression = f'(() => {{ const result = api.calculate({json.dumps(records)}, ["A","B","C"], {{}}); return api.findSharedTasks(result.rows, ["A","B","C"], ["first","second"]); }})()'
+        self.assertEqual(run_js(expression), ["A", "B"])
+
+    def test_no_shared_tasks_when_a_selected_model_has_no_filtered_runs(self):
+        records = [record("A", 90, "first"), record("B", 80, "first")]
+        expression = f'(() => {{ const result = api.calculate({json.dumps(records)}, ["A","B"], {{}}); return api.findSharedTasks(result.rows, ["A","B"], ["first","missing"]); }})()'
+        self.assertEqual(run_js(expression), [])
+
     def test_same_model_groups_across_providers_and_settings(self):
         identities = run_js('[{provider:"openai",model:"m"}, {provider:"other",model:"m"}, {provider:"openai",model:"m",runConfig:{reasoning_effort:"high"}}].map(api.modelIdentity)')
         self.assertEqual(len({item["key"] for item in identities}), 1)

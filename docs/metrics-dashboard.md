@@ -152,6 +152,14 @@ retain their weights. `Clear` disables all tasks; `Equal weights` sets weights t
 Model, tag and time filters restrict eligible runs, but cannot silently remove a
 required task from the calculation.
 
+`Select shared tasks` finds tasks for which every currently filtered model has an
+eligible result for the selected scoring metric. It honors model, tag, date and
+missing-accuracy filters while ignoring the current task filter, so it can broaden
+an existing task selection. It updates both the task-weight checkboxes and the
+sidebar task filter, preserves positive weights, and changes a selected zero weight
+to 1. The button is disabled when the filtered models have no eligible task in
+common; its tooltip reports the number of shared tasks and models.
+
 Scores are averaged within each model and task first, then combined
 as `sum(weight * task_score) / sum(weight)`. Repeat counts and dataset sizes do not
 change task importance. Runs with the same model name are grouped across providers,

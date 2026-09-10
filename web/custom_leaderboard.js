@@ -95,6 +95,16 @@
     return { tasks, rows, metric: settings.metric };
   }
 
+  function findSharedTasks(rows, taskNames, modelNames) {
+    const byModel = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.key, row]));
+    const models = [...new Set(Array.isArray(modelNames) ? modelNames : [])].filter(Boolean);
+    if (!models.length) return [];
+    return [...new Set(Array.isArray(taskNames) ? taskNames : [])].filter((task) => models.every((model) => {
+      const row = byModel.get(model);
+      return Boolean(row && row.breakdown.some((item) => item.task === task && item.score !== null));
+    }));
+  }
+
   function csv(result, pricingDate, shareUrl) {
     const cells = (values) => values.map((value) => {
       let text = value == null ? "" : String(value);
@@ -111,5 +121,5 @@
     return lines.join("\r\n");
   }
 
-  global.DHAIBenchCustomLeaderboard = { normalizeSettings, taskSetting, modelIdentity, calculate, csv };
+  global.DHAIBenchCustomLeaderboard = { normalizeSettings, taskSetting, modelIdentity, calculate, findSharedTasks, csv };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -27,6 +27,21 @@ function renderCustomLeaderboard(container, runs) {
     node.addEventListener("click", action);
     return node;
   };
+  const toRecord = (run) => {
+    const raw = run.rawMetrics || {};
+    const source = raw.source_input_csv || (Array.isArray(run.runConfig?.input) && run.runConfig.input.length === 1 ? run.runConfig.input[0] : "");
+    return { ...api.modelIdentity(run), task: run.task,
+      metric: settings.metric === "macro_f1" ? run.macroF1 : run.accuracy,
+      cost: Number.isFinite(run.inputTokensTotal) && Number.isFinite(run.outputTokensTotal)
+        && raw.token_usage_totals?.attempts_with_token_usage !== 0 ? run.estimatedCostUsd : null,
+      // Never substitute labelled/evaluated examples for an unknown prediction count.
+      predictions: run.predictionCount,
+      samples: raw.evaluated_example_count ?? run.totalExamples,
+      partial: Boolean(raw.stop_reason) || (Number.isFinite(raw.truth_label_count) && Number.isFinite(raw.evaluated_example_count) && raw.evaluated_example_count < raw.truth_label_count),
+      dataset: source ? normalizeSlashes(source).split("/").pop() : "",
+      protocol: run.runConfig?.system_prompt || "",
+      path: run.filePath, run };
+  };
   container.classList.add("custom-leaderboard");
   container.append(element("h3", "Rank models using your task priorities"));
   container.append(element("p", "Select tasks and assign relative weights. Sidebar filters apply to this comparison.", "muted"));
@@ -50,24 +65,42 @@ function renderCustomLeaderboard(container, runs) {
     persistUiState();
     renderLeaderboard(state.filtered);
   };
-  controls.append(button("Select all", () => setAll(true)), button("Clear", () => setAll(false)), button("Equal weights", () => setAll(null, true)));
+  const comparisonRuns = getFilteredRuns({ ignoreTasks: true });
+  const comparisonRecords = comparisonRuns.map(toRecord);
+  const filteredModels = state.selectedModels.length
+    ? [...state.selectedModels]
+    : uniqueNonEmptyStrings(comparisonRuns.map((run) => run.model));
+  const allTaskSettings = {
+    metric: settings.metric,
+    weights: Object.fromEntries(state.tasks.map((task) => [task, { weight: 1, enabled: true }])),
+  };
+  const availability = api.calculate(comparisonRecords, state.tasks, allTaskSettings);
+  const sharedTasks = api.findSharedTasks(availability.rows, state.tasks, filteredModels);
+  const selectShared = button("Select shared tasks", () => {
+    state.tasks.forEach((task) => {
+      const current = api.taskSetting(settings, task);
+      settings.weights[task] = {
+        weight: sharedTasks.includes(task) && current.weight <= 0 ? 1 : current.weight,
+        enabled: sharedTasks.includes(task),
+      };
+    });
+    // Reflect the result in the sidebar and remove any previous task restriction.
+    state.selectedTasks = [...sharedTasks];
+    persistUiState();
+    render();
+  });
+  selectShared.disabled = sharedTasks.length === 0;
+  const modelCount = filteredModels.length;
+  selectShared.title = sharedTasks.length
+    ? `Select ${sharedTasks.length} task${sharedTasks.length === 1 ? "" : "s"} shared by ${modelCount} filtered model${modelCount === 1 ? "" : "s"}.`
+    : modelCount
+      ? `No eligible ${METRIC_LABELS[settings.metric].toLowerCase()} tasks are shared by all ${modelCount} filtered models.`
+      : "No models remain in the current model, tag, and date filters.";
+  selectShared.setAttribute("aria-label", `${selectShared.textContent}. ${selectShared.title}`);
+  controls.append(button("Select all", () => setAll(true)), selectShared, button("Clear", () => setAll(false)), button("Equal weights", () => setAll(null, true)));
   container.append(controls);
 
-  const records = runs.map((run) => {
-    const raw = run.rawMetrics || {};
-    const source = raw.source_input_csv || (Array.isArray(run.runConfig?.input) && run.runConfig.input.length === 1 ? run.runConfig.input[0] : "");
-    return { ...api.modelIdentity(run), task: run.task,
-      metric: settings.metric === "macro_f1" ? run.macroF1 : run.accuracy,
-      cost: Number.isFinite(run.inputTokensTotal) && Number.isFinite(run.outputTokensTotal)
-        && raw.token_usage_totals?.attempts_with_token_usage !== 0 ? run.estimatedCostUsd : null,
-      // Never substitute labelled/evaluated examples for an unknown prediction count.
-      predictions: run.predictionCount,
-      samples: raw.evaluated_example_count ?? run.totalExamples,
-      partial: Boolean(raw.stop_reason) || (Number.isFinite(raw.truth_label_count) && Number.isFinite(raw.evaluated_example_count) && raw.evaluated_example_count < raw.truth_label_count),
-      dataset: source ? normalizeSlashes(source).split("/").pop() : "",
-      protocol: run.runConfig?.system_prompt || "",
-      path: run.filePath, run };
-  });
+  const records = runs.map(toRecord);
   const weights = element("div", null, "custom-weights");
   weights.setAttribute("role", "group");
   weights.setAttribute("aria-label", "Task weights");
