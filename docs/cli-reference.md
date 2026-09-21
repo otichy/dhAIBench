@@ -10,14 +10,17 @@ usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]
                           [--model MODEL] [--temperature TEMPERATURE]
                           [--top_p TOP_P] [--top_k TOP_K]
                           [--service_tier {standard,flex,priority}]
+                          [--load_params LOAD_PARAMS]
                           [--verbosity {low,medium,high}]
                           [--reasoning_effort {low,medium,high,xhigh}]
                           [--thinking_level {minimal,low,medium,high}]
                           [--effort {low,medium,high,max}]
                           [--strict_control_acceptance] [--provider PROVIDER]
                           [--system_prompt SYSTEM_PROMPT | --system_prompt_b64 SYSTEM_PROMPT_B64]
+                          [--decision_criteria_b64 DECISION_CRITERIA_B64]
                           [--few_shot_examples FEW_SHOT_EXAMPLES]
                           [--prompt_layout {standard,compact}]
+                          [--prompt-batch-size PROMPT_BATCH_SIZE]
                           [--cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS]
                           [--prompt_cache_key PROMPT_CACHE_KEY]
                           [--openai_cache_breakpoint | --no-openai_cache_breakpoint]
@@ -114,6 +117,10 @@ options:
                         differentiated throughput
                         (OpenAI/OpenRouter/Gemini/Vertex: standard, flex,
                         priority; Claude: standard, priority).
+  --load_params LOAD_PARAMS, --load-params LOAD_PARAMS
+                        Load command defaults from the run_config object in a
+                        previous metrics JSON. Explicitly supplied CLI
+                        arguments take precedence.
   --verbosity {low,medium,high}
                         Optional output verbosity control for GPT models. Sent
                         as verbosity (Chat Completions) or text.verbosity
@@ -143,6 +150,9 @@ options:
   --system_prompt_b64 SYSTEM_PROMPT_B64
                         Base64-encoded system prompt (used by the GUI to
                         ensure cross-platform commands).
+  --decision_criteria_b64 DECISION_CRITERIA_B64
+                        Base64-encoded JSON mapping of choice labels to
+                        descriptions for Requesty Jev.
   --few_shot_examples FEW_SHOT_EXAMPLES
                         Number of labeled examples to prepend as few-shot
                         demonstrations.
@@ -150,31 +160,36 @@ options:
                         Prompt payload layout. standard preserves the current
                         verbose payload; compact removes duplicated fields to
                         improve cache reuse.
+  --prompt-batch-size PROMPT_BATCH_SIZE, --prompt_batch_size PROMPT_BATCH_SIZE
+                        Maximum nodes to classify in one model request. Values
+                        below 2 disable prompt batching (default: disabled).
+                        Batch mode is incompatible with --logprobs.
   --cache_pad_target_tokens CACHE_PAD_TARGET_TOKENS
                         Optional shared-prefix token target for cache padding.
                         If >0, shared-prefix length is calibrated from early
                         prompt structure; subsequent prompts are padded toward
                         this shared-prefix target.
   --prompt_cache_key PROMPT_CACHE_KEY
-                        Optional provider cache-routing key (when supported) to
-                        improve prompt-cache hit consistency for stable prompt
-                        prefixes. OpenRouter uses this as the sticky-routing key
-                        when session_id is absent.
+                        Optional provider cache-routing key (when supported)
+                        to improve prompt-cache hit consistency for stable
+                        prompt prefixes. OpenRouter uses this as the sticky-
+                        routing key when session_id is absent.
   --openai_cache_breakpoint, --no-openai_cache_breakpoint
-                        Mark the end of the static system/developer prompt as an
-                        explicit cache boundary and request a 30-minute explicit
-                        prompt cache. Intended for supporting OpenAI and
-                        OpenRouter models (for example GPT-5.6+).
+                        Mark the end of the static system/developer prompt as
+                        an explicit cache boundary and request a 30-minute
+                        explicit prompt cache. Intended for supporting OpenAI
+                        and OpenRouter models (for example GPT-5.6+).
+                        (default: False)
   --openrouter_cache_control, --no-openrouter_cache_control
                         Add cache_control={type:ephemeral} to the stable
                         system/developer content block. Use this for explicit
                         Gemini prompt caching through OpenRouter; OpenRouter
-                        creates and manages the cache.
+                        creates and manages the cache. (default: False)
   --cache_warmup_delay_seconds CACHE_WARMUP_DELAY_SECONDS
-                        With multiple threads and user-enabled caching, run the
-                        first work item synchronously and wait this many seconds
-                        before fan-out when its usage metadata reports a cache
-                        write (default: 5.0; 0 disables).
+                        With multiple threads and user-enabled caching, run
+                        the first work item synchronously and wait this many
+                        seconds before fan-out when its usage metadata reports
+                        a cache write (default: 5.0; 0 disables).
   --gemini_cached_content GEMINI_CACHED_CONTENT
                         Optional Gemini context-cache resource name for
                         providers that expose Gemini OpenAI-compatible caching

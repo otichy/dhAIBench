@@ -183,6 +183,7 @@ RESUME_RECOVERABLE_ARG_DESTS: Tuple[str, ...] = (
     "provider",
     "system_prompt",
     "system_prompt_b64",
+    "decision_criteria_b64",
     "few_shot_examples",
     "prompt_layout",
     "prompt_batch_size",
@@ -1782,6 +1783,9 @@ def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
     else:
         snapshot["system_prompt"] = system_prompt_for_snapshot
     snapshot["system_prompt_b64"] = None
+    if is_jev_model(getattr(args, "model", None)):
+        snapshot["confidence_source"] = "choice_probability"
+        snapshot["span_verification"] = "unavailable"
     return snapshot
 
 
@@ -3370,6 +3374,8 @@ def compact_prompt_attempt_log(attempt: Dict[str, Any]) -> Dict[str, Any]:
         "prompt_padding",
         "prompt_estimate",
         "request_controls",
+        "confidence_source",
+        "span_verification",
         "parsed_payload",
         "validation_error",
     ):
@@ -6286,6 +6292,52 @@ def _strip_openrouter_cache_controls(messages: Any) -> bool:
     return removed
 
 
+def is_jev_model(model: Optional[str]) -> bool:
+    return str(model or "").strip().lower().startswith("typesafe/jev-")
+
+
+def decode_decision_criteria(encoded: str) -> Dict[str, str]:
+    """Decode an explicit choice inventory without consulting evaluation labels."""
+    def unique_pairs(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, value in pairs:
+            key = key.strip()
+            if key in result:
+                raise ValueError(f"Duplicate choice label: {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        criteria = json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"),
+                              object_pairs_hook=unique_pairs)
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError(f"Invalid decision criteria: {exc}") from exc
+    if not isinstance(criteria, dict) or len(criteria) < 2:
+        raise ValueError("Decision criteria must contain at least two choices.")
+    if any(not key or not isinstance(value, str) or not value.strip()
+           for key, value in criteria.items()):
+        raise ValueError("Each choice needs a nonempty label and description.")
+    return {key: value.strip() for key, value in criteria.items()}
+
+
+def parse_jev_answer(raw: str, criteria: Dict[str, str]) -> Dict[str, Any]:
+    answer = extract_json_object(raw).get("classification")
+    if not isinstance(answer, dict) or answer.get("type") != "choice":
+        raise ValueError("Malformed Jev classification answer.")
+    label = answer.get("choice")
+    probabilities = answer.get("probabilities")
+    if not isinstance(label, str) or label not in criteria or not isinstance(probabilities, dict):
+        raise ValueError("Jev returned an unknown choice or missing probabilities.")
+    if set(probabilities) != set(criteria) or any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        or not math.isfinite(value) or not 0 <= value <= 1
+        for value in probabilities.values()
+    ) or not math.isclose(sum(probabilities.values()), 1.0, abs_tol=0.01):
+        raise ValueError("Jev returned an invalid probability distribution.")
+    return {"label": label, "confidence": probabilities[label], "explanation": "",
+            "decision": answer}
+
+
 class OpenAIConnector:
     """Thin wrapper supporting both legacy and modern OpenAI Python SDKs."""
 
@@ -6300,6 +6352,7 @@ class OpenAIConnector:
     ) -> None:
         self.client_type: str
         self._provider = (provider or "openai").strip().lower()
+        self.decision_criteria: Optional[Dict[str, str]] = None
         self._chat_incompatible_models: set[str] = set()
         self._chat_unsupported_params: Dict[str, set[str]] = {}
         self._responses_unsupported_params: Dict[str, set[str]] = {}
@@ -6418,8 +6471,30 @@ class OpenAIConnector:
         requesty_auto_cache: Optional[bool],
         openai_cache_breakpoint: bool = False,
         openrouter_cache_control: bool = False,
+        decision_format: Optional[Dict[str, Any]] = None,
     ) -> CompletionResult:
         """Dispatch a chat completion request and return the message content."""
+        if decision_format is not None:
+            if self._provider != "requesty" or not is_jev_model(model):
+                raise ValueError("Decision questions require a Requesty Jev model.")
+            if self.client_type != "chat_v1":
+                raise ValueError("Jev requires a current SDK with Chat Completions support.")
+            request = {"model": model, "messages": messages, "response_format": decision_format}
+            if self._request_timeout_seconds is not None:
+                request["timeout"] = self._request_timeout_seconds
+            self._refresh_access_token_if_needed()
+            self._throttle_request_if_needed()
+            response = self._client.chat.completions.create(**request)
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("Malformed Jev completion: missing answer.")
+            usage = response.usage
+            return CompletionResult(
+                text=response.choices[0].message.content,
+                prompt_tokens=getattr(usage, "prompt_tokens", None),
+                completion_tokens=getattr(usage, "completion_tokens", None),
+                total_tokens=getattr(usage, "total_tokens", None),
+                usage_metadata={"usage": usage.model_dump()} if usage is not None else None,
+            )
         # Top-k is not currently supported in OpenAI Chat API; we log and ignore.
         if top_k is not None:
             logging.debug("top_k is not supported by OpenAI Chat API; ignoring value %s.", top_k)
@@ -8751,6 +8826,31 @@ def classify_example(
         suppress_system_message=bool(gemini_cached_content),
     )
     base_messages = prompt_artifacts.messages
+    decision_format = None
+    criteria = getattr(connector, "decision_criteria", None)
+    if is_jev_model(model):
+        if not criteria:
+            raise ValueError("Jev requires decision criteria.")
+        if validator_client is not None:
+            raise ValueError("Jev does not yet support external validators.")
+        include_explanation = False
+        state = {}
+        if few_shot_context:
+            state["labeled_examples"] = [
+                build_example_prompt_payload(sample, prompt_layout, include_label=True)
+                for sample in few_shot_context
+            ]
+        state["target"] = build_example_prompt_payload(example, prompt_layout, include_label=False)
+        state_text = serialize_prompt_payload(state, prompt_layout)
+        decision_format = {"type": "questions", "questions": {"classification": {
+            "type": "choice", "instructions": system_prompt, "criteria": criteria,
+        }}}
+        base_messages = [{"role": "user", "content": state_text}]
+        question_text = json.dumps(decision_format, ensure_ascii=False)
+        prompt_artifacts = PromptBuildArtifacts(
+            base_messages, question_text, state_text,
+            estimate_token_count_from_text(question_text), estimate_token_count_from_text(state_text),
+        )
     if openai_cache_breakpoint:
         content_type = (
             "input_text"
@@ -8826,6 +8926,10 @@ def classify_example(
         }
         if include_full_prompt_log:
             log_entry["request"] = copy.deepcopy(messages)
+        if decision_format is not None:
+            log_entry["response_format"] = decision_format
+            log_entry["confidence_source"] = "choice_probability"
+            log_entry["span_verification"] = "unavailable"
         attempt_started_at = time.perf_counter()
         try:
             result = connector.complete(
@@ -8845,6 +8949,7 @@ def classify_example(
                 requesty_auto_cache=requesty_auto_cache,
                 openai_cache_breakpoint=openai_cache_breakpoint,
                 openrouter_cache_control=openrouter_cache_control,
+                **({"decision_format": decision_format} if decision_format is not None else {}),
             )
             raw = result.text
             latest_raw_response = raw
@@ -8897,7 +9002,7 @@ def classify_example(
             if include_full_prompt_log:
                 response_log["text"] = raw
             log_entry["response"] = response_log
-            payload = extract_json_object(raw)
+            payload = parse_jev_answer(raw, criteria) if decision_format is not None else extract_json_object(raw)
             label = str(payload.get("label", "")).strip()
             if include_explanation:
                 explanation = str(payload.get("explanation", "")).strip()
@@ -8939,7 +9044,7 @@ def classify_example(
             span_source_normalized = span_source.lower()
             expected_span_source_normalized = expected_span_source.lower()
 
-            if node_echo != expected_node_echo or span_source_normalized != expected_span_source_normalized:
+            if decision_format is None and (node_echo != expected_node_echo or span_source_normalized != expected_span_source_normalized):
                 validation_failures += 1
                 logging.warning(
                     "Model referenced an incorrect span for example %s (node_echo=%r, span_source=%r, expected node_echo=%r, expected span_source=%r).",
@@ -11805,6 +11910,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Base64-encoded system prompt (used by the GUI to ensure cross-platform commands).",
     )
     parser.add_argument(
+        "--decision_criteria_b64",
+        help="Base64-encoded JSON mapping of choice labels to descriptions for Requesty Jev.",
+    )
+    parser.add_argument(
         "--few_shot_examples",
         type=int,
         default=0,
@@ -12276,6 +12385,34 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.system_prompt = decoded_prompt or ""
     else:
         args.system_prompt = decode_cli_system_prompt(args.system_prompt)
+    decision_criteria = None
+    if is_jev_model(args.model) and not args.metrics_only:
+        if str(args.provider).strip().lower() != "requesty":
+            parser.error("Jev requires --provider requesty.")
+        try:
+            decision_criteria = decode_decision_criteria(args.decision_criteria_b64 or "")
+        except ValueError as exc:
+            parser.error(str(exc))
+        if not (args.system_prompt or "").strip() or args.system_prompt == DEFAULT_SYSTEM_PROMPT:
+            parser.error("Jev requires --system_prompt containing a choice question.")
+        if args.prompt_batch_size >= 2 or args.validator_cmd or args.timeout_probe:
+            parser.error("Jev does not yet support prompt batching, validators, or timeout probes.")
+        incompatible = [name for name in (
+            "enable_cot", "logprobs", "reasoning_effort",
+            "thinking_level", "effort", "verbosity", "prompt_cache_key", "cache_pad_target_tokens",
+            "openai_cache_breakpoint", "openrouter_cache_control", "gemini_cached_content",
+            "create_gemini_cache", "requesty_auto_cache",
+        ) if getattr(args, name, None) is not None and getattr(args, name) is not False
+            and getattr(args, name) != 0 and getattr(args, name) != ""]
+        incompatible.extend(name for name in ("temperature", "top_p", "top_k")
+                            if getattr(args, name, None) is not None)
+        if args.service_tier not in (None, "standard"):
+            incompatible.append("service_tier")
+        if incompatible:
+            parser.error("Unsupported Jev controls: " + ", ".join(incompatible))
+        args.no_explanation = True
+    elif args.decision_criteria_b64 and not args.metrics_only:
+        parser.error("--decision_criteria_b64 requires a Jev model.")
     args._run_config_snapshot = build_run_config_snapshot(args)
 
     ensure_data_layout()
@@ -12868,6 +13005,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         request_timeout_seconds=args.request_timeout_seconds,
         access_token_provider=access_token_provider,
     )
+
+    if decision_criteria is not None:
+        connector.decision_criteria = decision_criteria
 
     validator_client: Optional[ValidatorClient] = None
     if args.validator_cmd:

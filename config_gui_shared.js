@@ -70,6 +70,7 @@
     few_shot_examples: "0",
     prompt_layout: "standard",
     prompt_batch_size: "0",
+    decision_choices: "[]",
     cache_pad_target_tokens: "0",
     prompt_cache_key: "",
     openai_cache_breakpoint: false,
@@ -381,9 +382,9 @@
       title: "Prompt Strategy",
       entries: [
         {
-          flags: ["--system_prompt", "--system_prompt_b64"],
+          flags: ["--system_prompt", "--system_prompt_b64", "--decision_criteria_b64"],
           description:
-            "Optional system prompt. Single-line text is emitted as --system_prompt; multi-line text is encoded as --system_prompt_b64.",
+            "Optional system prompt; for Jev, enter a choice question. Choice rows are encoded as --decision_criteria_b64. Single-line prompts use --system_prompt; multi-line prompts use --system_prompt_b64.",
           modes: ["Run", "Run & Validate"],
         },
         {
@@ -1337,6 +1338,18 @@
   function buildPromptPreview(data, ctx) {
     const config = getPromptEstimateConfig(data);
     const previewRowInfo = getPromptPreviewRow(ctx);
+    if (isJevModel(data.get("model"))) {
+      return {
+        systemMessage: "[No system message; question sent in response_format]\n" + JSON.stringify({
+          type: "questions", questions: {classification: {type: "choice",
+            instructions: data.get("system_prompt"),
+            criteria: Object.fromEntries(JSON.parse(data.get("decision_choices") || "[]"))}}
+        }, null, 2),
+        userMessage: (config.fewShotCount > 0 ? "[labeled_examples are selected at runtime and omitted here]\n" : "") +
+          JSON.stringify({target: buildEstimateTargetPayload(config.layout, previewRowInfo.row)}, null, 2),
+        sampled: previewRowInfo.sampled, fewShotCount: config.fewShotCount,
+      };
+    }
     let userContent = config.instructionsText;
     if (config.fewShotCount > 0) {
       userContent +=
@@ -1391,6 +1404,10 @@
 
   function updatePromptTokenEstimate(ctx, data) {
     if (!ctx.promptTokenEstimate) {
+      return;
+    }
+    if (isJevModel(data.get("model"))) {
+      ctx.promptTokenEstimate.textContent = "Jev sends the choice question, criteria, and example together. Token usage is recorded from the API response; the chat cache estimate does not apply.";
       return;
     }
     const estimate = buildSharedPrefixEstimate(data);
@@ -2455,6 +2472,10 @@
       }
     }
 
+    if (config.decision_criteria_b64) {
+      const criteria = JSON.parse(decodeStoredSystemPrompt(config.decision_criteria_b64));
+      applyImportedControlValue(ctx, "decision_choices", JSON.stringify(Object.entries(criteria)));
+    }
     const selectedProvider = ctx.providerSelect?.value || defaultValues.provider;
     updatePlaceholdersForProvider(ctx, selectedProvider);
     updateModelOptionsForProvider(ctx, selectedProvider);
@@ -2793,6 +2814,7 @@
 
   function buildCommandClassic(data) {
     const command = createCommandAccumulator();
+    if (!data.get("metrics_only")) appendDecisionArguments(command, data);
     const metricsOnly = Boolean(data.get("metrics_only"));
 
     const inputRaw = (data.get("input_path") ?? "").toString();
@@ -3081,6 +3103,10 @@
   function buildCommandPreview(ctx, data) {
     const mode = normalizeMode(ctx.activeMode);
     const command = createCommandAccumulator();
+    if (mode === "run" || mode === "validator") {
+      if (isJevModel(data.get("model")) && mode === "validator") throw new Error("Use Run mode for Jev; validators are not supported yet.");
+      appendDecisionArguments(command, data);
+    }
     const provider = data.get("provider");
     const modelValue = data.get("model")?.toString().trim() ?? "";
     const geminiTarget = isGeminiTarget(provider, modelValue);
@@ -3390,11 +3416,123 @@
     updateSidebarSummary(ctx, commandResult);
   }
 
+  const JEV_UNSUPPORTED = [
+    "include_explanations", "enable_cot", "logprobs", "prompt_batch_size",
+    "temperature", "top_p", "top_k", "reasoning_effort", "thinking_level", "effort",
+    "verbosity", "service_tier", "prompt_cache_key", "cache_pad_target_tokens",
+    "openai_cache_breakpoint", "openrouter_cache_control", "gemini_cached_content",
+    "create_gemini_cache", "requesty_auto_cache",
+  ];
+
+  function isJevModel(model) {
+    return String(model || "").trim().toLowerCase().startsWith("typesafe/jev-");
+  }
+
+  function readDecisionRows() {
+    return Array.from(document.querySelectorAll("#decision-rows > div"), row =>
+      Array.from(row.querySelectorAll("input"), input => input.value));
+  }
+
+  function storeDecisionRows() {
+    const field = document.getElementById("decision_choices");
+    field.value = JSON.stringify(readDecisionRows());
+    field.dataset.rendered = field.value;
+  }
+
+  function addDecisionRow(key = "", value = "") {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:0.5rem;align-items:end;flex-wrap:wrap;margin-bottom:0.5rem";
+    [ ["Label", key], ["Description", value] ].forEach(([label, text]) => {
+      const wrapper = document.createElement("label");
+      wrapper.textContent = label;
+      wrapper.style.cssText = label === "Description" ? "flex:2;min-width:12rem" : "flex:1;min-width:8rem";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = text;
+      input.setAttribute("aria-label", `Choice ${label.toLowerCase()}`);
+      input.addEventListener("input", storeDecisionRows);
+      wrapper.append(input);
+      row.append(wrapper);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "?";
+    remove.setAttribute("aria-label", "Remove choice");
+    remove.addEventListener("click", () => {
+      row.remove();
+      storeDecisionRows();
+      document.getElementById("decision_choices").dispatchEvent(new Event("input", {bubbles: true}));
+    });
+    row.append(remove);
+    document.getElementById("decision-rows").append(row);
+  }
+
+  function syncDecisionEditor(ctx) {
+    const field = document.getElementById("decision_choices");
+    if (!field) return;
+    if (field.dataset.rendered !== field.value) {
+      document.getElementById("decision-rows").replaceChildren();
+      let rows;
+      try { rows = JSON.parse(field.value); } catch { rows = []; }
+      if (!Array.isArray(rows) || !rows.length) rows = [["", ""], ["", ""]];
+      rows.forEach(([key, value]) => addDecisionRow(key, value));
+      storeDecisionRows();
+    }
+    const active = isJevModel(ctx.modelInput?.value);
+    document.getElementById("decision-editor").hidden = !active;
+    document.getElementById("system-prompt-label").textContent = active ? "Choice question" : "System Prompt";
+    document.getElementById("system-prompt-hint").textContent = active
+      ? "Ask which category applies to the marked node. Define the available answers in Choices below."
+      : "Multi-line prompts will emit --system_prompt_b64.";
+    JEV_UNSUPPORTED.forEach(name => {
+      const control = ctx.form.elements.namedItem(name);
+      if (!control) return;
+      if (active) {
+        if (control.dataset.jevDisabled === undefined) control.dataset.jevDisabled = String(control.disabled);
+        control.disabled = true;
+      } else if (!active && control.dataset.jevDisabled !== undefined) {
+        control.disabled = control.dataset.jevDisabled === "true";
+        delete control.dataset.jevDisabled;
+      }
+    });
+  }
+
+  function appendDecisionArguments(command, data) {
+    if (!isJevModel(data.get("model"))) return;
+    const criteria = Object.create(null);
+    const rows = JSON.parse(data.get("decision_choices") || "[]");
+    if (data.get("provider") !== "requesty") throw new Error("Select Requesty for Jev.");
+    if (!String(data.get("system_prompt") || "").trim() || data.get("system_prompt") === defaultValues.system_prompt)
+      throw new Error("Enter a choice question for Jev.");
+    if (rows.length < 2) throw new Error("Add at least two choices.");
+    rows.forEach(([key, value]) => {
+      key = key.trim(); value = value.trim();
+      if (!key || !value) throw new Error("Every choice needs a label and description.");
+      if (Object.hasOwn(criteria, key)) throw new Error(`Duplicate choice label: ${key}`);
+      criteria[key] = value;
+    });
+    JEV_UNSUPPORTED.forEach(name => data.delete(name));
+    command.pushFlag("--decision_criteria_b64", encodeSystemPromptForCli(JSON.stringify(criteria)));
+  }
+
   function handleFormChange(ctx) {
+    syncDecisionEditor(ctx);
     const data = new FormData(ctx.form);
-    const commandResult = isModeFirstVariant(ctx.variant)
+    let commandResult;
+    try {
+      commandResult = isModeFirstVariant(ctx.variant)
       ? buildCommandPreview(ctx, data)
       : buildCommandClassic(data);
+      if (document.getElementById("decision-error")) document.getElementById("decision-error").textContent = "";
+      if (ctx.copyButton) ctx.copyButton.disabled = false;
+    } catch (error) {
+      document.getElementById("decision-error").textContent = error.message;
+      ctx.latestCommandText = "";
+      if (ctx.commandOutput) ctx.commandOutput.textContent = "Complete the Jev question and choices to generate a command.";
+      if (ctx.copyButton) ctx.copyButton.disabled = true;
+      if (!ctx.isInitializing) saveConfig(ctx);
+      return;
+    }
     renderCommand(ctx, commandResult);
     if (
       !isModeFirstVariant(ctx.variant) ||
@@ -3474,6 +3612,12 @@
   }
 
   function bindCommonListeners(ctx) {
+    document.getElementById("decision-add")?.addEventListener("click", () => {
+      addDecisionRow();
+      storeDecisionRows();
+      handleFormChange(ctx);
+      document.querySelector("#decision-rows > div:last-child input")?.focus();
+    });
     ctx.form.addEventListener("input", () => handleFormChange(ctx));
     if (ctx.copyButton) {
       ctx.copyButton.addEventListener("click", () => copyCommand(ctx));

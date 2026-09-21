@@ -65,3 +65,16 @@ Start here depending on what you need:
 - Additional columns are preserved in the output CSV even if they are not used in the prompt.
 - Metrics artifacts are written under `data/metrics`, prompt logs under `data/logs`, and session logs under `data/logs/sessions`.
 - Set `DHAIBENCH_DATA_ROOT` to move the default `data/` root.
+
+
+### Jev classification through Requesty
+
+Select Requesty and a `typesafe/jev-*` model (for reproducible runs, use a versioned model such as `typesafe/jev-1.13.0`). The GUI changes **System Prompt** to **Choice question** and displays a **Choices** editor. Enter the label and description in each row; use **+ Add choice** or **?** to add or remove rows. At least two unique, nonempty labels and descriptions are required. Include `unclassified` explicitly if the task permits abstention. The choices are a task definition, not labels inferred from evaluation answers.
+
+The GUI automatically encodes choices in `--decision_criteria_b64`, a base64-encoded UTF-8 JSON object mapping labels to descriptions. Existing `--system_prompt` / `--system_prompt_b64` options supply the question. Requests use `REQUESTY_API_KEY` and the existing Requesty endpoint. The question goes into `response_format.questions.classification.instructions`; the example is a text user message. No system-role message is sent. The question and criteria are saved for browser reloads, metrics configuration imports, `--load_params`, and `--resume`.
+
+Jev currently supports one example per request, optional few-shot examples, and the existing concurrent execution and evaluation. Prompt batching, external validators, timeout probes, explanations, CoT, token log probabilities, generation controls, and explicit cache controls are unavailable for this integration. The GUI disables incompatible controls. The CLI automatically leaves explanations empty and rejects unsupported controls.
+
+The output `confidence` is the selected choice's probability, rather than Jev's distribution-summary `confidence`. Run metadata records `confidence_source=choice_probability`; original answers, including all probabilities and Jev's own confidence, are retained in response/parsed-answer logs. Token-level `labelProbability` remains empty. Jev cannot echo the target span: echo fields remain empty and metadata records `span_verification=unavailable`. Accuracy and confidence calibration use the existing evaluation pipeline. Jev cannot produce unrestricted normalization or lemma strings without a defined candidate inventory.
+
+Requesty's decision interface is experimental: see the [Decisions documentation](https://docs.requesty.ai/features/decisions) and [TypeSafe confidence semantics](https://docs.typesafe.ai/confidence).

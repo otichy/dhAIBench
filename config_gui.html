@@ -617,10 +617,18 @@
 
           <fieldset data-mode-visible="run validator">
             <legend>Prompt Strategy</legend>
-            <label>System Prompt
+            <label><span id="system-prompt-label">System Prompt</span>
               <textarea id="system_prompt" name="system_prompt" placeholder="You are a linguistic classifier that excels at semantic disambiguation."></textarea>
-              <span class="hint">Multi-line prompts will emit <code>--system_prompt_b64</code>.</span>
+              <span class="hint" id="system-prompt-hint">Multi-line prompts will emit <code>--system_prompt_b64</code>.</span>
             </label>
+            <div id="decision-editor" hidden>
+              <p>Choices</p>
+              <p class="hint">Enter each answer label and describe when it applies. Use at least two unique labels. Include ?unclassified? if the task allows abstention.</p>
+              <input type="hidden" id="decision_choices" name="decision_choices" value="[]" />
+              <div id="decision-rows"></div>
+              <button type="button" id="decision-add">+ Add choice</button>
+              <p id="decision-error" role="alert"></p>
+            </div>
             <div class="grid">
               <label><span>Prompt Layout</span><select id="prompt_layout" name="prompt_layout"><option value="standard" selected>Standard</option><option value="compact">Compact</option></select></label>
               <label><span>Few-shot Examples</span><input type="number" min="0" id="few_shot_examples" name="few_shot_examples" value="0" /></label>
