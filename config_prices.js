@@ -30925,15 +30925,22 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "typesafe/jev-1.13.0": {
-          "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
-          "needs_manual_update": true,
           "service_tiers": {
             "standard": {
-              "input_usd_per_mtokens": null,
+              "input_usd_per_mtokens": 0.042,
               "cached_input_usd_per_mtokens": null,
-              "output_usd_per_mtokens": null
+              "output_usd_per_mtokens": 0
             }
-          }
+          },
+          "sources": [
+            {
+              "label": "Requesty Jev Pricing",
+              "url": "https://www.requesty.ai/blog/typesafe-jev-explained"
+            }
+          ],
+          "notes": [
+            "Published Jev token rates checked 2026-09-22; Requesty plan fees are excluded."
+          ]
         },
         "xai/grok-4.7": {
           "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
