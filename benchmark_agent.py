@@ -6325,20 +6325,30 @@ def decode_decision_criteria(encoded: str) -> Dict[str, str]:
     return {key: value.strip() for key, value in criteria.items()}
 
 
+class JevAnswerValidationError(ValueError):
+    """A Jev response does not satisfy the configured choice contract."""
+
+
 def parse_jev_answer(raw: str, criteria: Dict[str, str]) -> Dict[str, Any]:
     answer = extract_json_object(raw).get("classification")
     if not isinstance(answer, dict) or answer.get("type") != "choice":
-        raise ValueError("Malformed Jev classification answer.")
+        raise JevAnswerValidationError("Malformed Jev classification answer.")
     label = answer.get("choice")
     probabilities = answer.get("probabilities")
     if not isinstance(label, str) or label not in criteria or not isinstance(probabilities, dict):
-        raise ValueError("Jev returned an unknown choice or missing probabilities.")
+        raise JevAnswerValidationError("Jev returned an unknown choice or missing probabilities.")
     if set(probabilities) != set(criteria) or any(
         isinstance(value, bool) or not isinstance(value, (int, float))
         or not math.isfinite(value) or not 0 <= value <= 1
         for value in probabilities.values()
-    ) or not math.isclose(sum(probabilities.values()), 1.0, abs_tol=0.01):
-        raise ValueError("Jev returned an invalid probability distribution.")
+    ):
+        raise JevAnswerValidationError("Jev returned an invalid probability distribution.")
+    total = math.fsum(probabilities.values())
+    # Include the 0.99/1.01 boundaries despite binary floating-point rounding.
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=0.01 + 1e-12):
+        raise JevAnswerValidationError(
+            f"Jev returned an invalid probability distribution (sum={total:.12g}; expected 1 +/- 0.01)."
+        )
     return {"label": label, "confidence": probabilities[label], "explanation": "",
             "decision": answer}
 
@@ -9349,9 +9359,9 @@ def classify_example(
             break
 
     assert last_error is not None
-    if isinstance(last_error, json.JSONDecodeError):
+    if isinstance(last_error, (json.JSONDecodeError, JevAnswerValidationError)):
         logging.error(
-            "Unable to parse model output as JSON for example %s after %d attempt(s); "
+            "Unable to parse or validate model output for example %s after %d attempt(s); "
             "continuing with fallback label='unclassified' and blank confidence.",
             example.example_id,
             max_retries,

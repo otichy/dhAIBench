@@ -3456,7 +3456,7 @@
     });
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.textContent = "?";
+    remove.textContent = "\u2212";
     remove.setAttribute("aria-label", "Remove choice");
     remove.addEventListener("click", () => {
       row.remove();

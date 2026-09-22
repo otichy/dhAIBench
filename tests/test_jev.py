@@ -68,10 +68,64 @@ class JevTests(unittest.TestCase):
 
     def test_bad_probability_is_rejected(self):
         for probs in ({"NOUN": 2, "VERB": -1}, {"NOUN": 0.4},
-                      {"NOUN": 0.1, "VERB": 0.2}, {"NOUN": True, "VERB": 0}):
+                      {"NOUN": 0.1, "VERB": 0.2}, {"NOUN": True, "VERB": 0},
+                      {"NOUN": 0.7, "VERB": 0.289}, {"NOUN": 0.7, "VERB": 0.311},
+                      {"NOUN": float("nan"), "VERB": 0.3},
+                      {"NOUN": float("inf"), "VERB": 0.3}):
             with self.subTest(probs=probs), self.assertRaises(ValueError):
                 ba.parse_jev_answer(json.dumps({"classification": {
                     "type": "choice", "choice": "NOUN", "probabilities": probs}}), CRITERIA)
+
+    def test_probability_rounding_boundaries(self):
+        for other_probability in (0.29, 0.3, 0.31):
+            with self.subTest(other_probability=other_probability):
+                answer = {"type": "choice", "choice": "NOUN",
+                          "probabilities": {"NOUN": 0.7, "VERB": other_probability}}
+                parsed = ba.parse_jev_answer(json.dumps({"classification": answer}), CRITERIA)
+                self.assertEqual(parsed["confidence"], 0.7)
+                self.assertEqual(parsed["decision"], answer)
+
+    def test_invalid_answer_retries_then_falls_back_or_recovers(self):
+        valid = {"type": "choice", "choice": "NOUN",
+                 "probabilities": {"NOUN": 0.7, "VERB": 0.3}}
+        invalid_answers = [
+            {**valid, "probabilities": {"NOUN": 0.1, "VERB": 0.2}},
+            {**valid, "choice": "UNKNOWN"},
+            {"type": "choice", "choice": "NOUN"},
+            {"type": "unknown"},
+        ]
+        for invalid in invalid_answers:
+            for recover in (False, True):
+                with self.subTest(invalid=invalid, recover=recover):
+                    responses = [json.dumps({"classification": answer})
+                                 for answer in (invalid, valid if recover else invalid)]
+                    connector = SimpleNamespace(
+                        decision_criteria=CRITERIA,
+                        request_timeout_seconds=30.0,
+                        complete=Mock(side_effect=[ba.CompletionResult(
+                            text=raw, prompt_tokens=30, completion_tokens=10, total_tokens=40)
+                            for raw in responses]))
+                    prediction, logs = ba.classify_example(
+                        connector=connector, example=ba.Example("671", "the", "cat", "sleeps"),
+                        model="typesafe/jev-1.13.0", temperature=None, top_p=None, top_k=None,
+                        verbosity=None, service_tier="standard", include_logprobs=False,
+                        reasoning_effort=None, thinking_level=None, effort=None,
+                        system_prompt="Which class?", enable_cot=False,
+                        include_explanation=False, prompt_layout="standard", few_shot_context=None,
+                        max_retries=2, retry_delay=0, prompt_log_detail="full")
+                    self.assertEqual(connector.complete.call_count, 2)
+                    self.assertEqual(len(logs), 2)
+                    self.assertEqual(logs[0]["error_type"], "JevAnswerValidationError")
+                    self.assertEqual(prediction.raw_response, responses[-1])
+                    self.assertEqual(prediction.total_tokens, 40)
+                    if recover:
+                        self.assertEqual(prediction.label, "NOUN")
+                        self.assertEqual(prediction.confidence, 0.7)
+                    else:
+                        self.assertEqual(prediction.label, "unclassified")
+                        self.assertIsNone(prediction.confidence)
+                        self.assertEqual(prediction.validator_status, "accepted_after_parse_error")
+                        self.assertTrue(prediction.validator_reason)
 
     def test_load_params_restores_jev_settings_before_execution(self):
         config = {"provider": "requesty", "model": "typesafe/jev-1.13.0",
