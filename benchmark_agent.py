@@ -2756,18 +2756,23 @@ def _fetch_models_with_curl(
             cmd.extend(["-H", f"{name}: {value}"])
         cmd.append(endpoint)
         try:
-            completed = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # Capture bytes so Windows reader threads never use the local code page
+            # to decode a UTF-8 API response (which can also lose stdout entirely).
+            completed = subprocess.run(cmd, capture_output=True, check=True)
         except FileNotFoundError:
             errors.append(f"{binary} not found")
             continue
         except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            detail = exc.stderr or exc.stdout or str(exc)
+            if isinstance(detail, bytes):
+                detail = detail.decode("utf-8", errors="replace")
+            detail = detail.strip()
             errors.append(f"{binary} exit {exc.returncode}: {detail}")
             continue
 
         try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
+            payload = json.loads(completed.stdout.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             errors.append(f"{binary} invalid JSON: {exc}")
             continue
 
