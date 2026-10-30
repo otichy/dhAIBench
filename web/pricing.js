@@ -327,6 +327,15 @@
       }
     }
 
+    // Explicit reference prices for legacy runs whose provider was not recorded.
+    // This does not infer or overwrite the run's actual provider.
+    if (!preferredProvider && providers.unknown) {
+      const referenceMatch = resolveProviderMatch("unknown", providers.unknown.models || {}, candidates);
+      if (referenceMatch) {
+        return referenceMatch;
+      }
+    }
+
     if (preferredProvider === "requesty") {
       return null;
     }
@@ -492,6 +501,8 @@
       pricingTier: serviceTier,
       components: pricingComponents,
       totalUsd: estimatedCostUsd,
+      referenceNote: asTrimmedString(tierRates.reference_note) || asTrimmedString(match.entry.reference_note),
+      sources: Array.isArray(match.entry.sources) ? match.entry.sources : [],
     };
 
     return {

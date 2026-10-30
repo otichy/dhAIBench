@@ -8506,6 +8506,9 @@ function buildRunCostTooltip(run) {
     `Model: ${provider} / ${model}`,
     `Pricing tier: ${tier}`,
   ];
+  if (asTrimmedString(calculation.referenceNote)) {
+    lines.push(`Rate basis: ${calculation.referenceNote}`);
+  }
 
   calculation.components.forEach((component) => {
     const tokens = toNonNegativeNumber(component && component.tokens);
