@@ -2061,17 +2061,18 @@ function encodeViewportParam(viewport) {
   if (!normalized) {
     return "";
   }
-  return [
+  const bounds = [
     normalized.xMin,
     normalized.xMax,
     normalized.yMin,
     normalized.yMax,
   ].map(formatViewportNumber).join(",");
+  return normalized.auto ? `${bounds},1` : bounds;
 }
 
 function decodeViewportParam(value) {
   const parts = asTrimmedString(value).split(",").map((part) => Number(part));
-  if (parts.length !== 4) {
+  if (parts.length !== 4 && !(parts.length === 5 && parts[4] === 1)) {
     return null;
   }
   return normalizeTimeSeriesViewport({
@@ -2079,6 +2080,7 @@ function decodeViewportParam(value) {
     xMax: parts[1],
     yMin: parts[2],
     yMax: parts[3],
+    auto: parts.length === 5,
   });
 }
 
@@ -2857,7 +2859,7 @@ function normalizeTimeSeriesViewport(viewport) {
   if (xMin >= xMax || yMin >= yMax) {
     return null;
   }
-  return { xMin, xMax, yMin, yMax };
+  return { xMin, xMax, yMin, yMax, ...(viewport.auto === true ? { auto: true } : {}) };
 }
 
 function setTimeSeriesViewport(nextViewport) {
@@ -5310,7 +5312,12 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
   }
   appendScatterCiToggleControl(secondaryControls, supportsCi);
   appendTimeSeriesLabelsToggleControl(secondaryControls);
-  secondaryControls.appendChild(createTimeSeriesResetButton("Reset Zoom", () => resetTimeSeriesZoom(), !state.timeSeriesViewport));
+  secondaryControls.appendChild(
+    createTimeSeriesResetButton(
+      state.timeSeriesViewport ? "Reset Zoom" : "Auto Zoom",
+      () => state.timeSeriesViewport ? resetTimeSeriesZoom() : setTimeSeriesViewport({ ...autoViewport, auto: true })
+    )
+  );
 
   if (primaryControls.childElementCount) {
     header.appendChild(primaryControls);
@@ -5366,21 +5373,12 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
   }
   const fullXSpan = Math.max(fullXMax - fullXMin, 1);
 
-  const metricValues = source.map((entry) => entry.metricValue);
-  let fullYMin = isPercentMetric(metricKey) ? 0 : Math.min(...metricValues);
-  let fullYMax = isPercentMetric(metricKey) ? 100 : Math.max(...metricValues);
-  if (fullYMin === fullYMax) {
-    const pad = fullYMin === 0 ? 1 : Math.abs(fullYMin) * 0.05;
-    fullYMin -= pad;
-    fullYMax += pad;
-  }
-  if (!isPercentMetric(metricKey)) {
-    const padding = (fullYMax - fullYMin) * 0.08;
-    fullYMin -= padding;
-    fullYMax += padding;
-  }
+  const { full: fullYDomain, auto: autoYDomain } = getScatterMetricDomains(source, metricKey);
+  const fullYMin = fullYDomain.min;
+  const fullYMax = fullYDomain.max;
+  const autoViewport = { xMin: fullXMin, xMax: fullXMax, yMin: autoYDomain.min, yMax: autoYDomain.max };
 
-  const clampedViewport = clampTimeSeriesViewport(state.timeSeriesViewport, {
+  const clampedViewport = clampTimeSeriesViewport(state.timeSeriesViewport?.auto ? autoViewport : state.timeSeriesViewport, {
     xMin: fullXMin,
     xMax: fullXMax,
     yMin: fullYMin,
@@ -5397,7 +5395,7 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
   const yToPx = (value) => margin.top + innerHeight - ((value - yMin) / ySpan) * innerHeight;
   const pxToX = (px) => xMin + ((px - margin.left) / innerWidth) * xSpan;
   const pxToY = (px) => yMin + ((margin.top + innerHeight - px) / innerHeight) * ySpan;
-  const yTicks = isPercentMetric(metricKey) ? [0, 25, 50, 75, 100] : buildNumericTicks(yMin, yMax, 5);
+  const yTicks = isPercentMetric(metricKey) && !clampedViewport ? [0, 25, 50, 75, 100] : buildNumericTicks(yMin, yMax, 5);
   const xTicks = buildNumericTicks(xMin, xMax, Math.min(6, Math.max(2, source.length)));
 
   yTicks.forEach((tickValue) => {
@@ -5719,6 +5717,19 @@ function expandNumericDomain(minValue, maxValue, options = {}) {
   return { min: nextMin, max: nextMax };
 }
 
+function getScatterMetricDomains(source, metricKey) {
+  // Entries only contain CIs when displayed. Fit both endpoints before padding.
+  const values = source.flatMap((entry) => [entry.metricValue, entry.ci?.low, entry.ci?.high])
+    .filter(Number.isFinite);
+  const auto = expandNumericDomain(Math.min(...values), Math.max(...values), {
+    fallbackPad: isPercentMetric(metricKey) ? 1 : 0.5,
+  });
+  const full = isPercentMetric(metricKey)
+    ? { min: Math.min(0, ...values), max: Math.max(100, ...values) }
+    : { min: Math.min(0, auto.min), max: Math.max(0, auto.max) };
+  return { full, auto: { min: Math.max(full.min, auto.min), max: Math.min(full.max, auto.max) } };
+}
+
 function getPriceScatterCostModeLabel(mode = state.priceScatterCostMode) {
   return mode === "per_prompt" ? "Average Cost per Prediction (USD)" : "Estimated Cost (USD)";
 }
@@ -5914,7 +5925,11 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   appendScatterCiToggleControl(secondaryControls, supportsCi);
   appendTimeSeriesLabelsToggleControl(secondaryControls);
   secondaryControls.appendChild(
-    createTimeSeriesResetButton("Reset Zoom", () => resetPriceScatterZoom(), !state.priceScatterViewport || !numericSource.length)
+    createTimeSeriesResetButton(
+      state.priceScatterViewport ? "Reset Zoom" : "Auto Zoom",
+      () => state.priceScatterViewport ? resetPriceScatterZoom() : setPriceScatterViewport({ ...autoViewport, auto: true }),
+      !state.priceScatterViewport && !numericSource.length
+    )
   );
   if (primaryControls.childElementCount) {
     header.appendChild(primaryControls);
@@ -5964,20 +5979,22 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   const plotLeft = margin.left + unknownBandWidth + unknownBandGap;
   const numericInnerWidth = width - margin.right - plotLeft;
   const priceValues = numericSource.map((entry) => entry.priceValue);
-  const metricValues = source.map((entry) => entry.metricValue);
-  const fullXDomain = hasNumericAxis
+  const autoXDomain = hasNumericAxis
     ? expandNumericDomain(Math.min(...priceValues), Math.max(...priceValues), {
         clampMin: 0,
         fallbackPad: 0.01,
       })
     : { min: 0, max: 1 };
-  const fullYDomain = expandNumericDomain(Math.min(...metricValues), Math.max(...metricValues), {
-    fallbackPad: isPercentMetric(metricKey) ? 1 : 0.5,
-  });
+  const fullXDomain = { min: 0, max: autoXDomain.max };
+  const { full: fullYDomain, auto: autoYDomain } = getScatterMetricDomains(source, metricKey);
+  const autoViewport = {
+    xMin: autoXDomain.min, xMax: autoXDomain.max,
+    yMin: autoYDomain.min, yMax: autoYDomain.max,
+  };
   const symlogConstant = hasNumericAxis ? computeSymlogConstant(priceValues) : 1;
   const clampedViewport = hasNumericAxis
     ? clampTimeSeriesViewport(
-        state.priceScatterViewport,
+        state.priceScatterViewport?.auto ? autoViewport : state.priceScatterViewport,
         {
           xMin: fullXDomain.min,
           xMax: fullXDomain.max,

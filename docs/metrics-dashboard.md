@@ -242,9 +242,9 @@ Shared controls include:
 - grouped price points use the same balanced averaging rule as the chart tab when grouping by model or task
 - `CI` toggle when the metric supports approximate confidence intervals
 - `Labels` toggle for point labels
-- `Reset Zoom`
+- `Auto Zoom` fits all points and their displayed confidence intervals; while zoomed, this becomes `Reset Zoom`
 
-You can zoom by dragging a selection over the plotted area. Clicking a point opens the run-detail modal.
+The default view uses the full metric scale (0–100% for percentage metrics). You can zoom automatically or by dragging a selection over the plotted area. Reset Zoom or a double-click restores the default view. Clicking a point opens the run-detail modal.
 
 ### Table Tab
 
