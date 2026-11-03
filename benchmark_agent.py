@@ -1550,7 +1550,7 @@ def collect_explicit_cli_dests(
     option_actions = getattr(parser, "_option_string_actions", {})
     explicit: set[str] = set()
     for token in raw_tokens:
-        action = option_actions.get(str(token))
+        action = option_actions.get(str(token).split("=", 1)[0])
         if action is None:
             continue
         dest = getattr(action, "dest", None)
@@ -1646,9 +1646,22 @@ def apply_metrics_parameter_defaults(
     if not isinstance(run_config, dict):
         parser.error("--load_params metrics JSON must contain a run_config object.")
 
+    explicit_dests = collect_explicit_cli_dests(parser, argv)
+    provider_changed = False
+    if "provider" in explicit_dests:
+        cli_args, _ = parser.parse_known_args(argv)
+        provider_changed = (
+            str(cli_args.provider or "openai").strip().lower()
+            != str(run_config.get("provider") or "openai").strip().lower()
+        )
+
     defaults: Dict[str, Any] = {}
     for dest in RESUME_RECOVERABLE_ARG_DESTS:
         if dest not in run_config:
+            continue
+        # Credential mappings belong to the saved provider. Let the new provider
+        # resolve its own defaults; explicit CLI mappings still win during parsing.
+        if provider_changed and dest in {"api_key_var", "api_base_var"}:
             continue
         try:
             defaults[dest] = validate_loaded_parameter_value(parser, dest, run_config[dest])

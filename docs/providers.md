@@ -11,6 +11,11 @@ Credential lookup order is:
 3. `.env`
 4. Existing shell environment
 
+When using `--load_params`, saved credential mappings are retained for the same
+provider. If an explicit `--provider` selects a different provider, the saved
+`api_key_var` and `api_base_var` mappings are discarded so the new provider's
+defaults apply. Explicit `--api_key_var` and `--api_base_var` arguments still win.
+
 Examples:
 
 - `OPENAI_API_KEY`
