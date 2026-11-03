@@ -562,8 +562,8 @@ def write_markdown(rows: list[dict[str, Any]], catalog: dict[str, Any], path: Pa
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    out_dir = root / "data" / "analysis" / "model_pricing"
+    root = Path(__file__).resolve().parents[2]
+    out_dir = root / "scripts" / "analysis" / "model_pricing"
     out_dir.mkdir(parents=True, exist_ok=True)
     catalog = load_catalog(root / "config_prices.js")
     uses = collect_model_uses(root)

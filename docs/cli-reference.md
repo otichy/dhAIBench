@@ -1,6 +1,6 @@
 # CLI Reference
 
-This file is generated from `python benchmark_agent.py --help` by `python scripts/generate_cli_reference.py`.
+This file documents `python benchmark_agent.py --help`.
 
 ```text
 usage: benchmark_agent.py [-h] [--input INPUT [INPUT ...]] [--labels LABELS]

@@ -15,6 +15,6 @@ This repository now uses a short root README plus versioned topic guides in `doc
 
 ## Maintenance
 
-- Regenerate the CLI reference after flag changes with `python scripts/generate_cli_reference.py`.
+- Keep the CLI reference in sync with `python benchmark_agent.py --help` after flag changes.
 - Keep the root [README](../README.md) focused on overview and quickstart.
 - Prefer adding new operational detail here in `docs/` rather than growing the top-level README.

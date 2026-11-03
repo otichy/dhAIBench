@@ -7,7 +7,9 @@ config_models.js
 !/tests/test_web_custom_leaderboard_browser.py
 /*.sh
 /verification_tmp/*
-/data/analysis/*
+# Local support tools and analysis artifacts; share only pricing tools.
+/scripts/*
+!/scripts/pricing/
 /data/logs/*
 !/data/logs/.gitkeep
 !/data/logs/sessions/

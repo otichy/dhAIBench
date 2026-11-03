@@ -53,11 +53,16 @@ Start here depending on what you need:
 ## Repository Layout
 
 - `benchmark_agent.py`: main benchmark runner and evaluation logic
+- `validator_client.py`: external validator protocol client used by the runner
 - `config_gui.html`: static command builder for the CLI
 - `config_models.js`: model catalog consumed by the GUI
 - `validators/`: reference validator implementations
 - `web/`: static metrics dashboard
-- `scripts/`: maintenance and analysis helpers
+- `scripts/pricing/`: shared pricing catalog update and audit tools
+
+Update the pricing catalog from the repository root with
+`python scripts/pricing/update_model_prices.py`. See the
+[pricing tools guide](scripts/pricing/README.md) for options and audit commands.
 
 ## Notes
 

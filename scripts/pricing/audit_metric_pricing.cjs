@@ -1,8 +1,8 @@
 // Audit the same model lookup, service tiers, and token buckets as the dashboard.
-// Usage: node scripts/audit_metric_pricing.cjs [output.json]
+// Usage: node scripts/pricing/audit_metric_pricing.cjs [output.json]
 const fs = require('fs');
 const path = require('path');
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '../..');
 global.window = global;
 require(path.join(root, 'config_prices.js'));
 require(path.join(root, 'web/pricing.js'));
