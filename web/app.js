@@ -1313,7 +1313,22 @@ function getRepeatAgreementForRun(run) {
   if (!run || !run.runStem || !(state.repeatAgreementByRunStem instanceof Map)) {
     return null;
   }
-  return state.repeatAgreementByRunStem.get(run.runStem) || null;
+  const entry = state.repeatAgreementByRunStem.get(run.runStem) || null;
+  return entry && isGeneralComparisonAgreement(entry) ? entry : null;
+}
+
+function isTemperatureOverrideRun(run) {
+  if (metricsAggregationApi && typeof metricsAggregationApi.temperatureOverride === "function") {
+    return metricsAggregationApi.temperatureOverride(run).overridden;
+  }
+  return (run.runConfig?.temperature ?? run.rawMetrics?.run_config?.temperature
+    ?? run.controlSummary?.configured?.temperature ?? run.rawMetrics?.temperature) != null;
+}
+
+function isGeneralComparisonAgreement(entry) {
+  const stems = new Set([...(entry.runStems || []), ...(entry.representatives || []).map((rep) => rep.runStem)]);
+  const baselineStems = new Set(state.runs.filter((run) => !isTemperatureOverrideRun(run)).map((run) => run.runStem));
+  return stems.size > 0 && [...stems].every((stem) => baselineStems.has(stem));
 }
 
 function getCrossModelAgreementForRun(run, policy = state.agreementRepresentativePolicy) {
@@ -1326,7 +1341,8 @@ function getCrossModelAgreementForRun(run, policy = state.agreementRepresentativ
   if (!(bucket instanceof Map)) {
     return null;
   }
-  return bucket.get(run.runStem) || null;
+  const entry = bucket.get(run.runStem) || null;
+  return entry && isGeneralComparisonAgreement(entry) ? entry : null;
 }
 
 function parseManifestBaseDirs(manifest) {
@@ -3525,6 +3541,9 @@ function getFilteredRuns(options = {}) {
   const selectedTags = state.selectedTags;
   const activeTimeRanges = getActiveTimeRanges();
   let runs = state.runs.filter((run) => {
+    if (options.includeTemperatureOverrides !== true && isTemperatureOverrideRun(run)) {
+      return false;
+    }
     if (!ignoreTasks && !isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
       return false;
     }
@@ -3829,7 +3848,7 @@ function renderKpis(runs) {
   els.heroTitle.textContent = selectedTaskCount === 0 ? "All Tasks" : `${selectedTaskCount} Task(s) Selected`;
   const selectedModelCount = state.selectedModels.length;
   const modelScope = selectedModelCount === 0 ? "all models" : `${selectedModelCount} model(s)`;
-  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in view (${modelScope}).`;
+  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in comparison (${modelScope}). Explicit-temperature runs are excluded; the runs table retains them for inspection.`;
 }
 
 function createBarRow(
@@ -8892,7 +8911,7 @@ function render() {
   renderKpis(state.filtered);
   renderLeaderboard(state.filtered);
   renderTokenSignals(state.filtered);
-  renderTable(state.filtered);
+  renderTable(getFilteredRuns({ includeTemperatureOverrides: true }));
   requestAnimationFrame(() => {
     updateSidebarScrollAffordances();
   });
