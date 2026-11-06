@@ -5293,7 +5293,8 @@ def load_agreement_run_snapshot(metrics_path: str) -> Optional[AgreementRunSnaps
         task_name, _, _ = parse_run_metadata_from_metrics_path(metrics_path)
     provider = str(model_details.get("provider") or "").strip()
     model = (
-        str(model_details.get("model_requested") or "").strip()
+        str(normalized_metrics.get("model") or "").strip()
+        or str(model_details.get("model_requested") or "").strip()
         or str(model_details.get("model_for_requests") or "").strip()
     )
     parsed_basename = parse_run_basename(run_stem) or {}
@@ -11266,6 +11267,10 @@ def process_dataset(
         metrics["label_metrics_reason"] = reason
         logging.warning("%s", message)
 
+    # Keep an explicitly curated display name when resuming or recalculating.
+    display_model = str((load_metrics_payload(metrics_output) or {}).get("model") or "").strip()
+    if display_model:
+        metrics["model"] = display_model
     metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)
@@ -11607,6 +11612,10 @@ def process_metrics_only_output(
             metrics["label_metrics_reason"] = reason
             logging.warning("%s: %s", resolved_output, message)
 
+    # Keep an explicitly curated display name when resuming or recalculating.
+    display_model = str((load_metrics_payload(metrics_output) or {}).get("model") or "").strip()
+    if display_model:
+        metrics["model"] = display_model
     metrics = ensure_metrics_metadata_fields(metrics, metrics_output)
     with open(metrics_output, "w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2, ensure_ascii=False)

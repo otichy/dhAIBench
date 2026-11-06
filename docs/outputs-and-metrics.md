@@ -41,6 +41,13 @@ The metrics JSON includes:
 - `task_description`
 - `tags`
 
+An optional top-level `model` field supplies a curated display name for the
+dashboard and agreement exports (for example, `gpt-6-luna`). It takes precedence
+over request identifiers for display. The original API identifiers remain in
+`model_details.model_requested` and `model_details.model_for_requests`; pricing
+and resume defaults continue to use those identifiers. An existing display name
+is preserved when the same run is resumed or its metrics are recomputed.
+
 The stored `run_config` can be reused as command defaults with
 `--load_params path/to/run__metrics.json`. Explicit command-line arguments override
 loaded values. `--load_params` and `--resume` are intentionally mutually exclusive:

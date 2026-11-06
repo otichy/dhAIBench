@@ -8,6 +8,7 @@ python scripts/pricing/update_model_prices.py --help
 python scripts/pricing/update_model_prices.py
 python scripts/pricing/update_model_prices.py --providers openai google
 node scripts/pricing/audit_metric_pricing.cjs
+python -m unittest discover -s scripts/pricing -p test_publication_pricing.py
 ```
 
 The updater reads `config_models.js`, fetches provider pricing, applies the
@@ -30,3 +31,11 @@ Additional tools operate on local benchmark data:
 
 Analysis inputs, downloaded sources, reports, and other support helpers stay
 local. Only `scripts/pricing/` is shared from the scripts directory.
+
+Publication charts reprice models listed in `publication_reprice_models` in the
+reviewed overrides, using `reprice_publication_runs.cjs` and the dashboard cost
+calculator. Other models retain their stored estimates. Recalculated costs and
+source links are exported in the gallery's `pricing_recalculations.json`; live
+benchmark result files are left intact. The Qwen3.6 Plus `:free` alias deliberately
+uses the paid OpenRouter reference quote for this comparison. Haiku 5.5 requests
+marked Flex use a documented standard-rate reference without a discount.

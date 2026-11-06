@@ -905,6 +905,11 @@ function getRunEffortSuffix(run) {
   return parts.length ? `[${parts.join(", ")}]` : "";
 }
 
+function normalizeDashboardTaskName(task) {
+  const name = asTrimmedString(task);
+  return name === "like-inter" ? "*like* discourse/pragm" : name;
+}
+
 function getRunModelDisplayName(run) {
   const suffix = getRunEffortSuffix(run);
   return suffix ? `${run.model} ${suffix}` : run.model;
@@ -941,10 +946,10 @@ function normalizeRun(filePath, payload) {
   const providerFromMetrics =
     asTrimmedString(modelDetails.provider) || asTrimmedString(payload.provider);
   const modelFromMetrics =
+    asTrimmedString(payload.model) ||
     asTrimmedString(modelDetails.model_requested) ||
     asTrimmedString(modelDetails.model_for_requests) ||
-    asTrimmedString(payload.model_requested) ||
-    asTrimmedString(payload.model);
+    asTrimmedString(payload.model_requested);
   const taskDescription =
     asTrimmedString(runConfig.task_description) || asTrimmedString(payload.task_description);
   const tags = parseSemicolonTags(runConfig.tags).length
@@ -964,12 +969,12 @@ function normalizeRun(filePath, payload) {
     fileName,
     runStem,
     fileModelSlug: nameParts.model || "",
-    task: taskNameFromMetrics || nameParts.task,
+    task: normalizeDashboardTaskName(taskNameFromMetrics || nameParts.task),
     taskDescription,
     tags,
     tagsDisplay: tags.join("; "),
     provider: providerFromMetrics || nameParts.provider || "",
-    model: modelFromMetrics || nameParts.model,
+    model: asTrimmedString(modelFromMetrics || nameParts.model),
     timestamp: ts,
     accuracy,
     cohenKappa,
@@ -1084,8 +1089,8 @@ function normalizeAgreementGroupEntry(rawEntry, policy = "") {
   return {
     groupId: asTrimmedString(rawEntry.group_id),
     policy: asTrimmedString(rawEntry.representative_policy) || policy,
-    taskNameDisplay: asTrimmedString(rawEntry.task_name_display),
-    taskNamesSeen: uniqueNonEmptyStrings(rawEntry.task_names_seen || []),
+    taskNameDisplay: normalizeDashboardTaskName(rawEntry.task_name_display),
+    taskNamesSeen: uniqueNonEmptyStrings((rawEntry.task_names_seen || []).map(normalizeDashboardTaskName)),
     tagsDisplay: asTrimmedString(rawEntry.tags_display),
     provider: asTrimmedString(rawEntry.provider),
     model: asTrimmedString(rawEntry.model),
@@ -1182,8 +1187,8 @@ function normalizeAgreementClusterEntry(rawEntry, policy = "", scope = "") {
     groupId: asTrimmedString(rawEntry.group_id),
     clusterScope: asTrimmedString(rawEntry.cluster_scope) || scope,
     policy: asTrimmedString(rawEntry.representative_policy) || policy,
-    taskNameDisplay: asTrimmedString(rawEntry.task_name_display),
-    taskNamesSeen: uniqueNonEmptyStrings(rawEntry.task_names_seen || []),
+    taskNameDisplay: normalizeDashboardTaskName(rawEntry.task_name_display),
+    taskNamesSeen: uniqueNonEmptyStrings((rawEntry.task_names_seen || []).map(normalizeDashboardTaskName)),
     tagsDisplay: asTrimmedString(rawEntry.tags_display),
     provider: asTrimmedString(rawEntry.provider),
     model: asTrimmedString(rawEntry.model),
@@ -3782,6 +3787,7 @@ async function runWithLoadingNotice(message, loader) {
 }
 
 function renderTaskControls() {
+  state.selectedTasks = uniqueNonEmptyStrings(state.selectedTasks.map(normalizeDashboardTaskName));
   const allowedTasks = state.leaderboardTab === "custom"
     ? uniqueNonEmptyStrings([...state.tasks, ...state.selectedTasks]) : state.tasks;
   const visibleTasks = getVisibleFilterOptions(allowedTasks, state.selectedTasks);
@@ -5007,10 +5013,10 @@ function buildModelLegendPricingTooltip(modelName, runsForModel) {
         : standardTier
         ? `${tierName} unavailable; ${formatPricingTierSummary("standard", standardTier)}`
         : `${tierName} unavailable`;
-      line = `${providerKey || "unknown"} / ${resolvedKey}: ${tierSummary}`;
+      line = `${providerKey || "unknown"} / ${asTrimmedString(resolvedKey)}: ${tierSummary}`;
     } else {
       const statusLabel = asTrimmedString(pricing && pricing.statusLabel) || "no pricing match";
-      line = `${providerKey || "unknown"} / ${resolvedKey || modelName}: ${statusLabel}`;
+      line = `${providerKey || "unknown"} / ${asTrimmedString(resolvedKey || modelName)}: ${statusLabel}`;
     }
     summaries.set(line, line);
   });
@@ -8534,7 +8540,7 @@ function buildRunCostTooltip(run) {
   }
 
   const provider = asTrimmedString(calculation.providerKey) || "unknown provider";
-  const model = asTrimmedString(calculation.modelKey) || asTrimmedString(run && run.model) || "unknown model";
+  const model = asTrimmedString(calculation.modelKey || (run && run.model)) || "unknown model";
   const tier = asTrimmedString(calculation.pricingTier) || "standard";
   const priceUnit = safeNum(calculation.tokenPriceUnit) || 1000000;
   const priceUnitLabel = priceUnit === 1000000 ? "1M tokens" : `${formatNum(priceUnit, 0)} tokens`;
@@ -8958,7 +8964,7 @@ function applyLoadedResult(result) {
   state.radarVisibleSeriesCount = RADAR_MODEL_PAGE_SIZE;
 
   if (state.leaderboardTab !== "custom") {
-    state.selectedTasks = sanitizeSelections(state.selectedTasks, state.tasks);
+    state.selectedTasks = sanitizeSelections(state.selectedTasks.map(normalizeDashboardTaskName), state.tasks);
   }
   state.selectedModels = sanitizeSelections(state.selectedModels, state.models);
   state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
