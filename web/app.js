@@ -8292,7 +8292,8 @@ function renderRadarPanel(panel, runs) {
 
   const wrap = document.createElement("div");
   wrap.className = "radar-wrap";
-  wrap.appendChild(buildRadarSvg(dataset.axes, dataset.series, metricKey, scaleMode, dataset.totalSeriesCount));
+  const svg = buildRadarSvg(dataset.axes, dataset.series, metricKey, scaleMode, dataset.totalSeriesCount);
+  wrap.appendChild(svg);
 
   const legend = document.createElement("div");
   legend.className = "radar-legend";
@@ -8335,6 +8336,20 @@ function renderRadarPanel(panel, runs) {
   }
 
   panel.appendChild(wrap);
+
+  // Measure after insertion so the viewport includes the complete axis labels.
+  const fitLabels = () => {
+    if (!svg.isConnected) {
+      return;
+    }
+    const bounds = svg.getBBox();
+    const padding = 12;
+    svg.setAttribute("viewBox", `${bounds.x - padding} ${bounds.y - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`);
+  };
+  fitLabels();
+  if (document.fonts) {
+    document.fonts.ready.then(fitLabels);
+  }
 }
 
 function renderTokenSignals(runs) {

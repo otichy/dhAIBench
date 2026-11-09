@@ -2606,9 +2606,10 @@ html[data-theme="light"] .bar-track-label {
 }
 
 .radar-svg {
+  display: block;
   width: 100%;
-  max-width: 460px;
-  aspect-ratio: 1 / 1;
+  max-width: 660px;
+  height: auto;
 }
 
 .radar-grid {
