@@ -36,6 +36,14 @@ python benchmark_agent.py \
 
 On PowerShell, replace `\` with `^` for line continuation.
 
+## Workflow
+
+The Python runner annotates examples, optionally validates responses, and saves predictions. Resume an interrupted run or retry unclassified predictions as needed. Step 4 calculates metrics and saves them as JSON files; step 5 loads those files in the browser dashboard for comparison and inspection.
+
+[![dhAIBench workflow: input and setup, LLM annotation, optional validation, saving predictions and calculating metrics JSONs, and browser analysis, with resume and retry paths](docs/figures/dhaibench-workflow.svg)](docs/figures/dhaibench-workflow.svg)
+
+[PDF](docs/figures/dhaibench-workflow.pdf) · [PNG](docs/figures/dhaibench-workflow.png) · [Figure details and regeneration instructions](docs/figures/dhaibench-workflow.md)
+
 ## Documentation
 
 Start here depending on what you need:
