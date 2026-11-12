@@ -95,7 +95,28 @@ try {
   assert(state.selectedTags.includes('temp_0.0'), 'Temperature tag click did not select');
   assert(getFilteredRuns({includeTemperatureOverrides: true}).length === 1,
     'Temperature tag must reveal its run in the runs table');
-  assert(state.filtered.length === 0, 'Selected temperature run entered comparisons');
+  assert(state.filtered.length === 1 && state.filtered[0] === zero,
+    'Selected temperature run must enter leaderboard and comparison inputs');
+  assert(chips()[4].classList.contains('active') && chips()[4].getAttribute('aria-pressed') === 'true',
+    'Clicked temperature tag must visibly indicate selection');
+  // Simulate hover with a class of identical specificity in the real CSS rules.
+  // This exercises the cascade deterministically without pointer coordinates.
+  for (const sheet of document.styleSheets) {
+    if (sheet.ownerNode.tagName !== 'STYLE') continue;
+    for (const rule of sheet.cssRules) {
+      if (rule.selectorText?.includes('.chip:hover')) {
+        rule.selectorText = rule.selectorText.replaceAll(':hover', '.test-hover');
+      }
+    }
+  }
+  chips()[4].classList.add('test-hover');
+  assert(getComputedStyle(chips()[4]).backgroundImage.includes('linear-gradient'),
+    'Hover must preserve the selected tag gradient');
+  chips()[5].click();
+  assert(state.filtered.length === 2, 'Multiple temperature tags must match with OR');
+  chips()[0].click();
+  assert(state.filtered.length === 4, 'Clearing temperature selections must restore baseline comparisons');
+  chips()[4].click();
   assert(chips()[5].textContent === 'temp_1.0 (1)' && !chips()[5].disabled,
     'Tag selection must not hide other temperature tags');
   setSelectedModels(['M1']);

@@ -87,19 +87,23 @@ Warnings are also summarized below the status line so you can spot malformed or 
 
 The dashboard is built around a simple loop: narrow the run set in the sidebar, inspect the summary cards, compare runs in the leaderboard, and open individual runs for deeper details.
 
-General comparisons exclude all runs with an explicitly configured temperature,
+By default, general comparisons exclude all runs with an explicitly configured temperature,
 including 0 and 1. Detection checks run configuration, control telemetry, legacy
 top-level temperature fields and temperature tags. Unset temperatures use provider
 defaults; missing historical values remain unknown. This applies to leaderboard
 charts/tables, custom rankings and shared-task selection, radar, price/time
 scatterplots, agreement views, token charts and comparison KPIs. Precomputed
-agreement values are shown only when all contributing runs are loaded and free
-of recorded temperature overrides.
+agreement values are shown only when all contributing runs are loaded and eligible
+for the current temperature selection.
 
 The runs table retains these runs under the same sidebar filters for inspection,
 including their original metric files and individual-run charts.
 Tag counts include these inspectable runs, so temperature tags remain selectable
 even though those runs are excluded from general comparisons.
+Selecting any `temp_` tag includes explicit-temperature runs in all comparison
+views under the usual sidebar filters and OR tag matching. Clearing temperature
+tag selections restores the default exclusion. Agreement summaries still require
+all contributing runs to be loaded.
 
 ## Filters
 

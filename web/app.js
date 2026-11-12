@@ -1330,9 +1330,13 @@ function isTemperatureOverrideRun(run) {
     ?? run.controlSummary?.configured?.temperature ?? run.rawMetrics?.temperature) != null;
 }
 
+function hasSelectedTemperatureTag() {
+  return state.selectedTags.some((tag) => /^temp_/i.test(tag));
+}
+
 function isGeneralComparisonAgreement(entry) {
   const stems = new Set([...(entry.runStems || []), ...(entry.representatives || []).map((rep) => rep.runStem)]);
-  const baselineStems = new Set(state.runs.filter((run) => !isTemperatureOverrideRun(run)).map((run) => run.runStem));
+  const baselineStems = new Set(state.runs.filter((run) => hasSelectedTemperatureTag() || !isTemperatureOverrideRun(run)).map((run) => run.runStem));
   return stems.size > 0 && [...stems].every((stem) => baselineStems.has(stem));
 }
 
@@ -3546,7 +3550,7 @@ function getFilteredRuns(options = {}) {
   const selectedTags = state.selectedTags;
   const activeTimeRanges = getActiveTimeRanges();
   let runs = state.runs.filter((run) => {
-    if (options.includeTemperatureOverrides !== true && isTemperatureOverrideRun(run)) {
+    if (options.includeTemperatureOverrides !== true && !hasSelectedTemperatureTag() && isTemperatureOverrideRun(run)) {
       return false;
     }
     if (!ignoreTasks && !isAllSelected(selectedTasks) && !selectedTasks.includes(run.task)) {
@@ -3863,7 +3867,10 @@ function renderKpis(runs) {
   els.heroTitle.textContent = selectedTaskCount === 0 ? "All Tasks" : `${selectedTaskCount} Task(s) Selected`;
   const selectedModelCount = state.selectedModels.length;
   const modelScope = selectedModelCount === 0 ? "all models" : `${selectedModelCount} model(s)`;
-  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in comparison (${modelScope}). Explicit-temperature runs are excluded; the runs table retains them for inspection.`;
+  const temperatureScope = hasSelectedTemperatureTag()
+    ? "Selected temperature tags include explicit-temperature runs in comparisons."
+    : "Explicit-temperature runs are excluded; select a temperature tag to compare them.";
+  els.heroSubtitle.textContent = `${formatNum(runs.length, 0)} runs in comparison (${modelScope}). ${temperatureScope}`;
 }
 
 function createBarRow(
