@@ -79,6 +79,31 @@ try {
   assert(labels() === 'All Tags (1)|red (1)|blue (0)|green (1)', 'Model-only counts');
   setSelectedModels([]); setSelectedTasks(['B']);
   assert(labels() === 'All Tags (2)|red (1)|blue (0)|green (2)', 'Task-only counts');
+  // Explicit temperatures remain inspectable even when comparison views omit them.
+  const zero = fixture('zero', 'M1', 'A', 'red;temp_0.0');
+  zero.runConfig.temperature = 0;
+  const one = fixture('oneTemp', 'M2', 'B', 'green;temp_1.0');
+  one.runConfig.temperature = 1;
+  state.runs.push(zero, one);
+  state.tags.push('temp_0.0', 'temp_1.0');
+  setSelectedTasks([]);
+  assert(labels() === 'All Tags (6)|red (3)|blue (1)|green (3)|temp_0.0 (1)|temp_1.0 (1)',
+    'Temperature runs missing from counts with all filters cleared');
+  assert(!chips()[4].disabled && !chips()[5].disabled, 'Temperature chips must be selectable');
+  assert(state.filtered.length === 4, 'Temperature overrides entered comparisons');
+  chips()[4].click();
+  assert(state.selectedTags.includes('temp_0.0'), 'Temperature tag click did not select');
+  assert(getFilteredRuns({includeTemperatureOverrides: true}).length === 1,
+    'Temperature tag must reveal its run in the runs table');
+  assert(state.filtered.length === 0, 'Selected temperature run entered comparisons');
+  assert(chips()[5].textContent === 'temp_1.0 (1)' && !chips()[5].disabled,
+    'Tag selection must not hide other temperature tags');
+  setSelectedModels(['M1']);
+  assert(chips()[4].textContent === 'temp_0.0 (1)' && !chips()[4].disabled,
+    'Matching model must retain temperature chip');
+  assert(chips()[5].disabled, 'Model filter must disable unavailable temperature');
+  setSelectedTasks(['B']);
+  assert(chips()[4].disabled, 'Task filter must disable unavailable temperature');
   document.getElementById('tagTestResult').textContent = JSON.stringify({passed: true});
 } catch (error) {
   document.getElementById('tagTestResult').textContent = JSON.stringify({passed: false, error: error.stack});

@@ -3815,8 +3815,9 @@ function renderTagControls() {
   const tags = ["ALL", ...state.tags];
   state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
 
-  // Tag availability follows the other filters, never the selected tags.
-  const availableRuns = getFilteredRuns({ ignoreTags: true });
+  // Count every inspectable run, including temperature overrides retained in the
+  // runs table. Comparison eligibility must not disable their filter chips.
+  const availableRuns = getFilteredRuns({ ignoreTags: true, includeTemperatureOverrides: true });
   const counts = availableRuns.reduce((acc, run) => {
     const runTags = Array.isArray(run.tags) ? run.tags : [];
     runTags.forEach((tag) => {

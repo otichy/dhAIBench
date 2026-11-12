@@ -98,6 +98,8 @@ of recorded temperature overrides.
 
 The runs table retains these runs under the same sidebar filters for inspection,
 including their original metric files and individual-run charts.
+Tag counts include these inspectable runs, so temperature tags remain selectable
+even though those runs are excluded from general comparisons.
 
 ## Filters
 
