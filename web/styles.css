@@ -2901,6 +2901,11 @@ tbody tr.selected-row {
   grid-column: 1 / -1;
 }
 
+.detail-system-prompt .value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .detail-raw pre {
   margin: 0.45rem 0 0;
   max-height: 320px;

@@ -8778,6 +8778,10 @@ function fillRunDetailsContent(run) {
     els.runModalContent.appendChild(createDetailItem(label, value, options));
   });
 
+  const systemPromptItem = createDetailItem("System Prompt", run.runConfig?.system_prompt);
+  systemPromptItem.classList.add("detail-raw", "detail-system-prompt");
+  els.runModalContent.appendChild(systemPromptItem);
+
   const links = buildRunResourceLinks(run);
   els.runModalContent.appendChild(
     createLinkDetailItem("Metrics JSON", links.metrics, getFileNameFromPath(links.metrics))
