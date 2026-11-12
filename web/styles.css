@@ -681,7 +681,7 @@ select[multiple] option.is-selected {
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
 
-.chip:hover {
+.chip:hover:not(:disabled) {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line-strong));
   background: var(--surface-hover);
@@ -692,6 +692,12 @@ select[multiple] option.is-selected {
   border-color: transparent;
   color: #031017;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .main {

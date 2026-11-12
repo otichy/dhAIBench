@@ -5,6 +5,7 @@ config_models.js
 !/tests/test_jev_gui_browser.py
 !/tests/test_web_custom_leaderboard.py
 !/tests/test_web_custom_leaderboard_browser.py
+!/tests/test_web_tag_filters.py
 /*.sh
 /verification_tmp/*
 # Local support tools and analysis artifacts; share only pricing tools.

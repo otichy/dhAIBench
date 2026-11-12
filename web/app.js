@@ -3555,7 +3555,7 @@ function getFilteredRuns(options = {}) {
     if (!isAllSelected(selectedModels) && !selectedModels.includes(run.model)) {
       return false;
     }
-    if (!isAllSelected(selectedTags)) {
+    if (options.ignoreTags !== true && !isAllSelected(selectedTags)) {
       const runTags = Array.isArray(run.tags) ? run.tags : [];
       if (!runTags.some((tag) => selectedTags.includes(tag))) {
         return false;
@@ -3815,13 +3815,15 @@ function renderTagControls() {
   const tags = ["ALL", ...state.tags];
   state.selectedTags = sanitizeSelections(state.selectedTags, state.tags);
 
-  const counts = state.runs.reduce((acc, run) => {
+  // Tag availability follows the other filters, never the selected tags.
+  const availableRuns = getFilteredRuns({ ignoreTags: true });
+  const counts = availableRuns.reduce((acc, run) => {
     const runTags = Array.isArray(run.tags) ? run.tags : [];
     runTags.forEach((tag) => {
       acc[tag] = (acc[tag] || 0) + 1;
     });
     return acc;
-  }, {});
+  }, Object.create(null));
 
   els.tagChips.innerHTML = "";
   tags.forEach((tag) => {
@@ -3829,7 +3831,13 @@ function renderTagControls() {
     const button = document.createElement("button");
     button.className = `chip${isActive ? " active" : ""}`;
     button.type = "button";
-    button.textContent = tag === "ALL" ? `All Tags (${state.runs.length})` : `${tag} (${counts[tag] || 0})`;
+    const count = tag === "ALL" ? availableRuns.length : counts[tag] || 0;
+    button.textContent = tag === "ALL" ? `All Tags (${count})` : `${tag} (${count})`;
+    button.setAttribute("aria-pressed", String(isActive));
+    button.disabled = tag !== "ALL" && count === 0;
+    if (button.disabled) {
+      button.title = "No runs match the current filters. Clear tag selections with All Tags.";
+    }
     button.addEventListener("click", () => toggleTagSelection(tag));
     els.tagChips.appendChild(button);
   });
