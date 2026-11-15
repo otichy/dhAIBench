@@ -73,7 +73,7 @@ text(40, 80, "From linguistic data to model comparison in the web app", 21,
 
 band(112, 280, "1", "INPUT &\nRUN SETUP", "Dataset +\nconfiguration", "#f1f5f9")
 box(210, 139, 435, 131, "Prepare input data",
-    "CSV: ID, target word, context\nOptional metadata and gold labels")
+    "CSV: ID, target word, context; metadata\nGold labels: input truth column or\nseparate labels CSV (optional)")
 box(685, 139, 455, 131, "Configure the run",
     "GUI command builder or CLI\nModel/provider, prompt, examples,\ncontrols, retries, validator, output paths")
 box(300, 310, 600, 62, "Launch Python runner; load and check data", title_size=22)
@@ -127,7 +127,7 @@ box(260, 1220, 680, 110, "Calculate metrics and save JSON files",
 arrow([(835, 1162), (835, 1197), (600, 1197), (600, 1220)])
 label(720, 1197, "After run completes", 17)
 box(980, 1220, 170, 110, "Gold labels",
-    "Input truth or\nlabels CSV", fill="#f8fafc", title_size=21)
+    "From step 1\nFor scoring only", fill="#f8fafc", title_size=21)
 arrow([(980, 1275), (940, 1275)], dashed=True)
 
 band(1376, 270, "5", "WEB APP\nANALYSIS", "Filter, compare\nand inspect runs", "#edf4f8")

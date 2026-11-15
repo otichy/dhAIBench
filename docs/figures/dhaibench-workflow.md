@@ -10,7 +10,9 @@ text width in a two-column paper, or on a dedicated figure page.
 
 **End-to-end dhAIBench workflow.** Linguistic examples and a run configuration
 are supplied to the Python benchmark runner through a browser-based command
-builder or the command line. For each pending example, the runner constructs a
+builder or the command line. Optional gold labels are supplied at setup in the
+input CSV's `truth` column or a separate labels CSV, then used for scoring in
+step 4. For each pending example, the runner constructs a
 task prompt, queries the selected model, and parses the response. Step 3 is an
 optional validation stage, with an explicit bypass when validation is disabled.
 An external validator can normalize a prediction or request another attempt with
@@ -25,8 +27,9 @@ dashboard loads those saved JSON files for interactive comparison and inspection
 ## Scope and interpretation
 
 - Validation checks the response contract and optional task constraints;
-  evaluation against gold labels is a separate step. Gold labels are not shown
-  as inputs to the model prompt.
+  evaluation against gold labels supplied in step 1 is a separate step. The
+  gold-label box in step 4 refers to those existing labels, not a new input at
+  evaluation time. Gold labels are not shown as inputs to the model prompt.
 - Dashed arrows denote auxiliary or optional paths: gold-label input, bypassing
   validation, resuming saved output, and continuing after a validation failure
   when the failure policy allows it.

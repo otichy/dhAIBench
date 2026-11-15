@@ -333,14 +333,30 @@ Clicking a row opens the run-detail modal.
 
 The modal opens from leaderboard rows, scatter points, token-profile rows, and table rows.
 
-It includes:
+The always-visible summary shows task, model, provider, timestamp, tags, recorded
+stop status, accuracy, macro F1, evaluated examples, and estimated cost.
+"No recorded stop reason" does not establish that a historical run completed.
 
-- run metadata such as task, model, provider, tags, timestamp, and reasoning settings
-- metric values and sample counts
-- token usage, runtime, pricing, and request totals
-- links to metrics JSON, heatmap, calibration plot, log file, output CSV, and input CSV
-- chart previews for heatmap and calibration artifacts when present
-- an expandable raw JSON view of the loaded metrics file
+Native expandable groups organize the remaining details:
+
+- **Evaluation** (open initially): aggregate scores, counts, task description, and label-metric availability.
+- **Confidence & calibration**: ECE, MCE, Brier score, calibration sample/bin counts, confidence source, and calibration preview.
+- **Agreement**: repeated-run and cross-model alpha with run/model counts and representative policy.
+- **Model & generation**: model metadata, sampling controls, reasoning settings, and service tier.
+- **Prompt strategy**: system prompt, layout, few-shot count, batching, and explanation/reasoning settings.
+- **Execution & request controls**: active runtime, prompt timestamps, stop reason, execution settings, and expandable control acceptance/rejection summaries.
+- **Tokens, cache & cost**: token totals, current pricing, and nested usage, cache, and stored-pricing diagnostics.
+- **Files & provenance**: recorded input/output/labels paths, truth source, processing mode, artifact links, and heatmap preview.
+- **Raw metrics JSON**: the complete original payload, collapsed initially.
+
+There is no dedicated per-label table or numeric confusion matrix. The existing
+heatmap preview and complete raw JSON remain available. Diagnostic summaries omit
+example IDs. Missing historical configuration values display as N/A or are omitted;
+explicit false and zero values remain visible.
+
+Displayed catalogue cost is recalculated using the dashboard's current catalogue.
+Stored JSON cost and pricing provenance appear separately when available, since
+these estimates can differ after catalogue updates.
 
 ## Tips
 

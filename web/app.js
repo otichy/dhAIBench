@@ -8699,6 +8699,26 @@ function buildRunResourceLinks(run) {
   };
 }
 
+function createRunDetailGroup(title, preview = "", open = false) {
+  const group = document.createElement("details");
+  group.className = "run-detail-group detail-raw";
+  group.open = open;
+  const summary = document.createElement("summary");
+  const heading = document.createElement("span");
+  heading.textContent = title;
+  summary.appendChild(heading);
+  if (preview) {
+    const hint = document.createElement("span");
+    hint.className = "run-detail-preview muted";
+    hint.textContent = preview;
+    summary.appendChild(hint);
+  }
+  const content = document.createElement("div");
+  content.className = "details-grid run-detail-group-body";
+  group.append(summary, content);
+  return { group, content };
+}
+
 function fillRunDetailsContent(run) {
   if (!run) {
     els.runModalTitle.textContent = "Run Details";
@@ -8706,120 +8726,167 @@ function fillRunDetailsContent(run) {
     els.runModalContent.innerHTML = "";
     return;
   }
-  const repeatAgreement = getRepeatAgreementForRun(run);
-  const crossModelAgreement = getCrossModelAgreementForRun(run, state.agreementRepresentativePolicy);
-  const runThinkingLevel = getConfiguredControl(run, "thinking_level");
-  const runReasoningEffort =
-    getConfiguredControl(run, "reasoning_effort") || getConfiguredControl(run, "effort");
-  const representativePolicyLabel =
-    AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy] ||
-    state.agreementRepresentativePolicy;
-  const detailPairs = [
-    ["Task", run.task],
-    ["Task Description", run.taskDescription],
-    ["Tags", run.tagsDisplay],
-    ["Model", run.model],
-    ["Thinking Level", runThinkingLevel],
-    ["Reasoning/Effort", runReasoningEffort],
-    ["Timestamp", formatTs(run.timestamp)],
-    ["Accuracy", run.accuracy == null ? "N/A" : `${formatNum(run.accuracy, 2)}%`],
-    ["Cohen's Kappa", run.cohenKappa == null ? "N/A" : formatNum(run.cohenKappa, 3)],
-    ["Repeat α", repeatAgreement && repeatAgreement.alphaNominal != null ? formatNum(repeatAgreement.alphaNominal, 3) : "N/A"],
-    ["Repeat Runs", repeatAgreement ? formatNum(repeatAgreement.runCount, 0) : "N/A"],
-    [
-      `Cross-Model α (${representativePolicyLabel})`,
-      crossModelAgreement && crossModelAgreement.alphaNominal != null
-        ? formatNum(crossModelAgreement.alphaNominal, 3)
-        : "N/A",
-    ],
-    ["Cross-Model Models", crossModelAgreement ? formatNum(crossModelAgreement.modelCount, 0) : "N/A"],
-    ["Macro F1", run.macroF1 == null ? "N/A" : `${formatNum(run.macroF1, 2)}%`],
-    ["Macro Precision", run.macroPrecision == null ? "N/A" : `${formatNum(run.macroPrecision, 2)}%`],
-    ["Macro Recall", run.macroRecall == null ? "N/A" : `${formatNum(run.macroRecall, 2)}%`],
-    ["Calibration ECE", run.calibrationEce == null ? "N/A" : `${formatNum(run.calibrationEce, 2)}%`],
-    ["Calibration MCE", run.calibrationMce == null ? "N/A" : `${formatNum(run.calibrationMce, 2)}%`],
-    ["Brier Score", run.calibrationBrierScore == null ? "N/A" : formatNum(run.calibrationBrierScore, 3)],
-    ["Calibration Samples", formatNum(run.calibrationSampleCount, 0)],
-    ["Predictions", formatNum(run.predictionCount, 0)],
-    ["Evaluated Examples", formatNum(run.totalExamples, 0)],
-    ["Truth Label Count", formatNum(run.truthLabelCount, 0)],
-    ["Requests (attempts_total)", formatNum(run.requestsTotal, 0)],
-    ["Attempts With Usage", formatNum(run.attemptsWithUsage, 0)],
-    ["Input Tokens (total)", formatNum(run.inputTokensTotal, 0)],
-    ["Cached Input Tokens (total)", formatNum(run.cachedInputTokensTotal, 0)],
-    ["Non-Cached Input Tokens", formatNum(run.nonCachedInputTokensTotal, 0)],
-    ["Output Tokens (total)", formatNum(run.outputTokensTotal, 0)],
-    ["Thinking Tokens (total)", formatNum(run.thinkingTokensTotal, 0)],
-    ["Estimated Cost", formatUsd(run.estimatedCostUsd), { tooltip: buildRunCostTooltip(run) }],
-    ["Pricing Tier", run.serviceTier || "standard"],
-    ["Pricing Status", run.pricingStatus || "N/A"],
-    ["Runtime", formatRunRuntime(run)],
-    ["First Prompt", formatTs(run.firstPromptTimestamp)],
-    ["Last Prompt", formatTs(run.lastPromptTimestamp)],
-    ["Label Metrics Available", run.labelMetricsAvailable ? "true" : "false"],
-    ["Label Metrics Reason", run.labelMetricsReason],
-    ["Provider", run.provider || "N/A"],
-    ["Model Requested", run.modelDetails.model_requested || "N/A"],
-    ["Model For Requests", run.modelDetails.model_for_requests || "N/A"],
-    ["Model Source", run.modelDetails.model_source || (run.modelDetails.model_metadata || {}).model_source || "N/A"],
-    ["Quantization", run.modelDetails.quantization || (run.modelDetails.model_metadata || {}).quantization || "N/A"],
-    ["Context Size", formatNum(safeNum(run.modelDetails.context_size || (run.modelDetails.model_metadata || {}).context_size), 0) || "N/A"],
-    [
-      "Max Output Tokens",
-      formatNum(safeNum(run.modelDetails.max_output_tokens || (run.modelDetails.model_metadata || {}).max_output_tokens), 0) || "N/A",
-    ],
-  ];
-
+  const raw = run.rawMetrics || {};
+  const config = run.runConfig || {};
+  const controls = run.controlSummary || {};
+  const repeat = getRepeatAgreementForRun(run);
+  const cross = getCrossModelAgreementForRun(run, state.agreementRepresentativePolicy);
+  const policy = AGREEMENT_REPRESENTATIVE_POLICY_LABELS[state.agreementRepresentativePolicy] || state.agreementRepresentativePolicy;
+  const pct = (value) => value == null ? "N/A" : `${formatNum(value, 2)}%`;
+  const score = (value) => value == null ? "N/A" : formatNum(value, 3);
+  const display = (value) => {
+    if (value == null || value === "") return "N/A";
+    return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+  };
+  const fieldLabel = (key) => key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const configured = (key) => config[key] ?? controls.configured?.[key];
+  const addPairs = (parent, pairs) => pairs.forEach(([label, value, options]) => {
+    parent.appendChild(createDetailItem(label, display(value), options));
+  });
+  const addFields = (parent, source, fields) => addPairs(parent,
+    fields.filter(([key]) => source?.[key] != null).map(([key, label]) => [label, source[key]])
+  );
+  const addGroup = (title, preview = "", open = false) => {
+    const { group, content } = createRunDetailGroup(title, preview, open);
+    els.runModalContent.appendChild(group);
+    return content;
+  };
+  const stopReason = raw.stop_reason;
+  const status = stopReason ? `Stopped: ${stopReason}` : "No recorded stop reason";
   els.runModalTitle.textContent = `${run.task} / ${run.model}`;
   els.runModalMeta.textContent = run.fileName;
   els.runModalContent.innerHTML = "";
 
-  detailPairs.forEach(([label, value, options]) => {
-    els.runModalContent.appendChild(createDetailItem(label, value, options));
-  });
+  const overview = document.createElement("div");
+  overview.className = "details-grid detail-raw run-detail-overview";
+  overview.setAttribute("role", "group");
+  overview.setAttribute("aria-label", "Run summary");
+  els.runModalContent.appendChild(overview);
+  addPairs(overview, [
+    ["Task", run.task], ["Model", run.model], ["Provider", run.provider],
+    ["Timestamp", formatTs(run.timestamp)], ["Tags", run.tagsDisplay], ["Run Status", status],
+    ["Accuracy", pct(run.accuracy)], ["Macro F1", pct(run.macroF1)],
+    ["Evaluated Examples", formatNum(run.totalExamples, 0)],
+    ["Estimated Cost (current catalogue)", formatUsd(run.estimatedCostUsd), { tooltip: buildRunCostTooltip(run) }],
+  ]);
 
-  const systemPromptItem = createDetailItem("System Prompt", run.runConfig?.system_prompt);
-  systemPromptItem.classList.add("detail-raw", "detail-system-prompt");
-  els.runModalContent.appendChild(systemPromptItem);
+  const evaluation = addGroup("Evaluation", `Accuracy ${pct(run.accuracy)} · F1 ${pct(run.macroF1)}`, true);
+  addPairs(evaluation, [
+    ["Task Description", run.taskDescription], ["Accuracy", pct(run.accuracy)],
+    ["Cohen's Kappa", score(run.cohenKappa)], ["Macro F1", pct(run.macroF1)],
+    ["Macro Precision", pct(run.macroPrecision)], ["Macro Recall", pct(run.macroRecall)],
+    ["Predictions", formatNum(run.predictionCount, 0)], ["Evaluated Examples", formatNum(run.totalExamples, 0)],
+    ["Truth Label Count", formatNum(run.truthLabelCount, 0)],
+    ["Label Metrics Available", run.labelMetricsAvailable], ["Label Metrics Reason", run.labelMetricsReason],
+  ]);
 
   const links = buildRunResourceLinks(run);
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Metrics JSON", links.metrics, getFileNameFromPath(links.metrics))
-  );
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Heatmap", links.heatmap, getFileNameFromPath(links.heatmap))
-  );
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Calibration", links.calibration, getFileNameFromPath(links.calibration))
-  );
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Log File", links.log, getFileNameFromPath(links.log))
-  );
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Output CSV", links.output, getFileNameFromPath(links.output))
-  );
-  els.runModalContent.appendChild(
-    createLinkDetailItem("Input CSV", links.input, getFileNameFromPath(links.input))
-  );
-  els.runModalContent.appendChild(
-    createChartsDetailItem([
-      { label: "Heatmap Preview", href: links.heatmap },
-      { label: "Calibration Preview", href: links.calibration },
-    ])
-  );
+  const calibration = raw.calibration_metrics || {};
+  const confidence = addGroup("Confidence & calibration", `ECE ${pct(run.calibrationEce)} · ${formatNum(run.calibrationSampleCount, 0)} samples`);
+  addPairs(confidence, [
+    ["Calibration ECE", pct(run.calibrationEce)], ["Calibration MCE", pct(run.calibrationMce)],
+    ["Brier Score", score(run.calibrationBrierScore)], ["Calibration Samples", formatNum(run.calibrationSampleCount, 0)],
+    ["Calibration Available", calibration.available], ["Calibration Bins", calibration.bin_count],
+    ["Confidence Source", config.confidence_source],
+  ]);
+  confidence.appendChild(createChartsDetailItem([{ label: "Calibration Preview", href: links.calibration }]));
+  const agreement = addGroup("Agreement", `Repeat α ${score(repeat?.alphaNominal)} · Cross-model α ${score(cross?.alphaNominal)}`);
+  addPairs(agreement, [
+    ["Repeat α", score(repeat?.alphaNominal)], ["Repeat Runs", formatNum(repeat?.runCount, 0)],
+    [`Cross-Model α (${policy})`, score(cross?.alphaNominal)], ["Cross-Model Models", formatNum(cross?.modelCount, 0)],
+  ]);
 
-  const rawWrap = document.createElement("div");
-  rawWrap.className = "detail-item detail-raw";
-  const detailsEl = document.createElement("details");
-  const summaryEl = document.createElement("summary");
-  summaryEl.className = "label";
-  summaryEl.textContent = "Raw Metrics JSON";
+  const model = addGroup("Model & generation", run.provider);
+  const metadata = { ...(run.modelDetails?.model_metadata || {}), ...run.modelDetails };
+  addPairs(model, [["Model", run.model], ["Provider", run.provider]]);
+  addFields(model, metadata, [
+    ["model_requested", "Model Requested"], ["model_for_requests", "Model For Requests"],
+    ["model_source", "Model Source"], ["quantization", "Quantization"],
+    ["context_size", "Context Size"], ["max_output_tokens", "Max Output Tokens"],
+    ["api_base_url", "API Base URL"], ["chat_completions_endpoint", "Chat Completions Endpoint"],
+  ]);
+  addPairs(model, ["temperature", "top_p", "top_k", "thinking_level", "reasoning_effort", "effort", "verbosity", "service_tier"]
+    .map((key) => [fieldLabel(key), configured(key)]));
+
+  const prompt = addGroup("Prompt strategy", config.prompt_layout || raw.prompt_layout || "");
+  const systemPrompt = createDetailItem("System Prompt", config.system_prompt);
+  systemPrompt.classList.add("detail-raw", "detail-system-prompt");
+  prompt.appendChild(systemPrompt);
+  addPairs(prompt, [["Prompt Layout", config.prompt_layout ?? raw.prompt_layout]]);
+  addFields(prompt, config, [
+    ["few_shot_examples", "Few-shot Examples"], ["prompt_batch_size", "Prompt Batch Size"],
+    ["enable_cot", "Encourage Reasoning"], ["no_explanation", "Explanations Disabled"],
+    ["logprobs", "Logprobs"], ["span_verification", "Span Verification"],
+  ]);
+
+  const execution = addGroup("Execution & request controls", `${formatRunRuntime(run)} · ${formatNum(run.requestsTotal, 0)} attempts`);
+  addPairs(execution, [
+    ["Runtime", formatRunRuntime(run)], ["First Prompt", formatTs(run.firstPromptTimestamp)],
+    ["Last Prompt", formatTs(run.lastPromptTimestamp)], ["Stop Reason", stopReason],
+    ["Requests (attempts_total)", formatNum(run.requestsTotal, 0)], ["Attempts With Usage", formatNum(run.attemptsWithUsage, 0)],
+    ["Attempts With Control Telemetry", controls.attempts_with_control_telemetry],
+  ]);
+  addFields(execution, config, [
+    ["threads", "Threads"], ["max_retries", "Max Retries"], ["retry_delay", "Retry Delay"],
+    ["request_interval_ms", "Request Interval (ms)"], ["request_timeout_seconds", "Request Timeout (seconds)"],
+    ["repeat_unclassified", "Repeat Unclassified"], ["strict_control_acceptance", "Strict Control Acceptance"],
+    ["validator_cmd", "Validator Command"], ["validator_args", "Validator Arguments"],
+    ["validator_timeout", "Validator Timeout"], ["validator_exhausted_policy", "Validator Exhausted Policy"],
+    ["flush_rows", "Flush Rows"], ["flush_seconds", "Flush Seconds"],
+    ["log_level", "Log Level"], ["prompt_log_detail", "Prompt Log Detail"],
+  ]);
+  Object.entries(controls.per_control || {}).forEach(([key, stats]) => {
+    if (!stats || !(stats.requested_attempts > 0 || stats.rejected_attempts > 0 || stats.configured_value != null)) return;
+    const control = createRunDetailGroup(`Control: ${key}`, `Accepted ${formatNum(stats.accepted_attempts, 0)} · Rejected ${formatNum(stats.rejected_attempts, 0)}`);
+    addFields(control.content, stats, [
+      ["configured_value", "Configured Value"], ["requested_attempts", "Requested Attempts"],
+      ["sent_attempts", "Sent Attempts"], ["accepted_attempts", "Accepted Attempts"],
+      ["rejected_attempts", "Rejected Attempts"], ["missing_from_final_request_attempts", "Missing From Final Request"],
+      ["rejected_reasons", "Rejection Reasons"],
+    ]);
+    addPairs(control.content, [["Acceptance Rate", pct(toPct(safeNum(stats.acceptance_rate)))]]);
+    execution.appendChild(control.group);
+  });
+
+  const tokens = addGroup("Tokens, cache & cost", `Estimated cost ${formatUsd(run.estimatedCostUsd)}`);
+  addPairs(tokens, [
+    ["Input Tokens (total)", formatNum(run.inputTokensTotal, 0)], ["Cached Input Tokens (total)", formatNum(run.cachedInputTokensTotal, 0)],
+    ["Non-Cached Input Tokens", formatNum(run.nonCachedInputTokensTotal, 0)], ["Output Tokens (total)", formatNum(run.outputTokensTotal, 0)],
+    ["Thinking Tokens (total)", formatNum(run.thinkingTokensTotal, 0)],
+    ["Estimated Cost (current catalogue)", formatUsd(run.estimatedCostUsd), { tooltip: buildRunCostTooltip(run) }],
+    ["Pricing Tier", run.serviceTier || "standard"], ["Pricing Status", run.pricingStatus],
+  ]);
+  const diagnostics = [
+    ["Usage reporting", run.tokenUsageTotals, ["attempts_total", "attempts_with_token_usage", "attempts_with_cached_input_tokens", "attempts_with_output_tokens", "attempts_with_thinking_tokens", "output_tokens_definition"]],
+    ["Provider cache signals", run.usageSummary, ["attempts_with_cached_token_signals", "attempts_with_gemini_cached_content_token_signals", "cache_read_tokens_total", "cache_write_tokens_total", "cached_tokens_total_estimate", "cache_token_fields_totals", "gemini_cached_content_token_count_total", "gemini_cached_content_token_fields_totals"]],
+    ["Cache padding", raw.cache_padding, ["enabled", "target_prompt_tokens", "target_shared_prefix_tokens", "calibration_prompt_tokens", "calibration_shared_prefix_tokens", "applied_padding_tokens_estimate", "examples_with_padding_applied"]],
+    ["Cache warmup", raw.cache_warmup, ["enabled", "delay_seconds", "attempted", "wait_applied", "reported_cache_write_tokens"]],
+    ["Cache configuration", config, ["cache_pad_target_tokens", "cache_warmup_delay_seconds", "create_gemini_cache", "gemini_cache_ttl", "gemini_cache_ttl_autoupdate", "keep_gemini_cache", "openai_cache_breakpoint", "openrouter_cache_control", "requesty_auto_cache"]],
+    ["Stored pricing", raw.pricing, ["estimated_cost_usd", "estimated_cost_per_prediction_usd", "catalog_updated_at", "status_label", "pricing_tier", "pricing_basis", "provider_key", "matched_key", "resolved_key", "missing_buckets", "reference_note", "sources"]],
+  ];
+  if (raw.estimated_cost_usd != null) addPairs(tokens, [["Stored Estimated Cost (JSON)", formatUsd(raw.estimated_cost_usd)]]);
+  diagnostics.forEach(([title, source, keys]) => {
+    if (!keys.some((key) => source?.[key] != null)) return;
+    const section = createRunDetailGroup(title);
+    addFields(section.content, source, keys.map((key) => [key, fieldLabel(key)]));
+    tokens.appendChild(section.group);
+  });
+
+  const files = addGroup("Files & provenance");
+  addFields(files, raw, [["mode", "Processing Mode"], ["truth_source", "Truth Source"],
+    ["source_input_csv", "Recorded Input CSV"], ["source_output_csv", "Recorded Output CSV"], ["source_labels_csv", "Recorded Labels CSV"]]);
+  addFields(files, config, [["load_params", "Configuration Template"]]);
+  [["Metrics JSON", links.metrics], ["Heatmap", links.heatmap], ["Calibration", links.calibration],
+    ["Log File", links.log], ["Output CSV", links.output], ["Input CSV", links.input]].forEach(([label, href]) => {
+    files.appendChild(createLinkDetailItem(label, href, getFileNameFromPath(href)));
+  });
+  files.appendChild(createChartsDetailItem([{ label: "Heatmap Preview", href: links.heatmap }]));
+
+  const json = addGroup("Raw metrics JSON");
   const pre = document.createElement("pre");
-  pre.textContent = JSON.stringify(run.rawMetrics, null, 2);
-  detailsEl.appendChild(summaryEl);
-  detailsEl.appendChild(pre);
-  rawWrap.appendChild(detailsEl);
-  els.runModalContent.appendChild(rawWrap);
+  pre.className = "detail-raw";
+  pre.textContent = JSON.stringify(raw, null, 2);
+  json.appendChild(pre);
 }
 
 function openRunModal(run, options = {}) {
