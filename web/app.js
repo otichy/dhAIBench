@@ -8781,6 +8781,7 @@ function fillRunDetailsContent(run) {
   ]);
 
   const links = buildRunResourceLinks(run);
+  evaluation.appendChild(createChartsDetailItem([{ label: "Heatmap Preview", href: links.heatmap }]));
   const calibration = raw.calibration_metrics || {};
   const confidence = addGroup("Confidence & calibration", `ECE ${pct(run.calibrationEce)} · ${formatNum(run.calibrationSampleCount, 0)} samples`);
   addPairs(confidence, [
@@ -8880,7 +8881,6 @@ function fillRunDetailsContent(run) {
     ["Log File", links.log], ["Output CSV", links.output], ["Input CSV", links.input]].forEach(([label, href]) => {
     files.appendChild(createLinkDetailItem(label, href, getFileNameFromPath(href)));
   });
-  files.appendChild(createChartsDetailItem([{ label: "Heatmap Preview", href: links.heatmap }]));
 
   const json = addGroup("Raw metrics JSON");
   const pre = document.createElement("pre");

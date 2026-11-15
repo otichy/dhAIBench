@@ -339,14 +339,14 @@ stop status, accuracy, macro F1, evaluated examples, and estimated cost.
 
 Native expandable groups organize the remaining details:
 
-- **Evaluation** (open initially): aggregate scores, counts, task description, and label-metric availability.
+- **Evaluation** (open initially): aggregate scores, counts, task description, label-metric availability, and heatmap preview.
 - **Confidence & calibration**: ECE, MCE, Brier score, calibration sample/bin counts, confidence source, and calibration preview.
 - **Agreement**: repeated-run and cross-model alpha with run/model counts and representative policy.
 - **Model & generation**: model metadata, sampling controls, reasoning settings, and service tier.
 - **Prompt strategy**: system prompt, layout, few-shot count, batching, and explanation/reasoning settings.
 - **Execution & request controls**: active runtime, prompt timestamps, stop reason, execution settings, and expandable control acceptance/rejection summaries.
 - **Tokens, cache & cost**: token totals, current pricing, and nested usage, cache, and stored-pricing diagnostics.
-- **Files & provenance**: recorded input/output/labels paths, truth source, processing mode, artifact links, and heatmap preview.
+- **Files & provenance**: recorded input/output/labels paths, truth source, processing mode, and artifact links.
 - **Raw metrics JSON**: the complete original payload, collapsed initially.
 
 There is no dedicated per-label table or numeric confusion matrix. The existing
