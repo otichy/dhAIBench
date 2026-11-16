@@ -2965,6 +2965,7 @@ function syncSelectOptions(selectElement, values, labelForValue) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = labelForValue(value);
+    option.title = option.textContent;
     fragment.appendChild(option);
   });
 
@@ -3009,6 +3010,7 @@ function renderChoiceChipList(container, options, selectedValues, allLabel, onTo
     button.type = "button";
     button.className = `choice-chip${item.active ? " active" : ""}`;
     button.textContent = item.label;
+    button.title = item.label;
     button.setAttribute("aria-pressed", item.active ? "true" : "false");
     button.addEventListener("click", () => onToggle(item.value));
     container.appendChild(button);
