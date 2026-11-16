@@ -2946,14 +2946,15 @@ function getSelectValues(selectElement) {
     .filter(Boolean);
 }
 
-function syncSelectOptions(selectElement, values, labelForValue) {
+function syncSelectOptions(selectElement, values, labelForValue, titleForValue = labelForValue) {
   const desiredValues = Array.isArray(values) ? values : [];
   const existingOptions = Array.from(selectElement.options);
   const hasSameOptions =
     existingOptions.length === desiredValues.length &&
     existingOptions.every((option, index) => {
       const desiredValue = desiredValues[index];
-      return option.value === desiredValue && option.textContent === labelForValue(desiredValue);
+      return option.value === desiredValue && option.textContent === labelForValue(desiredValue) &&
+        option.title === titleForValue(desiredValue);
     });
 
   if (hasSameOptions) {
@@ -2965,7 +2966,7 @@ function syncSelectOptions(selectElement, values, labelForValue) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = labelForValue(value);
-    option.title = option.textContent;
+    option.title = titleForValue(value);
     fragment.appendChild(option);
   });
 
@@ -2994,7 +2995,7 @@ function setModelSelectionFromSelect(values) {
   setSelectedModels(clearSelectionForAll(values));
 }
 
-function renderChoiceChipList(container, options, selectedValues, allLabel, onToggle) {
+function renderChoiceChipList(container, options, selectedValues, allLabel, onToggle, titleForValue = null) {
   container.innerHTML = "";
 
   const items = [{ value: "ALL", label: allLabel, active: isAllSelected(selectedValues) }].concat(
@@ -3010,7 +3011,7 @@ function renderChoiceChipList(container, options, selectedValues, allLabel, onTo
     button.type = "button";
     button.className = `choice-chip${item.active ? " active" : ""}`;
     button.textContent = item.label;
-    button.title = item.label;
+    button.title = titleForValue ? titleForValue(item.value) : item.label;
     button.setAttribute("aria-pressed", item.active ? "true" : "false");
     button.addEventListener("click", () => onToggle(item.value));
     container.appendChild(button);
@@ -3798,12 +3799,20 @@ function renderTaskControls() {
     ? uniqueNonEmptyStrings([...state.tasks, ...state.selectedTasks]) : state.tasks;
   const visibleTasks = getVisibleFilterOptions(allowedTasks, state.selectedTasks);
   const tasks = ["ALL", ...visibleTasks];
-  syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task));
+  const descriptions = new Map();
+  state.runs.forEach((run) => {
+    const description = asTrimmedString(run.taskDescription);
+    if (description && !descriptions.has(run.task)) {
+      descriptions.set(run.task, description);
+    }
+  });
+  const taskTitle = (task) => task === "ALL" ? "All Tasks" : descriptions.get(task) || task;
+  syncSelectOptions(els.taskSelect, tasks, (task) => (task === "ALL" ? "All Tasks" : task), taskTitle);
 
   state.selectedTasks = sanitizeSelections(state.selectedTasks, allowedTasks);
   syncTaskSelectValue();
 
-  renderChoiceChipList(els.taskChipList, visibleTasks, state.selectedTasks, "All Tasks", toggleTaskSelection);
+  renderChoiceChipList(els.taskChipList, visibleTasks, state.selectedTasks, "All Tasks", toggleTaskSelection, taskTitle);
 }
 
 function renderModelControls() {
