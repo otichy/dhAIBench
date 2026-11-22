@@ -10,6 +10,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PublicationPricingTests(unittest.TestCase):
+    def test_kimi_k31_reference_prices_cached_input_and_resolves_aliases(self):
+        script = r'''
+global.window = global;
+require('./config_prices.js');
+require('./web/pricing.js');
+const results = [];
+for (const [provider, model] of [['e-infra', 'kimi-k3.1-pro'], ['einfra', 'kimik31pro'],
+    ['requesty', 'moonshot/kimi-k3.1-pro'], ['requesty', 'moonshotkimik31pro']]) {
+  results.push(DHAIBenchPricing.estimateRunCost(MODEL_PRICING_CATALOG, {
+    provider, model, inputTokensTotal: 1000000, cachedInputTokensTotal: 200000,
+    outputTokensTotal: 1000000,
+  }));
+}
+process.stdout.write(JSON.stringify(results));
+'''
+        completed = subprocess.run(['node', '-e', script], cwd=ROOT,
+                                   capture_output=True, text=True, check=True)
+        for result in json.loads(completed.stdout):
+            self.assertEqual(result['status'], 'priced')
+            self.assertAlmostEqual(result['estimatedCostUsd'], 11.64)
+            self.assertIn('Requesty reference', result['pricingCalculation']['referenceNote'])
+
     def test_reviewed_overrides_preserve_unrelated_entries_without_mutating_input(self):
         base = {'providers': {'p': {'models': {'existing': {'x': 1}}}}}
         overrides = {'verified_date': '2026-11-05', 'providers': {'p': {'models': {

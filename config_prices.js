@@ -1372,19 +1372,27 @@ window.MODEL_PRICING_CATALOG = {
           "service_tiers": {
             "standard": {
               "input_usd_per_mtokens": 2.0,
-              "cached_input_usd_per_mtokens": null,
-              "output_usd_per_mtokens": 10.0
+              "cached_input_usd_per_mtokens": 0.2,
+              "output_usd_per_mtokens": 10.0,
+              "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax."
             }
           },
           "sources": [
             {
-              "label": "Provider model metadata",
-              "url": "https://llm.ai.e-infra.cz/v1/model/info"
+              "label": "Requesty public model pricing",
+              "url": "https://www.requesty.ai/models/moonshot/kimi-k3.1-pro",
+              "model_id": "moonshot/kimi-k3.1-pro",
+              "checked_at": "2026-11-22",
+              "requested_tier": "standard",
+              "quoted_tier": "standard"
             }
           ],
           "notes": [
-            "Pricing was imported from provider model metadata."
-          ]
+            "Token rates only; routing fees, taxes and cache storage/writes are excluded.",
+            "User-requested reference pricing, not actual e-infra hosting charges; hosting and quantization can differ."
+          ],
+          "pricing_basis": "reference",
+          "verified_at": "2026-11-22"
         },
         "nemotron-3-5-embed-8b": {
           "service_tiers": {
@@ -1440,7 +1448,7 @@ window.MODEL_PRICING_CATALOG = {
         },
         "kimik31pro": {
           "pricing_ref": "kimi-k3.1-pro",
-          "alias_kind": "legacy_slug"
+          "alias_kind": "verified_benchmark_alias"
         },
         "nemotron35embed8b": {
           "pricing_ref": "nemotron-3-5-embed-8b",
@@ -35088,15 +35096,29 @@ window.MODEL_PRICING_CATALOG = {
           }
         },
         "moonshot/kimi-k3.1-pro": {
-          "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
-          "needs_manual_update": true,
           "service_tiers": {
             "standard": {
-              "input_usd_per_mtokens": null,
-              "cached_input_usd_per_mtokens": null,
-              "output_usd_per_mtokens": null
+              "input_usd_per_mtokens": 2.0,
+              "cached_input_usd_per_mtokens": 0.2,
+              "output_usd_per_mtokens": 10.0,
+              "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax."
             }
-          }
+          },
+          "sources": [
+            {
+              "label": "Requesty public model pricing",
+              "url": "https://www.requesty.ai/models/moonshot/kimi-k3.1-pro",
+              "model_id": "moonshot/kimi-k3.1-pro",
+              "checked_at": "2026-11-22",
+              "requested_tier": "standard",
+              "quoted_tier": "standard"
+            }
+          ],
+          "notes": [
+            "Token rates only; routing fees, taxes and cache storage/writes are excluded."
+          ],
+          "pricing_basis": "reference",
+          "verified_at": "2026-11-22"
         },
         "moonshot/kimi-k3.1-pro-highspeed": {
           "reason": "Added by --update-models; fill in pricing manually in config_prices.js.",
@@ -36223,7 +36245,7 @@ window.MODEL_PRICING_CATALOG = {
         },
         "moonshotkimik31pro": {
           "pricing_ref": "moonshot/kimi-k3.1-pro",
-          "alias_kind": "legacy_slug"
+          "alias_kind": "verified_benchmark_alias"
         },
         "moonshotkimik31prohighspeed": {
           "pricing_ref": "moonshot/kimi-k3.1-pro-highspeed",
@@ -38350,5 +38372,5 @@ window.MODEL_PRICING_CATALOG = {
       }
     }
   },
-  "benchmark_overrides_verified_date": "2026-11-05"
+  "benchmark_overrides_verified_date": "2026-11-22"
 };

@@ -1,5 +1,5 @@
 {
-  "verified_date": "2026-11-05",
+  "verified_date": "2026-11-22",
   "policy": {
     "verified_date": "2026-10-30",
     "primary_fallback": "Requesty",
@@ -10,7 +10,8 @@
   "notes": [
     "Frozen benchmark-comparison rates and explicit fallbacks; review sources before updating this snapshot.",
     "Applied when writing config_prices.js so a catalog refresh does not discard the benchmark pricing policy.",
-    "2026-11-05: added Luna and Haiku pricing; historical Qwen3.6 Plus free routes use the current paid OpenRouter reference price at user request. Other frozen entries retain their individual verification dates."
+    "2026-11-05: added Luna and Haiku pricing; historical Qwen3.6 Plus free routes use the current paid OpenRouter reference price at user request. Other frozen entries retain their individual verification dates.",
+    "2026-11-22: added Kimi K3.1 Pro Requesty reference pricing, including cached input, for e-infra and the Requesty publisher route. Other frozen entries retain their individual verification dates."
   ],
   "providers": {
     "e-infra": {
@@ -653,6 +654,36 @@
         "deepseekv41flashthinking": {
           "pricing_ref": "deepseek-v4.1-flash-thinking",
           "alias_kind": "verified_benchmark_alias"
+        },
+        "kimi-k3.1-pro": {
+          "service_tiers": {
+            "standard": {
+              "input_usd_per_mtokens": 2.0,
+              "cached_input_usd_per_mtokens": 0.2,
+              "output_usd_per_mtokens": 10.0,
+              "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax."
+            }
+          },
+          "sources": [
+            {
+              "label": "Requesty public model pricing",
+              "url": "https://www.requesty.ai/models/moonshot/kimi-k3.1-pro",
+              "model_id": "moonshot/kimi-k3.1-pro",
+              "checked_at": "2026-11-22",
+              "requested_tier": "standard",
+              "quoted_tier": "standard"
+            }
+          ],
+          "notes": [
+            "Token rates only; routing fees, taxes and cache storage/writes are excluded.",
+            "User-requested reference pricing, not actual e-infra hosting charges; hosting and quantization can differ."
+          ],
+          "pricing_basis": "reference",
+          "verified_at": "2026-11-22"
+        },
+        "kimik31pro": {
+          "pricing_ref": "kimi-k3.1-pro",
+          "alias_kind": "verified_benchmark_alias"
         }
       }
     },
@@ -1001,6 +1032,35 @@
         },
         "kimik25": {
           "pricing_ref": "kimi-k2.5",
+          "alias_kind": "verified_benchmark_alias"
+        },
+        "moonshot/kimi-k3.1-pro": {
+          "service_tiers": {
+            "standard": {
+              "input_usd_per_mtokens": 2.0,
+              "cached_input_usd_per_mtokens": 0.2,
+              "output_usd_per_mtokens": 10.0,
+              "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax."
+            }
+          },
+          "sources": [
+            {
+              "label": "Requesty public model pricing",
+              "url": "https://www.requesty.ai/models/moonshot/kimi-k3.1-pro",
+              "model_id": "moonshot/kimi-k3.1-pro",
+              "checked_at": "2026-11-22",
+              "requested_tier": "standard",
+              "quoted_tier": "standard"
+            }
+          ],
+          "notes": [
+            "Token rates only; routing fees, taxes and cache storage/writes are excluded."
+          ],
+          "pricing_basis": "reference",
+          "verified_at": "2026-11-22"
+        },
+        "moonshotkimik31pro": {
+          "pricing_ref": "moonshot/kimi-k3.1-pro",
           "alias_kind": "verified_benchmark_alias"
         }
       }
