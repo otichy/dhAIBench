@@ -1375,6 +1375,12 @@ window.MODEL_PRICING_CATALOG = {
               "cached_input_usd_per_mtokens": 0.2,
               "output_usd_per_mtokens": 10.0,
               "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax."
+            },
+            "flex": {
+              "input_usd_per_mtokens": 2.0,
+              "cached_input_usd_per_mtokens": 0.2,
+              "output_usd_per_mtokens": 10.0,
+              "reference_note": "Requesty reference rates: moonshot/kimi-k3.1-pro; token rates exclude gateway fees/tax. Flex runs use standard reference rates; no tier discount is assumed."
             }
           },
           "sources": [
@@ -1384,6 +1390,14 @@ window.MODEL_PRICING_CATALOG = {
               "model_id": "moonshot/kimi-k3.1-pro",
               "checked_at": "2026-11-22",
               "requested_tier": "standard",
+              "quoted_tier": "standard"
+            },
+            {
+              "label": "Requesty public model pricing",
+              "url": "https://www.requesty.ai/models/moonshot/kimi-k3.1-pro",
+              "model_id": "moonshot/kimi-k3.1-pro",
+              "checked_at": "2026-11-22",
+              "requested_tier": "flex",
               "quoted_tier": "standard"
             }
           ],

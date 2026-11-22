@@ -18,10 +18,12 @@ require('./web/pricing.js');
 const results = [];
 for (const [provider, model] of [['e-infra', 'kimi-k3.1-pro'], ['einfra', 'kimik31pro'],
     ['requesty', 'moonshot/kimi-k3.1-pro'], ['requesty', 'moonshotkimik31pro']]) {
+  for (const serviceTier of provider.startsWith('e') ? ['standard', 'flex'] : ['standard']) {
   results.push(DHAIBenchPricing.estimateRunCost(MODEL_PRICING_CATALOG, {
     provider, model, inputTokensTotal: 1000000, cachedInputTokensTotal: 200000,
-    outputTokensTotal: 1000000,
+    outputTokensTotal: 1000000, serviceTier,
   }));
+  }
 }
 process.stdout.write(JSON.stringify(results));
 '''
