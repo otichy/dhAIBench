@@ -52,6 +52,8 @@ const state = {
   timeSeriesViewport: null,
   priceScatterViewport: null,
   priceScatterCostMode: "total",
+  timeScatterMode: "date",
+  speedScatterViewport: null,
   radarAxis: "tag",
   radarScale: "contrast",
   tokenSignalsVisibleCount: TOKEN_SIGNAL_PAGE_SIZE,
@@ -1894,6 +1896,8 @@ function persistUiState() {
     timeSeriesViewport: state.timeSeriesViewport,
     priceScatterViewport: state.priceScatterViewport,
     priceScatterCostMode: state.priceScatterCostMode,
+    timeScatterMode: state.timeScatterMode,
+    speedScatterViewport: state.speedScatterViewport,
     radarAxis: state.radarAxis,
     radarScale: state.radarScale,
     hideNoAccuracy: state.hideNoAccuracy,
@@ -2009,6 +2013,10 @@ function restoreUiState() {
       if (payload.timeSeriesViewport && typeof payload.timeSeriesViewport === "object") {
         state.timeSeriesViewport = payload.timeSeriesViewport;
       }
+      if (["date", "per_prediction"].includes(payload.timeScatterMode)) {
+        state.timeScatterMode = payload.timeScatterMode;
+      }
+      state.speedScatterViewport = normalizeTimeSeriesViewport(payload.speedScatterViewport);
       if (payload.priceScatterViewport && typeof payload.priceScatterViewport === "object") {
         state.priceScatterViewport = payload.priceScatterViewport;
       }
@@ -2225,6 +2233,11 @@ function buildShareSearchParams() {
   if (state.timeSeriesShowLabels) {
     params.set("tsLabels", "1");
   }
+  if (state.timeScatterMode !== "date") {
+    params.set("timeMode", state.timeScatterMode);
+  }
+  const speedZoom = encodeViewportParam(state.speedScatterViewport);
+  if (speedZoom) params.set("speedZoom", speedZoom);
   if (state.priceScatterCostMode !== "total") {
     params.set("priceMode", state.priceScatterCostMode);
   }
@@ -2307,6 +2320,8 @@ function applyShareStateFromUrl() {
     "scatterCi",
     "tsLabels",
     "priceMode",
+    "timeMode",
+    "speedZoom",
     "radarAxis",
     "radarScale",
     "timeZoom",
@@ -2347,6 +2362,8 @@ function applyShareStateFromUrl() {
   state.timeSeriesViewport = null;
   state.priceScatterViewport = null;
   state.priceScatterCostMode = "total";
+  state.timeScatterMode = "date";
+  state.speedScatterViewport = null;
   state.radarAxis = "tag";
   state.radarScale = "contrast";
   state.selectedRunPath = null;
@@ -2409,6 +2426,9 @@ function applyShareStateFromUrl() {
   }
   state.scatterShowCi = parseBoolParam(params, "scatterCi", state.scatterShowCi);
   state.timeSeriesShowLabels = parseBoolParam(params, "tsLabels", state.timeSeriesShowLabels);
+  const timeMode = params.get("timeMode");
+  if (["date", "per_prediction"].includes(timeMode)) state.timeScatterMode = timeMode;
+  state.speedScatterViewport = decodeViewportParam(params.get("speedZoom"));
   const priceMode = asTrimmedString(params.get("priceMode"));
   if (PRICE_SCATTER_COST_MODE_KEYS.has(priceMode)) {
     state.priceScatterCostMode = priceMode;
@@ -5361,6 +5381,7 @@ function renderLeaderboardTimeSeries(container, runs, options = {}) {
 
   if (includeScatterAxisSwitch) {
     appendLeaderboardScatterAxisControls(primaryControls);
+    appendTimeScatterModeControls(primaryControls);
   }
   appendScatterCiToggleControl(secondaryControls, supportsCi);
   appendTimeSeriesLabelsToggleControl(secondaryControls);
@@ -5782,6 +5803,27 @@ function getScatterMetricDomains(source, metricKey) {
   return { full, auto: { min: Math.max(full.min, auto.min), max: Math.min(full.max, auto.max) } };
 }
 
+// Seconds per saved prediction, using the same denominator as Avg Price.
+function getAverageSpeedForRun(run) {
+  const seconds = safeNum(run && run.overallTimeSeconds);
+  const predictions = toNonNegativeNumber(getPredictionCountForRun(run));
+  return seconds != null && seconds >= 0 && predictions > 0 ? seconds / predictions : null;
+}
+
+function setTimeScatterMode(mode) {
+  if (!["date", "per_prediction"].includes(mode) || state.timeScatterMode === mode) return;
+  state.timeScatterMode = mode;
+  persistUiState();
+  renderLeaderboard(state.filtered);
+}
+
+function appendTimeScatterModeControls(controls) {
+  controls.appendChild(createTimeSeriesSegmentedControl("Time display mode", [
+    { label: "Date", active: state.timeScatterMode === "date", onClick: () => setTimeScatterMode("date") },
+    { label: "Avg speed", active: state.timeScatterMode === "per_prediction", onClick: () => setTimeScatterMode("per_prediction") },
+  ]));
+}
+
 function getPriceScatterCostModeLabel(mode = state.priceScatterCostMode) {
   return mode === "per_prompt" ? "Average Cost per Prediction (USD)" : "Estimated Cost (USD)";
 }
@@ -5807,23 +5849,33 @@ function getPriceScatterValueForRun(run, mode = state.priceScatterCostMode) {
 }
 
 function renderLeaderboardPriceScatter(container, runs, options = {}) {
-  const { includeScatterAxisSwitch = false } = options;
+  const { includeScatterAxisSwitch = false, averageSpeed = false } = options;
+  const scatterViewport = averageSpeed ? state.speedScatterViewport : state.priceScatterViewport;
+  const setViewport = (viewport) => {
+    if (!averageSpeed) return setPriceScatterViewport(viewport);
+    state.speedScatterViewport = normalizeTimeSeriesViewport(viewport);
+    persistUiState();
+    renderLeaderboard(state.filtered);
+  };
+  const resetZoom = () => averageSpeed ? setViewport(null) : resetPriceScatterZoom();
+  const valueKind = averageSpeed ? "speed" : "price";
+  const formatValue = averageSpeed ? (value) => `${formatNum(value, 3)} s/prediction` : formatUsd;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const supportsCi = supportsApproximateCi(metricKey);
   const showApproximateCi = supportsCi && state.scatterShowCi;
   const priceScatterCostMode = state.priceScatterCostMode;
-  const priceAxisLabel = getPriceScatterCostModeLabel(priceScatterCostMode);
-  const unknownBandLabelText = getPriceScatterUnknownLabel(priceScatterCostMode);
-  const unknownValueText = getPriceScatterUnknownValueText(priceScatterCostMode);
-  const averagedCostLabel = priceScatterCostMode === "per_prompt" ? "avg/prediction cost" : "cost";
+  const priceAxisLabel = averageSpeed ? "Average Time per Prediction (seconds; lower is faster)" : getPriceScatterCostModeLabel(priceScatterCostMode);
+  const unknownBandLabelText = averageSpeed ? "Unknown Speed" : getPriceScatterUnknownLabel(priceScatterCostMode);
+  const unknownValueText = averageSpeed ? "Unknown speed" : getPriceScatterUnknownValueText(priceScatterCostMode);
+  const averagedCostLabel = averageSpeed ? "speed" : priceScatterCostMode === "per_prompt" ? "avg/prediction cost" : "cost";
   const entriesWithMetric = runs
     .map((run) => {
       const metricValue = getMetricValueForRun(run, metricKey);
       if (typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
         return null;
       }
-      const knownPriceValue = getPriceScatterValueForRun(run, priceScatterCostMode);
+      const knownPriceValue = averageSpeed ? getAverageSpeedForRun(run) : getPriceScatterValueForRun(run, priceScatterCostMode);
       const hasKnownPrice = typeof knownPriceValue === "number" && Number.isFinite(knownPriceValue);
       return {
         run,
@@ -5960,27 +6012,31 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   if (includeScatterAxisSwitch) {
     appendLeaderboardScatterAxisControls(primaryControls);
   }
-  primaryControls.appendChild(
-    createTimeSeriesSegmentedControl("Price aggregation mode", [
-      {
-        label: "Total",
-        active: priceScatterCostMode === "total",
-        onClick: () => setPriceScatterCostMode("total"),
-      },
-      {
-        label: "Avg Price",
-        active: priceScatterCostMode === "per_prompt",
-        onClick: () => setPriceScatterCostMode("per_prompt"),
-      },
-    ])
-  );
+  if (averageSpeed) {
+    appendTimeScatterModeControls(primaryControls);
+  } else {
+    primaryControls.appendChild(
+      createTimeSeriesSegmentedControl("Price aggregation mode", [
+        {
+          label: "Total",
+          active: priceScatterCostMode === "total",
+          onClick: () => setPriceScatterCostMode("total"),
+        },
+        {
+          label: "Avg Price",
+          active: priceScatterCostMode === "per_prompt",
+          onClick: () => setPriceScatterCostMode("per_prompt"),
+        },
+      ])
+    );
+  }
   appendScatterCiToggleControl(secondaryControls, supportsCi);
   appendTimeSeriesLabelsToggleControl(secondaryControls);
   secondaryControls.appendChild(
     createTimeSeriesResetButton(
-      state.priceScatterViewport ? "Reset Zoom" : "Auto Zoom",
-      () => state.priceScatterViewport ? resetPriceScatterZoom() : setPriceScatterViewport({ ...autoViewport, auto: true }),
-      !state.priceScatterViewport && !numericSource.length
+      scatterViewport ? "Reset Zoom" : "Auto Zoom",
+      () => scatterViewport ? resetZoom() : setViewport({ ...autoViewport, auto: true }),
+      !scatterViewport && !numericSource.length
     )
   );
   if (primaryControls.childElementCount) {
@@ -6000,10 +6056,10 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   const zoomNote = document.createElement("p");
   zoomNote.className = "muted";
   zoomNote.textContent = numericSource.length
-    ? state.priceScatterViewport
-      ? "Drag within the numeric price area to zoom again. Double-click to reset zoom."
-      : "Drag within the numeric price area to zoom into a selected region. Double-click to reset zoom."
-    : "Zoom is unavailable because none of the visible points have a known numeric price.";
+    ? scatterViewport
+      ? `Drag within the numeric ${valueKind} area to zoom again. Double-click to reset zoom.`
+      : `Drag within the numeric ${valueKind} area to zoom into a selected region. Double-click to reset zoom.`
+    : `Zoom is unavailable because none of the visible points have a known numeric ${valueKind}.`;
   noteWrap.appendChild(zoomNote);
   if (noteWrap.childElementCount) {
     container.appendChild(noteWrap);
@@ -6046,7 +6102,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   const symlogConstant = hasNumericAxis ? computeSymlogConstant(priceValues) : 1;
   const clampedViewport = hasNumericAxis
     ? clampTimeSeriesViewport(
-        state.priceScatterViewport?.auto ? autoViewport : state.priceScatterViewport,
+        scatterViewport?.auto ? autoViewport : scatterViewport,
         {
           xMin: fullXDomain.min,
           xMax: fullXDomain.max,
@@ -6125,7 +6181,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
       "text-anchor": "middle",
       class: "time-series-tick",
     });
-    label.textContent = formatUsdAxisTick(tickValue);
+    label.textContent = averageSpeed ? formatNum(tickValue, 3) : formatUsdAxisTick(tickValue);
     svg.appendChild(label);
   });
 
@@ -6196,7 +6252,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
 
   source.forEach((entry) => {
     const isSelected = entry.runs.some((run) => run.filePath === state.selectedRunPath);
-    const priceLabelText = entry.hasKnownPrice ? formatUsd(entry.priceValue) : unknownValueText;
+    const priceLabelText = entry.hasKnownPrice ? formatValue(entry.priceValue) : unknownValueText;
     const priceDetailText = entry.hasKnownPrice
       ? entry.unknownPriceCount
         ? `${formatNum(entry.unknownPriceCount, 0)} run(s) omitted from average ${averagedCostLabel}`
@@ -6399,7 +6455,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     const right = Math.max(pointerState.startX, pointerState.currentX);
     const top = Math.min(pointerState.startY, pointerState.currentY);
     const bottom = Math.max(pointerState.startY, pointerState.currentY);
-    setPriceScatterViewport({
+    setViewport({
       xMin: pxToX(left),
       xMax: pxToX(right),
       yMin: pxToY(bottom),
@@ -6436,7 +6492,7 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   }
 
   svg.addEventListener("dblclick", () => {
-    resetPriceScatterZoom();
+    resetZoom();
   });
 
   const legends = document.createElement("div");
@@ -6677,7 +6733,11 @@ function renderLeaderboardMetricsTable(container, runs) {
 
 function renderLeaderboardScatter(container, runs) {
   if (state.leaderboardScatterXAxis === "time") {
-    renderLeaderboardTimeSeries(container, runs, { includeScatterAxisSwitch: true });
+    if (state.timeScatterMode === "per_prediction") {
+      renderLeaderboardPriceScatter(container, runs, { includeScatterAxisSwitch: true, averageSpeed: true });
+    } else {
+      renderLeaderboardTimeSeries(container, runs, { includeScatterAxisSwitch: true });
+    }
     return;
   }
   renderLeaderboardPriceScatter(container, runs, { includeScatterAxisSwitch: true });
