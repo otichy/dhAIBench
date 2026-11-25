@@ -67,6 +67,29 @@ window of each invocation. If a run is resumed later, idle time between the prev
 invocation and the resume is excluded. `first_prompt_timestamp` and
 `last_prompt_timestamp` still identify the full run's earliest and latest prompts.
 
+`mean_request_duration_seconds` is the arithmetic mean of logged successful request
+attempts (`success`, `partial_success`, `accepted_after_validation`, and
+`accepted_after_validator`). Failed attempts, validation retries, retry delays,
+and resume gaps are excluded. Each batch request contributes once; its member
+predictions do not duplicate its duration. Successful requests from all invocations
+contribute equally, regardless of thread count. Compact logs preserve durations.
+
+`mean_request_duration_source` is `logs`, `logs_partial` (some successful requests
+lack durations), `estimated_elapsed_threads`, or `unavailable`.
+`request_duration_sample_count`, `request_duration_missing_count`, and
+`request_duration_excluded_attempt_count` record coverage. With no measured
+samples, the fallback is active elapsed seconds / prediction count times threads.
+`request_duration_estimate_threads` records the multiplier; if thread configuration
+cannot be recovered, it defaults to 1 and
+`request_duration_estimate_threads_assumed` is true. Estimates may retain retry
+or scheduling overhead and legacy resume gaps where session markers are absent;
+they are not equivalent to measured request latency. A zero elapsed window does
+not produce an estimated zero latency.
+
+The web scatterplot's **Time > Avg speed** view uses this mean in seconds per
+request (lower is faster), with estimates and partial coverage identified in its
+notes and point tooltips.
+
 Metrics are also written when no prediction/truth pairs can be evaluated. In that
 case, `label_metrics_available` is false and `label_metrics_reason` distinguishes:
 

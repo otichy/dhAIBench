@@ -503,6 +503,96 @@ def compute_prompt_time_window(log_records: Iterable[Dict[str, Any]]) -> Dict[st
     }
 
 
+def compute_mean_request_duration(
+    log_records: Iterable[Dict[str, Any]],
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Mean latency of successful physical requests, independent of concurrency.
+
+    Failed/validator-retry attempts, retry sleeps, and gaps between invocations
+    are excluded. A batch counts as one request, not once per member. If only
+    some successful requests have durations, use those samples and report coverage.
+    Only when no samples exist, estimate elapsed/predictions * configured threads.
+    That explicitly marked estimate can still include retry/scheduling overhead.
+    """
+    metrics = metrics or {}
+    successful_statuses = {
+        "success", "partial_success", "accepted_after_validation", "accepted_after_validator",
+    }
+    durations: List[float] = []
+    missing_count = 0
+    excluded_count = 0
+    recovered_threads: Optional[float] = None
+
+    def scan() -> Iterable[Dict[str, Any]]:
+        nonlocal missing_count, excluded_count, recovered_threads
+        for record in log_records:
+            if not isinstance(record, dict):
+                continue
+            config = record.get("run_config")
+            if isinstance(config, dict):
+                threads = parse_optional_float(config.get("threads"))
+                if threads is not None and math.isfinite(threads) and threads > 0:
+                    recovered_threads = threads
+            if record.get("record_type") == "run_command":
+                argv = record.get("argv") or []
+                for index, token in enumerate(argv):
+                    value = None
+                    if token == "--threads" and index + 1 < len(argv):
+                        value = argv[index + 1]
+                    elif str(token).startswith("--threads="):
+                        value = str(token).split("=", 1)[1]
+                    threads = parse_optional_float(value)
+                    if threads is not None and math.isfinite(threads) and threads > 0:
+                        recovered_threads = threads
+            attempts = record.get("attempts")
+            if isinstance(attempts, list):
+                for attempt in attempts:
+                    if not isinstance(attempt, dict):
+                        continue
+                    if str(attempt.get("status", "")).strip().lower() not in successful_statuses:
+                        excluded_count += 1
+                        continue
+                    duration = parse_optional_float(attempt.get("duration_seconds"))
+                    if duration is not None and math.isfinite(duration) and duration >= 0:
+                        durations.append(duration)
+                    else:
+                        missing_count += 1
+            yield record
+
+    timing = compute_prompt_time_window(scan())
+    result: Dict[str, Any] = {
+        "mean_request_duration_seconds": None,
+        "mean_request_duration_source": "unavailable",
+        "request_duration_sample_count": len(durations),
+        "request_duration_missing_count": missing_count,
+        "request_duration_excluded_attempt_count": excluded_count,
+        "request_duration_estimate_threads": None,
+        "request_duration_estimate_threads_assumed": False,
+    }
+    if durations:
+        result["mean_request_duration_seconds"] = math.fsum(durations) / len(durations)
+        result["mean_request_duration_source"] = "logs_partial" if missing_count else "logs"
+        return result
+
+    config = metrics.get("run_config") or {}
+    threads = recovered_threads or parse_optional_float(config.get("threads"))
+    if threads is None or not math.isfinite(threads) or threads <= 0:
+        threads = 1.0
+        result["request_duration_estimate_threads_assumed"] = True
+    seconds = timing["overall_time_seconds"]
+    if seconds is None:
+        seconds = parse_optional_float(metrics.get("overall_time_seconds"))
+    predictions = parse_optional_float(metrics.get("prediction_count"))
+    # A single timestamp gives a zero window, not a recoverable zero latency.
+    if (seconds is not None and math.isfinite(seconds) and seconds > 0
+            and predictions is not None and math.isfinite(predictions) and predictions > 0):
+        result["mean_request_duration_seconds"] = seconds / predictions * threads
+        result["mean_request_duration_source"] = "estimated_elapsed_threads"
+        result["request_duration_estimate_threads"] = threads
+    return result
+
+
 def compute_request_control_summary(
     log_records: Iterable[Dict[str, Any]],
     configured_controls: Dict[str, Any],
@@ -3385,6 +3475,7 @@ def compact_prompt_attempt_log(attempt: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "attempt",
         "timestamp",
+        "duration_seconds",
         "status",
         "error",
         "error_type",
@@ -11258,6 +11349,7 @@ def process_dataset(
         "calibration_metrics": compute_calibration_metrics(confidences, correctness),
     }
     metrics.update(prompt_time_window)
+    metrics.update(compute_mean_request_duration(log_records, metrics))
     if evaluated_truths:
         metrics.update(compute_metrics(evaluated_truths, evaluated_preds))
         metrics["label_metrics_available"] = True
@@ -11582,7 +11674,13 @@ def process_metrics_only_output(
         "evaluated_example_count": len(evaluated_truths),
         "calibration_metrics": compute_calibration_metrics(confidences, correctness),
     }
+    if prompt_time_window["overall_time_seconds"] is None:
+        # Keep saved timing when the original log is no longer available.
+        prompt_time_window = {
+            key: (existing_metrics_payload or {}).get(key) for key in prompt_time_window
+        }
     metrics.update(prompt_time_window)
+    metrics.update(compute_mean_request_duration(log_records, metrics))
     if label_map and has_truth_column:
         metrics["truth_source"] = "labels_csv_override_with_output_fallback"
     elif label_map:

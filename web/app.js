@@ -1008,6 +1008,9 @@ function normalizeRun(filePath, payload) {
     outputTokensTotal: safeNum(tokenTotals.output_tokens_total),
     thinkingTokensTotal: safeNum(tokenTotals.thinking_tokens_total),
     nonCachedInputTokensTotal: safeNum(tokenTotals.non_cached_input_tokens_total),
+    meanRequestDurationSeconds: safeNum(payload.mean_request_duration_seconds),
+    meanRequestDurationSource: asTrimmedString(payload.mean_request_duration_source),
+    requestDurationEstimateThreadsAssumed: payload.request_duration_estimate_threads_assumed === true,
     overallTimeSeconds: safeNum(payload.overall_time_seconds),
     overallTimeHuman: payload.overall_time_human || null,
     firstPromptTimestamp: payload.first_prompt_timestamp || null,
@@ -5803,11 +5806,21 @@ function getScatterMetricDomains(source, metricKey) {
   return { full, auto: { min: Math.max(full.min, auto.min), max: Math.min(full.max, auto.max) } };
 }
 
-// Seconds per saved prediction, using the same denominator as Avg Price.
+// Successful request latency; estimated values are explicitly identified in tooltips.
 function getAverageSpeedForRun(run) {
-  const seconds = safeNum(run && run.overallTimeSeconds);
-  const predictions = toNonNegativeNumber(getPredictionCountForRun(run));
-  return seconds != null && seconds >= 0 && predictions > 0 ? seconds / predictions : null;
+  const seconds = safeNum(run && run.meanRequestDurationSeconds);
+  return seconds != null && seconds >= 0 ? seconds : null;
+}
+
+function getRequestDurationSourceNote(runs) {
+  const estimated = runs.filter((run) => run.meanRequestDurationSource === "estimated_elapsed_threads").length;
+  const partial = runs.filter((run) => run.meanRequestDurationSource === "logs_partial").length;
+  const assumedThreads = runs.filter((run) => run.meanRequestDurationSource === "estimated_elapsed_threads" && run.requestDurationEstimateThreadsAssumed).length;
+  return [
+    estimated ? `${estimated} run(s) estimated from elapsed time per prediction times threads; may include retry overhead or unknown resume gaps` : "",
+    assumedThreads ? `${assumedThreads} estimate(s) assume 1 thread because thread configuration is unavailable` : "",
+    partial ? `${partial} run(s) measured from partial duration coverage` : "",
+  ].filter(Boolean).join("; ");
 }
 
 function setTimeScatterMode(mode) {
@@ -5859,13 +5872,13 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   };
   const resetZoom = () => averageSpeed ? setViewport(null) : resetPriceScatterZoom();
   const valueKind = averageSpeed ? "speed" : "price";
-  const formatValue = averageSpeed ? (value) => `${formatNum(value, 3)} s/prediction` : formatUsd;
+  const formatValue = averageSpeed ? (value) => `${formatNum(value, 3)} s/request` : formatUsd;
   const metricKey = state.sortBy;
   const metricLabel = METRIC_LABELS[metricKey] || metricKey;
   const supportsCi = supportsApproximateCi(metricKey);
   const showApproximateCi = supportsCi && state.scatterShowCi;
   const priceScatterCostMode = state.priceScatterCostMode;
-  const priceAxisLabel = averageSpeed ? "Average Time per Prediction (seconds; lower is faster)" : getPriceScatterCostModeLabel(priceScatterCostMode);
+  const priceAxisLabel = averageSpeed ? "Mean Successful Request Duration (seconds; lower is faster)" : getPriceScatterCostModeLabel(priceScatterCostMode);
   const unknownBandLabelText = averageSpeed ? "Unknown Speed" : getPriceScatterUnknownLabel(priceScatterCostMode);
   const unknownValueText = averageSpeed ? "Unknown speed" : getPriceScatterUnknownValueText(priceScatterCostMode);
   const averagedCostLabel = averageSpeed ? "speed" : priceScatterCostMode === "per_prompt" ? "avg/prediction cost" : "cost";
@@ -6052,6 +6065,14 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
     ciNote.className = "muted";
     ciNote.textContent = "95% CI is approximated from each run's evaluated examples.";
     noteWrap.appendChild(ciNote);
+  }
+  if (averageSpeed) {
+    const speedNote = document.createElement("p");
+    speedNote.className = "muted";
+    speedNote.textContent = "Mean successful request duration, excluding failed retry attempts and resume gaps. Each batch counts as one request.";
+    const sourceNote = getRequestDurationSourceNote(runs);
+    if (sourceNote) speedNote.textContent += ` ${sourceNote}.`;
+    noteWrap.appendChild(speedNote);
   }
   const zoomNote = document.createElement("p");
   zoomNote.className = "muted";
@@ -6253,11 +6274,14 @@ function renderLeaderboardPriceScatter(container, runs, options = {}) {
   source.forEach((entry) => {
     const isSelected = entry.runs.some((run) => run.filePath === state.selectedRunPath);
     const priceLabelText = entry.hasKnownPrice ? formatValue(entry.priceValue) : unknownValueText;
-    const priceDetailText = entry.hasKnownPrice
-      ? entry.unknownPriceCount
-        ? `${formatNum(entry.unknownPriceCount, 0)} run(s) omitted from average ${averagedCostLabel}`
-        : ""
-      : `Shown in ${unknownBandLabelText} band`;
+    const priceDetailText = [
+      averageSpeed ? getRequestDurationSourceNote(entry.runs) : "",
+      entry.hasKnownPrice
+        ? entry.unknownPriceCount
+          ? `${formatNum(entry.unknownPriceCount, 0)} run(s) omitted from average ${averagedCostLabel}`
+          : ""
+        : `Shown in ${unknownBandLabelText} band`,
+    ].filter(Boolean).join("; ");
     const pointGroup = createSvgNode("g", {
       class: `time-series-point${isSelected ? " is-selected" : ""}`,
       tabindex: "0",
@@ -8893,7 +8917,13 @@ function fillRunDetailsContent(run) {
 
   const execution = addGroup("Execution & request controls", `${formatRunRuntime(run)} · ${formatNum(run.requestsTotal, 0)} attempts`);
   addPairs(execution, [
-    ["Runtime", formatRunRuntime(run)], ["First Prompt", formatTs(run.firstPromptTimestamp)],
+    ["Runtime", formatRunRuntime(run)],
+    ["Mean Successful Request Duration", run.meanRequestDurationSeconds == null ? "N/A" : `${formatNum(run.meanRequestDurationSeconds, 3)} s/request`],
+    ["Request Duration Source", run.meanRequestDurationSource || "unavailable"],
+    ["Request Duration Samples", raw.request_duration_sample_count],
+    ["Request Duration Estimate Threads", raw.request_duration_estimate_threads],
+    ["Request Duration Threads Assumed", raw.request_duration_estimate_threads_assumed],
+    ["First Prompt", formatTs(run.firstPromptTimestamp)],
     ["Last Prompt", formatTs(run.lastPromptTimestamp)], ["Stop Reason", stopReason],
     ["Requests (attempts_total)", formatNum(run.requestsTotal, 0)], ["Attempts With Usage", formatNum(run.attemptsWithUsage, 0)],
     ["Attempts With Control Telemetry", controls.attempts_with_control_telemetry],

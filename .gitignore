@@ -6,10 +6,12 @@ config_models.js
 !/tests/test_web_custom_leaderboard.py
 !/tests/test_web_custom_leaderboard_browser.py
 !/tests/test_web_tag_filters.py
+!/tests/test_request_duration.py
 /*.sh
 /verification_tmp/*
 # Local support tools and analysis artifacts; share only pricing tools.
 /scripts/*
+!/scripts/recalculate_request_duration.py
 !/scripts/pricing/
 /data/logs/*
 !/data/logs/.gitkeep
