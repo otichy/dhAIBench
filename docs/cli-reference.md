@@ -146,7 +146,9 @@ options:
                         providers are inferred from <PROVIDER>_API_KEY (or
                         <PROVIDER>_ACCESS_TOKEN) and <PROVIDER>_BASE_URL.
   --system_prompt SYSTEM_PROMPT
-                        System prompt injected into the chat completion.
+                        Task-specific prompt defining the classification task
+                        and allowed labels. Required for model runs unless
+                        restored via --resume or --load_params.
   --system_prompt_b64 SYSTEM_PROMPT_B64
                         Base64-encoded system prompt (used by the GUI to
                         ensure cross-platform commands).

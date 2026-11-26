@@ -19,6 +19,8 @@ In Metrics only mode, leave the existing output CSV field empty to generate a co
 
 ## System Prompt Handling
 
+Run and Run & Validate require a task-specific system prompt defining the classification task and allowed labels. Until one is entered, the GUI shows an error and disables copying the command. Resume recovers the saved prompt from the run artifacts; the CLI rejects resumes without a usable prompt. Metrics only does not require a prompt.
+
 The GUI chooses the prompt flag automatically:
 
 - single-line prompt -> `--system_prompt`

@@ -1,6 +1,8 @@
 .env
 config_models.js
 /tests/*
+!/tests/test_required_system_prompt.py
+!/tests/test_required_system_prompt_gui.js
 !/tests/test_jev.py
 !/tests/test_jev_gui_browser.py
 !/tests/test_web_custom_leaderboard.py

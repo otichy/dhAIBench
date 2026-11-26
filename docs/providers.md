@@ -48,12 +48,15 @@ For prompt-caching experiments, start with `--prompt_layout compact`.
 
 ## OpenRouter Service Tiers
 
+The run commands below use the bundled, fully labeled preposition-correction sample and its task prompt. Every model run requires a task-specific prompt, including runs demonstrating provider controls.
+
 OpenRouter service tiers use the normal model ID plus the top-level
 `service_tier` field. For example:
 
 ```bash
 python benchmark_agent.py --provider openrouter --model openai/gpt-5 \
-  --service_tier flex --input data/input/example.csv
+  --service_tier flex --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```
 
 `flex` is available only on selected models. OpenRouter restricts a flex request
@@ -68,7 +71,8 @@ For models with automatic prompt caching, keep the shared prefix stable and use:
 ```bash
 python benchmark_agent.py --provider openrouter --model openai/gpt-5 \
   --prompt_layout compact --prompt_cache_key benchmark-prefix-v1 \
-  --input data/input/example.csv
+  --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```
 
 The cache key is sent as the top-level `prompt_cache_key` field. When no
@@ -83,7 +87,8 @@ GPT-5.6+), add a boundary after the static system/developer prompt:
 python benchmark_agent.py --provider openrouter --model openai/gpt-5.6 \
   --prompt_layout compact --prompt_cache_key benchmark-prefix-v1 \
   --openai_cache_breakpoint --threads 10 --cache_warmup_delay_seconds 5 \
-  --input data/input/example.csv
+  --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```
 
 `--openai_cache_breakpoint` adds `prompt_cache_breakpoint: {"mode":"explicit"}`
@@ -116,9 +121,10 @@ creates and manages Gemini caches from an explicit content breakpoint:
 ```bash
 python benchmark_agent.py --provider openrouter \
   --model google/gemini-3.5-flash \
-  --prompt_cache_key LModE_POS_2 \
+  --prompt_cache_key prepositions-example \
   --openrouter_cache_control --threads 10 \
-  --input data/input/LModE_POS_2_s.csv
+  --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```
 
 `--openrouter_cache_control` places
@@ -220,7 +226,9 @@ Example:
 ```bash
 python benchmark_agent.py \
   --provider myrouter \
-  --model some-model
+  --model some-model \
+  --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```
 
 with environment variables:

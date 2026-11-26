@@ -23,18 +23,23 @@ python -m pip install openai matplotlib
 
 Prepare credentials in `.env` or your shell environment. By default the agent reads `OPENAI_API_KEY`, and it can also infer custom provider variables such as `REQUESTY_API_KEY` and `REQUESTY_BASE_URL`.
 
-Run a benchmark:
+The bundled `example_input.csv` contains the first 100 data rows of the prepositions task, with a gold label on every row. The task is to correct the node preposition in a transcribed learner dialogue: return the correct preposition, or `0` if it should be omitted. This sample targets `in`: 83 labels retain `in`, and 17 mark omission with `0`. The `speakerID` column is preserved as metadata.
+
+Run the example with the task's system prompt (shown on one line for the command):
 
 ```bash
 python benchmark_agent.py \
   --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0." \
   --model gpt-4o-mini \
   --temperature 0.0 \
   --top_p 1.0 \
   --output data/output/
 ```
 
-On PowerShell, replace `\` with `^` for line continuation.
+A task-specific system prompt is required for model runs. Missing or blank prompts and the former generic default cause an error before any API requests. Prompts can also be restored via `--resume` or `--load_params`; metrics-only and maintenance commands do not require one.
+
+The command uses POSIX `\` line continuation. In PowerShell, use a backtick (`` ` ``) instead, or put the command on one line.
 
 ## Workflow
 

@@ -89,8 +89,7 @@
     enable_cot: true,
     api_key_var: "",
     api_base_var: "",
-    system_prompt:
-      "You are a linguistic classifier that excels at semantic disambiguation.",
+    system_prompt: "",
     validator_enable: false,
     validator_cmd: "",
     validator_args: "",
@@ -226,7 +225,7 @@
       "One or more CSV files. In metrics-only mode, leave this empty to refresh only agreement_summary.json and agreement_clusters.json.",
     model: "Model identifier. Click and pick from cached models or type your own model id.",
     provider: "Provider slug used by --provider. Refresh updates this list from config_models.js.",
-    system_prompt: "Optional system prompt. Multi-line prompts are encoded as --system_prompt_b64.",
+    system_prompt: "Required for new runs: define the classification task and allowed labels. Multi-line prompts are encoded as --system_prompt_b64.",
     enable_cot: "Encourage model to 'Think ... step-by-step' to elicit chain-of-thought behaviour.",
     include_explanations: "If unchecked, adds --no_explanation to request compact model outputs.",
     logprobs: "If checked, adds --logprobs to request token-level probability estimates (off by default).",
@@ -384,7 +383,7 @@
         {
           flags: ["--system_prompt", "--system_prompt_b64", "--decision_criteria_b64"],
           description:
-            "Optional system prompt; for Jev, enter a choice question. Choice rows are encoded as --decision_criteria_b64. Single-line prompts use --system_prompt; multi-line prompts use --system_prompt_b64.",
+            "Required task definition and allowed labels; for Jev, enter a choice question. Choice rows are encoded as --decision_criteria_b64. Single-line prompts use --system_prompt; multi-line prompts use --system_prompt_b64.",
           modes: ["Run", "Run & Validate"],
         },
         {
@@ -2812,9 +2811,19 @@
     };
   }
 
+  function requireTaskPrompt(data) {
+    const prompt = String(data.get("system_prompt") || "").trim();
+    if (!prompt || prompt === "You are a linguistic classifier that excels at semantic disambiguation.") {
+      throw new Error("Enter a task-specific system prompt defining the classification task and allowed labels.");
+    }
+  }
+
   function buildCommandClassic(data) {
     const command = createCommandAccumulator();
-    if (!data.get("metrics_only")) appendDecisionArguments(command, data);
+    if (!data.get("metrics_only")) {
+      requireTaskPrompt(data);
+      appendDecisionArguments(command, data);
+    }
     const metricsOnly = Boolean(data.get("metrics_only"));
 
     const inputRaw = (data.get("input_path") ?? "").toString();
@@ -3023,7 +3032,7 @@
     const rawSystemPrompt = data.get("system_prompt");
     const trimmedSystemPrompt =
       typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
-    if (trimmedSystemPrompt && trimmedSystemPrompt !== defaultValues.system_prompt) {
+    if (trimmedSystemPrompt) {
       if (promptNeedsEncoding(trimmedSystemPrompt)) {
         const serializedPrompt = encodeSystemPromptForCli(trimmedSystemPrompt);
         if (serializedPrompt) {
@@ -3104,6 +3113,7 @@
     const mode = normalizeMode(ctx.activeMode);
     const command = createCommandAccumulator();
     if (mode === "run" || mode === "validator") {
+      requireTaskPrompt(data);
       if (isJevModel(data.get("model")) && mode === "validator") throw new Error("Use Run mode for Jev; validators are not supported yet.");
       appendDecisionArguments(command, data);
     }
@@ -3204,7 +3214,7 @@
       const rawSystemPrompt = data.get("system_prompt");
       const trimmedSystemPrompt =
         typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
-      if (trimmedSystemPrompt && trimmedSystemPrompt !== defaultValues.system_prompt) {
+      if (trimmedSystemPrompt) {
         if (promptNeedsEncoding(trimmedSystemPrompt)) {
           const serializedPrompt = encodeSystemPromptForCli(trimmedSystemPrompt);
           if (serializedPrompt) {
@@ -3483,7 +3493,7 @@
     document.getElementById("system-prompt-label").textContent = active ? "Choice question" : "System Prompt";
     document.getElementById("system-prompt-hint").textContent = active
       ? "Ask which category applies to the marked node. Define the available answers in Choices below."
-      : "Multi-line prompts will emit --system_prompt_b64.";
+      : "Required: define the classification task and allowed labels. Multi-line prompts will emit --system_prompt_b64.";
     JEV_UNSUPPORTED.forEach(name => {
       const control = ctx.form.elements.namedItem(name);
       if (!control) return;
@@ -3502,7 +3512,7 @@
     const criteria = Object.create(null);
     const rows = JSON.parse(data.get("decision_choices") || "[]");
     if (data.get("provider") !== "requesty") throw new Error("Select Requesty for Jev.");
-    if (!String(data.get("system_prompt") || "").trim() || data.get("system_prompt") === defaultValues.system_prompt)
+    if (!String(data.get("system_prompt") || "").trim())
       throw new Error("Enter a choice question for Jev.");
     if (rows.length < 2) throw new Error("Add at least two choices.");
     rows.forEach(([key, value]) => {
@@ -3528,7 +3538,7 @@
     } catch (error) {
       document.getElementById("decision-error").textContent = error.message;
       ctx.latestCommandText = "";
-      if (ctx.commandOutput) ctx.commandOutput.textContent = "Complete the Jev question and choices to generate a command.";
+      if (ctx.commandOutput) ctx.commandOutput.textContent = error.message;
       if (ctx.copyButton) ctx.copyButton.disabled = true;
       if (!ctx.isInitializing) saveConfig(ctx);
       return;

@@ -1,19 +1,21 @@
 # Common Examples
 
-Examples below use POSIX line continuation. On PowerShell, replace `\` with `^`.
+Examples below use POSIX `\` line continuation. In PowerShell, use a backtick (`` ` ``) instead, or put the command on one line.
+
+The runnable examples use `example_input.csv`, the first 100 fully labeled rows of the prepositions task, and its corresponding system prompt. Return the corrected preposition as the label, or `0` to omit it. This sample contains 83 `in` labels and 17 `0` labels; see [Getting Started](getting-started.md#dataset-format) for the column meanings. Replace both the dataset and task prompt together when benchmarking a different task.
 
 ## Basic Benchmark Run
 
 ```bash
 python benchmark_agent.py \
-  --input data/input/input.csv \
+  --input example_input.csv \
   --model gpt-4o-mini \
   --temperature 0.0 \
   --top_p 1.0 \
   --prompt_layout compact \
   --request_interval_ms 250 \
   --threads 4 \
-  --system_prompt "You are a linguistic classifier." \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0." \
   --enable_cot \
   --few_shot_examples 5 \
   --calibration
@@ -23,12 +25,13 @@ python benchmark_agent.py \
 
 ```bash
 python benchmark_agent.py \
-  --input data/input/input.csv data/input/input_extra.csv \
+  --input example_input.csv example_input_extra.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0." \
   --model gpt-4o-mini \
   --output data/output/
 ```
 
-When `--output` points to a directory, each input gets its own timestamped output file.
+Provide your own `example_input_extra.csv` with additional examples of the same preposition-correction task. When `--output` points to a directory, each input gets its own timestamped output file.
 
 ## Resume An Existing Output
 
@@ -40,6 +43,8 @@ python benchmark_agent.py \
 ```
 
 The agent skips rows whose `ID` already exists in the output CSV and continues in input order.
+
+Resume and `--load_params` reuse the saved task-specific system prompt. If the artifacts do not contain one, or contain the former generic default, supply `--system_prompt` explicitly.
 
 ## Re-run Only `unclassified` Predictions
 
@@ -87,7 +92,8 @@ Run a quick benchmark without writing run metrics or refreshing agreement artifa
 
 ```bash
 python benchmark_agent.py \
-  --input data/input/sample.csv \
+  --input example_input.csv \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0." \
   --output data/output/sample_test.csv \
   --model gpt-4.1-mini \
   --no_metrics
@@ -133,7 +139,8 @@ python benchmark_agent.py \
 
 ```bash
 python benchmark_agent.py \
-  --input data/input/input.csv \
+  --input example_input.csv \
   --model gpt-4o-mini \
-  --timeout_probe
+  --timeout_probe \
+  --system_prompt "You are a meticulous annotator focusing on grammatical errors in the use of prepositions. You will receive a short excerpt of a transcribed dialogue where the node word is a preposition. Decide whether it is a correct preposition given the context. Return the correct preposition (even if it already is correct). If the preposition should be omitted (i.e. the grammatical correct solution is leaving it out), return 0."
 ```

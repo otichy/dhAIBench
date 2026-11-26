@@ -618,8 +618,9 @@
           <fieldset data-mode-visible="run validator">
             <legend>Prompt Strategy</legend>
             <label><span id="system-prompt-label">System Prompt</span>
-              <textarea id="system_prompt" name="system_prompt" placeholder="You are a linguistic classifier that excels at semantic disambiguation."></textarea>
-              <span class="hint" id="system-prompt-hint">Multi-line prompts will emit <code>--system_prompt_b64</code>.</span>
+              <span class="field-tag">Required</span>
+              <textarea id="system_prompt" name="system_prompt" placeholder="Define the classification task and allowed labels."></textarea>
+              <span class="hint" id="system-prompt-hint">Required: define the classification task and allowed labels. Multi-line prompts will emit <code>--system_prompt_b64</code>.</span>
             </label>
             <div id="decision-editor" hidden>
               <p>Choices</p>

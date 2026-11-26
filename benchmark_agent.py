@@ -156,7 +156,8 @@ AGREEMENT_CLUSTERS_FILENAME = "agreement_clusters.json"
 AGREEMENT_SUMMARY_VERSION = 1
 AGREEMENT_CROSS_MODEL_POLICIES: Tuple[str, ...] = ("latest", "best_accuracy")
 AGREEMENT_IGNORED_COMPARISON_TAGS: Tuple[str, ...] = ("open source",)
-DEFAULT_SYSTEM_PROMPT = "You are a linguistic classifier that excels at semantic disambiguation."
+# Recognize the former implicit default when loading older run artifacts.
+LEGACY_DEFAULT_SYSTEM_PROMPT = "You are a linguistic classifier that excels at semantic disambiguation."
 RUN_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}"
 OLD_RUN_BASENAME_RE = re.compile(
     rf"^(?P<task>.+?)_out_(?P<tail>.+?)_(?P<timestamp>{RUN_TIMESTAMP_PATTERN})(?P<extra>(?:__.+)?)$"
@@ -1050,7 +1051,7 @@ def decode_system_prompt_b64(encoded_prompt: Optional[str]) -> Optional[str]:
         decoded_bytes = base64.b64decode(encoded_prompt, validate=True)
         return decoded_bytes.decode("utf-8")
     except Exception:
-        logging.error("Unable to decode system prompt from base64; using default system prompt instead.")
+        logging.error("Unable to decode system prompt from base64 as UTF-8.")
         return None
 
 
@@ -1749,6 +1750,8 @@ def apply_metrics_parameter_defaults(
     for dest in RESUME_RECOVERABLE_ARG_DESTS:
         if dest not in run_config:
             continue
+        if dest in {"system_prompt", "system_prompt_b64"} and dest in explicit_dests:
+            continue
         # Credential mappings belong to the saved provider. Let the new provider
         # resolve its own defaults; explicit CLI mappings still win during parsing.
         if provider_changed and dest in {"api_key_var", "api_base_var"}:
@@ -1872,11 +1875,11 @@ def build_run_config_snapshot(args: argparse.Namespace) -> Dict[str, Any]:
         )
     raw_system_prompt = getattr(args, "system_prompt", None)
     encoded_system_prompt = getattr(args, "system_prompt_b64", None)
-    if encoded_system_prompt:
-        decoded_system_prompt = decode_system_prompt_b64(encoded_system_prompt) or DEFAULT_SYSTEM_PROMPT
+    if encoded_system_prompt is not None:
+        decoded_system_prompt = decode_system_prompt_b64(encoded_system_prompt)
     else:
-        decoded_system_prompt = decode_cli_system_prompt(raw_system_prompt) or DEFAULT_SYSTEM_PROMPT
-    system_prompt_for_snapshot = str(decoded_system_prompt or DEFAULT_SYSTEM_PROMPT)
+        decoded_system_prompt = decode_cli_system_prompt(raw_system_prompt)
+    system_prompt_for_snapshot = str(decoded_system_prompt or "")
     if is_unsafe_stored_system_prompt(system_prompt_for_snapshot):
         logging.warning(
             "System prompt is %d chars; omitting it from run metadata to avoid oversized resume logs.",
@@ -12037,8 +12040,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument(
         "--system_prompt",
-        default=DEFAULT_SYSTEM_PROMPT,
-        help="System prompt injected into the chat completion.",
+        default=None,
+        help=(
+            "Task-specific system prompt defining the classification task and allowed labels. "
+            "Required for model runs unless restored via --resume or --load_params."
+        ),
     )
     prompt_group.add_argument(
         "--system_prompt_b64",
@@ -12515,11 +12521,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     if int(getattr(args, "prompt_batch_size", 0) or 0) >= 2 and args.logprobs:
         parser.error("--prompt-batch-size >= 2 cannot be used with --logprobs.")
 
-    if args.system_prompt_b64:
+    model_run = not (args.metrics_only or args.update_models or args.summarize_log_errors)
+    if args.system_prompt_b64 is not None:
         decoded_prompt = decode_system_prompt_b64(args.system_prompt_b64)
+        if decoded_prompt is None and model_run:
+            parser.error("--system_prompt_b64 must contain a non-empty, valid base64-encoded UTF-8 task prompt.")
         args.system_prompt = decoded_prompt or ""
     else:
         args.system_prompt = decode_cli_system_prompt(args.system_prompt)
+    if model_run and (
+        not (args.system_prompt or "").strip()
+        or args.system_prompt.strip() == LEGACY_DEFAULT_SYSTEM_PROMPT
+    ):
+        parser.error(
+            "A task-specific system prompt is required. Supply --system_prompt or "
+            "--system_prompt_b64 defining the classification task and allowed labels, "
+            "or restore one via --resume or --load_params. The former generic default "
+            "prompt is not a task definition. No API requests have been sent."
+        )
     decision_criteria = None
     if is_jev_model(args.model) and not args.metrics_only:
         if str(args.provider).strip().lower() != "requesty":
@@ -12528,8 +12547,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             decision_criteria = decode_decision_criteria(args.decision_criteria_b64 or "")
         except ValueError as exc:
             parser.error(str(exc))
-        if not (args.system_prompt or "").strip() or args.system_prompt == DEFAULT_SYSTEM_PROMPT:
-            parser.error("Jev requires --system_prompt containing a choice question.")
         if args.prompt_batch_size >= 2 or args.validator_cmd or args.timeout_probe:
             parser.error("Jev does not yet support prompt batching, validators, or timeout probes.")
         incompatible = [name for name in (
@@ -13005,7 +13022,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 api_base_url or "<unset>",
             )
             return 1
-        system_for_cache = (args.system_prompt or DEFAULT_SYSTEM_PROMPT).rstrip()
+        system_for_cache = args.system_prompt.rstrip()
         if MANDATORY_SYSTEM_APPEND:
             system_for_cache = system_for_cache.rstrip() + "\n\n" + MANDATORY_SYSTEM_APPEND
         # Gemini requires at least 1024 tokens in the cached content.  Pre-compute padding so

@@ -31,6 +31,7 @@ This repository includes `validators/lemmatization_validator.py`.
 python benchmark_agent.py \
   --input data/input.csv \
   --model gpt-4o-mini \
+  --system_prompt "Lemmatize the node word in context. Return its dictionary headword as the label." \
   --validator_cmd validators/lemmatization_validator.py \
   --validator_args "--lexicon data/lemmata.txt --max_distance 2 --max_distance_per_retry 1 --max_suggestions 30"
 ```
@@ -51,6 +52,7 @@ Example:
 python benchmark_agent.py \
   --input data/input.csv \
   --model gpt-4o-mini \
+  --system_prompt "Lemmatize the node word in context, using the part of speech in info. Return its dictionary headword as the label." \
   --validator_cmd validators/lemmatization_validator.py \
   --validator_args "--lexicon data/lemmata_with_pos.tsv --lexicon_field_sep tab --use_pos"
 ```
